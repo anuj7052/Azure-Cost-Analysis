@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   Theming
+   ----------------------------------------------------------------------------
+   The app is authored against the Tailwind `slate` ramp in a dark-first style
+   (page = slate-950, surface = slate-900, hairline = slate-800, ...).
+
+   Rather than rewriting every component with `dark:` variants, we remap the
+   Tailwind v4 colour tokens when `data-theme="light"` is set on <html>. Every
+   existing utility (`bg-slate-900`, `text-slate-400`, ...) then resolves to a
+   balanced light-mode value, so both themes stay in sync automatically.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  --app-bg: var(--color-slate-950);
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-raised: 0 12px 32px -12px rgb(0 0 0 / 0.65);
+  --shadow-overlay: 0 32px 64px -24px rgb(0 0 0 / 0.75);
+
+  --scrollbar-thumb: rgb(51 65 85);
+  --scrollbar-thumb-hover: rgb(71 85 105);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  /* Inverted slate ramp — tuned for contrast rather than a naive flip. */
+  --color-slate-950: #eef2f7; /* page background        */
+  --color-slate-900: #ffffff; /* card / surface         */
+  --color-slate-800: #e2e8f0; /* hairline / subtle fill */
+  --color-slate-700: #cbd5e1; /* stronger border        */
+  --color-slate-600: #94a3b8; /* faint text             */
+  --color-slate-500: #64748b; /* muted text             */
+  --color-slate-400: #475569; /* secondary text         */
+  --color-slate-300: #334155; /* body text              */
+  --color-slate-200: #1e293b; /* strong text            */
+  --color-slate-100: #0f172a; /* headings               */
+  --color-slate-50:  #020617;
+  --color-white:     #0f172a; /* `text-white` -> ink    */
+
+  /* Accents: the 300/400 steps are too light on a white surface. */
+  --color-blue-400: #2563eb;
+  --color-blue-300: #1d4ed8;
+  --color-emerald-400: #059669;
+  --color-emerald-300: #047857;
+  --color-rose-400: #e11d48;
+  --color-rose-300: #be123c;
+  --color-red-400: #dc2626;
+  --color-red-300: #b91c1c;
+  --color-amber-400: #d97706;
+  --color-amber-300: #b45309;
+  --color-violet-400: #7c3aed;
+  --color-violet-300: #6d28d9;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 3px rgb(15 23 42 / 0.08);
+  --shadow-raised: 0 12px 28px -14px rgb(15 23 42 / 0.28);
+  --shadow-overlay: 0 32px 64px -24px rgb(15 23 42 / 0.35);
+
+  --scrollbar-thumb: rgb(203 213 225);
+  --scrollbar-thumb-hover: rgb(148 163 184);
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background-color: var(--app-bg);
+    color: var(--color-white);
+    font-family: "Inter", "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  /* Numeric columns stay aligned across every table and KPI. */
+  table { font-variant-numeric: tabular-nums; }
+
+  h1, h2, h3 { letter-spacing: -0.015em; }
+
+  :focus-visible {
+    outline: 2px solid var(--color-blue-500);
+    outline-offset: 2px;
+    border-radius: 0.5rem;
+  }
+}
+
+@utility elevated { box-shadow: var(--shadow-card); }
+@utility elevated-lg { box-shadow: var(--shadow-raised); }
+@utility elevated-xl { box-shadow: var(--shadow-overlay); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
