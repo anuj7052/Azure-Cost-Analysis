@@ -26,6 +26,19 @@ def get_jwks_client() -> PyJWKClient:
     return _jwks_client
 
 
+def allowed_audiences() -> set[str]:
+    """Audiences this API accepts: its own app registration, and Azure ARM."""
+    client_id = settings.AZURE_CLIENT_ID
+    auds = {
+        "https://management.azure.com/",
+        "https://management.azure.com",
+        "https://management.core.windows.net/",
+    }
+    if client_id:
+        auds |= {client_id, f"api://{client_id}"}
+    return auds
+
+
 def validate_azure_token(token: str) -> dict:
     """
     Validate an Azure AD Bearer token (v2.0 or v1.0).
@@ -36,10 +49,17 @@ def validate_azure_token(token: str) -> dict:
         jwks_client = get_jwks_client()
         signing_key = jwks_client.get_signing_key_from_jwt(token)
 
-        # Decode without audience verification first to get the aud value,
-        # then re-decode with audience. Azure tokens use client_id as audience.
+        # Read the audience first so we can verify against it, then confirm it is
+        # one we actually accept. Trusting the token's own audience blindly would
+        # let a token minted for any other application be replayed against us.
         unverified = jwt.decode(token, options={"verify_signature": False})
-        audience = unverified.get("aud", settings.AZURE_CLIENT_ID)
+        audience = unverified.get("aud", "")
+        expected = allowed_audiences()
+        if expected and audience not in expected:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token was not issued for this application",
+            )
 
         claims = jwt.decode(
             token,
@@ -59,6 +79,8 @@ def validate_azure_token(token: str) -> dict:
 
         return claims
 
+    except HTTPException:
+        raise
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

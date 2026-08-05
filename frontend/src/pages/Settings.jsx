@@ -48,7 +48,12 @@ export default function Settings() {
         `${data.months.length} month(s), ${data.subscriptions.length} subscription(s)`
       );
     } catch (err) {
-      toast.error(err.response?.data?.detail || err.message);
+      const detail = err.response?.data?.detail || err.message;
+      toast.error(
+        err.response?.status === 401 || err.response?.status === 403
+          ? 'Your Azure sign-in expired. Sign out and sign back in, then import again.'
+          : detail
+      );
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';

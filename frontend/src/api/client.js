@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { msalInstance, managementRequest } from '../auth/msalConfig';
+import { msalInstance, managementRequest, loginRequest } from '../auth/msalConfig';
 
 const api = axios.create({
   baseURL: '/api',
@@ -9,31 +9,90 @@ const api = axios.create({
 // Token cache — reuse until 2 minutes before expiry
 let _cachedToken = null;
 let _tokenExpiry = 0;
+// In-flight promises so a burst of parallel requests triggers one token fetch,
+// and at most one interactive popup, instead of dozens.
+let _pending = null;
+let _pendingPopup = null;
+let _popupBlocked = false;
 
-async function getToken() {
+function store(result, now) {
+  _cachedToken = result.accessToken;
+  _tokenExpiry = (result.expiresOn?.getTime() || now + 3600_000) - 120_000;
+  return _cachedToken;
+}
+
+async function acquire(account, interactive) {
   const now = Date.now();
-  if (_cachedToken && now < _tokenExpiry) return _cachedToken;
+  try {
+    return store(await msalInstance.acquireTokenSilent({ ...managementRequest, account }), now);
+  } catch (silentErr) {
+    // Silent renewal runs in a hidden iframe, which browsers block on reload and
+    // under third-party-cookie restrictions (block_iframe_reload / timed_out).
+    // A popup recovers the session, but browsers only allow one during a user
+    // gesture — so background page loads fail quietly instead of firing popups
+    // that are guaranteed to be blocked.
+    _cachedToken = null;
+    if (!interactive || _popupBlocked) {
+      console.warn('Token acquisition failed:', silentErr);
+      return null;
+    }
+    try {
+      _pendingPopup = _pendingPopup
+        || msalInstance.acquireTokenPopup({ ...managementRequest, account });
+      const result = await _pendingPopup;
+      return store(result, Date.now());
+    } catch (popupErr) {
+      if (popupErr?.errorCode === 'popup_window_error') _popupBlocked = true;
+      console.warn('Token acquisition failed:', popupErr);
+      return null;
+    } finally {
+      _pendingPopup = null;
+    }
+  }
+}
+
+async function getToken(interactive = false) {
+  if (_cachedToken && Date.now() < _tokenExpiry) return _cachedToken;
 
   const accounts = msalInstance.getAllAccounts();
   const account = msalInstance.getActiveAccount() || accounts[0];
   if (!account) return null;
 
+  if (!_pending) {
+    _pending = acquire(account, interactive).finally(() => { _pending = null; });
+  }
+  return _pending;
+}
+
+/**
+ * File parsing happens entirely on our own server — it never calls Azure — so
+ * those routes only need proof of sign-in. We send the ID token: it is issued
+ * for this app (so our backend can verify its signature), and MSAL serves it
+ * from cache without the hidden iframe that browsers now block.
+ *
+ * Never send the Graph access token here — Microsoft signs those so only Graph
+ * can validate them, which fails with "Signature verification failed".
+ */
+async function getSignInToken() {
+  const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+  if (!account) return null;
+  if (account.idToken) return account.idToken;
   try {
-    const result = await msalInstance.acquireTokenSilent({ ...managementRequest, account });
-    _cachedToken = result.accessToken;
-    // Cache until 2 min before token expires
-    _tokenExpiry = (result.expiresOn?.getTime() || now + 3600_000) - 120_000;
-    return _cachedToken;
-  } catch (err) {
-    _cachedToken = null;
-    console.warn('Token acquisition failed:', err);
+    const result = await msalInstance.acquireTokenSilent({ ...loginRequest, account });
+    return result.idToken || null;
+  } catch {
     return null;
   }
 }
 
+const LOCAL_ROUTES = ['/upload', '/boq/parse'];
+
 // Attach Bearer token to every request
 api.interceptors.request.use(async (config) => {
-  const token = await getToken();
+  // These two run off a click, so a sign-in popup here is allowed to open.
+  const userInitiated = LOCAL_ROUTES.some((r) => (config.url || '').startsWith(r));
+  const token = (userInitiated ? await getSignInToken() : null)
+    || (await getToken(userInitiated));
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
