@@ -1,10 +1,6 @@
 # Azure Cost Analysis Dashboard
 
-> **Note:** the production platform "Azure Cloud Insight" now lives in `api/` (FastAPI)
-> and `web/` (Next.js). See [AZURE_CLOUD_INSIGHT.md](AZURE_CLOUD_INSIGHT.md).
-> The app documented below is the earlier prototype in `backend/` + `frontend/`.
-
-A full-stack web app for tracking Azure cloud costs across **multiple tenants and subscriptions** — with 6-month trend analysis, per-service breakdown, anomaly detection, and a CSV upload fallback.
+A full-stack web app for tracking Azure cloud costs across **multiple tenants and subscriptions** — with 6-month trend analysis, per-service breakdown, anomaly detection, a CSV upload fallback, and a BOQ-to-infrastructure-as-code generator.
 
 **Stack**: Python FastAPI + React + Vite + TailwindCSS + Recharts + Azure AD (MSAL)
 

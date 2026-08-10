@@ -148,10 +148,12 @@ def parse_boq_file(content: bytes, filename: str) -> Dict[str, Any]:
         if not any(row):
             continue
 
-        # Subtotal rows carry their label in an inner column, and may be preceded
-        # by unrelated text ("Disclaimer" shares the Total Monthly Cost row).
+        # Subtotal rows carry their label in one of the inner columns, and may be
+        # preceded by unrelated text ("Disclaimer" shares the Total Monthly Cost
+        # row). Skip the first two columns so a real line item whose service
+        # category is "Support" is not mistaken for the support subtotal.
         key = next(
-            (_SUBTOTAL_LABELS[c.lower()] for c in row[:amount_col] if c.lower() in _SUBTOTAL_LABELS),
+            (_SUBTOTAL_LABELS[c.lower()] for c in row[2:amount_col] if c.lower() in _SUBTOTAL_LABELS),
             None,
         )
         if key:

@@ -49,18 +49,18 @@ function PlanTable({ plan }) {
   const uncovered = plan.total_monthly_cost - plan.covered_monthly_cost;
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-5">
-      <h2 className="text-sm font-semibold text-slate-800 mb-1">
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+      <h2 className="text-sm font-semibold text-white mb-1">
         Resources recovered from the estimate
       </h2>
-      <p className="text-[11px] text-slate-500 mb-3">
-        Deploying into <span className="font-medium">{plan.resource_group}</span> in{' '}
-        <span className="font-medium">{plan.location}</span>.
+      <p className="text-[11px] text-slate-400 mb-3">
+        Deploying into <span className="font-medium text-slate-300">{plan.resource_group}</span> in{' '}
+        <span className="font-medium text-slate-300">{plan.location}</span>.
       </p>
 
       <table className="w-full text-xs tabular-nums">
         <thead>
-          <tr className="text-slate-500 border-b border-slate-200">
+          <tr className="text-slate-500 border-b border-slate-800">
             <th className="py-1.5 text-left font-medium">Resource</th>
             <th className="py-1.5 text-left font-medium">Kind</th>
             <th className="py-1.5 text-left font-medium">SKU</th>
@@ -71,15 +71,15 @@ function PlanTable({ plan }) {
         </thead>
         <tbody>
           {plan.resources.map((r) => (
-            <tr key={r.name} className="border-b border-slate-100 last:border-0">
-              <td className="py-1.5 font-medium text-slate-800">{r.name}</td>
-              <td className="py-1.5 text-slate-500">{KIND_LABELS[r.kind] || r.kind}</td>
-              <td className="py-1.5 text-slate-500">{r.sku || '—'}</td>
-              <td className="py-1.5 text-right text-slate-500">
+            <tr key={r.name} className="border-b border-slate-800 last:border-0">
+              <td className="py-1.5 font-medium text-slate-200">{r.name}</td>
+              <td className="py-1.5 text-slate-400">{KIND_LABELS[r.kind] || r.kind}</td>
+              <td className="py-1.5 text-slate-400">{r.sku || '—'}</td>
+              <td className="py-1.5 text-right text-slate-400">
                 {r.size_gib ? `${r.size_gib} GiB` : '—'}
               </td>
-              <td className="py-1.5 text-right text-slate-600">{r.count}</td>
-              <td className="py-1.5 text-right text-slate-800">
+              <td className="py-1.5 text-right text-slate-300">{r.count}</td>
+              <td className="py-1.5 text-right text-slate-200">
                 {money(r.monthly_cost, plan.currency)}
               </td>
             </tr>
@@ -87,7 +87,7 @@ function PlanTable({ plan }) {
         </tbody>
       </table>
 
-      <p className="text-[11px] text-slate-500 mt-3">
+      <p className="text-[11px] text-slate-400 mt-3">
         The template covers {money(plan.covered_monthly_cost, plan.currency)} of the{' '}
         {money(plan.total_monthly_cost, plan.currency)} estimate.
         {uncovered > 0
@@ -96,14 +96,14 @@ function PlanTable({ plan }) {
       </p>
 
       {plan.needs_review.length > 0 && (
-        <details className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
-          <summary className="cursor-pointer text-[11px] font-medium text-amber-800 flex items-center gap-1.5">
+        <details className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+          <summary className="cursor-pointer text-[11px] font-medium text-amber-300 flex items-center gap-1.5">
             <AlertTriangle size={13} />
             {plan.needs_review.length} line(s) could not be turned into a resource
           </summary>
           <ul className="mt-2 space-y-1.5">
             {plan.needs_review.map((line, i) => (
-              <li key={`${line.service_type}-${i}`} className="text-[11px] text-amber-900">
+              <li key={`${line.service_type}-${i}`} className="text-[11px] text-amber-200/90">
                 <span className="font-medium">{line.service_type}</span>
                 {line.custom_name ? ` · ${line.custom_name}` : ''} —{' '}
                 {money(line.monthly_cost, plan.currency)}. {line.reason}
@@ -198,15 +198,15 @@ export default function Deploy() {
   return (
     <div className="max-w-4xl mx-auto space-y-4">
       <div>
-        <h1 className="text-lg font-semibold text-slate-800">BOQ to infrastructure</h1>
-        <p className="text-xs text-slate-500 mt-0.5">
+        <h1 className="text-lg font-semibold text-white">BOQ to infrastructure</h1>
+        <p className="text-xs text-slate-400 mt-0.5">
           Upload an Azure Pricing Calculator estimate to get reviewable Bicep or
           Terraform. Templates are generated for you to run — nothing is deployed
           into your subscription from here.
         </p>
       </div>
 
-      <div className="bg-white rounded-lg border border-slate-200 p-5 space-y-3">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <input
             ref={fileRef}
@@ -218,25 +218,25 @@ export default function Deploy() {
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-[#fff] hover:bg-blue-500 transition"
           >
             <Upload size={13} /> Upload estimate
           </button>
 
-          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+          <label className="flex items-center gap-1.5 text-xs text-slate-400">
             Resource group
             <input
               value={resourceGroup}
               maxLength={90}
               onChange={(e) => setResourceGroup(e.target.value)}
-              className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+              className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white"
             />
           </label>
 
           <select
             value={format}
             onChange={(e) => setFormat(e.target.value)}
-            className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+            className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white"
           >
             <option value="bicep">Bicep</option>
             <option value="terraform">Terraform</option>
@@ -246,21 +246,21 @@ export default function Deploy() {
             type="button"
             onClick={handleGenerate}
             disabled={!file || !!busy}
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-40"
           >
             <FileCode size={13} /> Download template
           </button>
         </div>
 
         {boq && (
-          <p className="text-[11px] text-slate-500">
+          <p className="text-[11px] text-slate-400">
             {boq.name} · {boq.items.length} priced lines ·{' '}
             {money(boq.total_monthly, boq.currency)} per month
           </p>
         )}
-        {busy && <p className="text-[11px] text-slate-500">{busy}</p>}
+        {busy && <p className="text-[11px] text-slate-400">{busy}</p>}
         {error && (
-          <p className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-md px-2 py-1.5">
+          <p className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2">
             {error}
           </p>
         )}
@@ -268,8 +268,8 @@ export default function Deploy() {
 
       {plan && <PlanTable plan={plan} />}
 
-      <div className="bg-white rounded-lg border border-slate-200 p-5 space-y-3">
-        <h2 className="text-sm font-semibold text-slate-800">Ask for changes</h2>
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+        <h2 className="text-sm font-semibold text-white">Ask for changes</h2>
 
         <div className="flex flex-wrap gap-1.5">
           {SUGGESTIONS.map((s) => (
@@ -278,7 +278,7 @@ export default function Deploy() {
               type="button"
               disabled={!!busy}
               onClick={() => send(s)}
-              className="rounded-full border border-slate-300 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+              className="rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:bg-slate-800 disabled:opacity-40"
             >
               {s}
             </button>
@@ -286,7 +286,7 @@ export default function Deploy() {
         </div>
 
         {messages.length === 0 ? (
-          <p className="text-[11px] text-slate-400 border border-dashed border-slate-200 rounded-md p-5 text-center">
+          <p className="text-[11px] text-slate-500 border border-dashed border-slate-700 rounded-xl p-5 text-center">
             {boq
               ? 'Say “implement this BOQ” to generate a template.'
               : 'Upload an estimate first, then ask for a template.'}
@@ -298,8 +298,8 @@ export default function Deploy() {
                 key={i}
                 className={
                   m.role === 'user'
-                    ? 'rounded-md bg-slate-100 px-3 py-2 text-xs text-slate-800'
-                    : 'rounded-md border border-slate-200 px-3 py-2 text-xs text-slate-700'
+                    ? 'rounded-xl bg-slate-800 px-3 py-2 text-xs text-slate-100'
+                    : 'rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-300'
                 }
               >
                 <p className="whitespace-pre-wrap">{m.content}</p>
@@ -310,7 +310,7 @@ export default function Deploy() {
                         key={a.format}
                         type="button"
                         onClick={() => download(a)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-800"
                       >
                         <Download size={12} /> {a.filename}
                       </button>
@@ -318,7 +318,7 @@ export default function Deploy() {
                   </div>
                 )}
                 {m.tools?.length > 0 && (
-                  <p className="mt-1.5 text-[10px] text-slate-400">
+                  <p className="mt-1.5 text-[10px] text-slate-500">
                     Used: {m.tools.join(', ')}
                   </p>
                 )}
@@ -339,12 +339,12 @@ export default function Deploy() {
             maxLength={2000}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="e.g. implement this BOQ as Terraform"
-            className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-xs"
+            className="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500"
           />
           <button
             type="submit"
             disabled={!!busy}
-            className="inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-medium text-[#fff] hover:bg-blue-500 disabled:opacity-40"
           >
             <Send size={13} /> Send
           </button>
