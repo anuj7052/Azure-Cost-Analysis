@@ -502,8 +502,93 @@ function ResourceBreakdown({ category: c, fmt }) {
   // The traffic panel already lists every transfer meter, so repeating them
   // underneath would just be the same numbers twice.
   const listMeters = !c.traffic;
+  // The category total is bigger than the sum of the BOQ lines whenever Azure
+  // bills things the estimate never priced, so show that sum explicitly.
+  const matchedActual = c.lines.reduce((s, l) => s + l.actual, 0);
+  // Every single charge in the category on one line, so the total can be read
+  // resource by resource instead of only as two subtotals.
+  const allCharges = [
+    ...c.lines.flatMap(l => l.matches.map(m => ({
+      ...m,
+      boqLine: l.custom_name || l.service_type,
+    }))),
+    ...c.unmatched.map(u => ({ ...u, boqLine: null })),
+  ].sort((a, b) => b.cost - a.cost);
   return (
     <div className="space-y-5">
+      {c.lines.length > 0 && c.unmatchedTotal > 0 && (
+        <div className="border border-slate-700 bg-slate-900/50 rounded-xl p-3.5">
+          <p className="text-xs font-semibold text-slate-200 mb-2">
+            How the {fmt(c.actual)} for {c.label} adds up
+          </p>
+          <ul className="text-xs space-y-1 tabular-nums">
+            <li className="flex items-baseline gap-2">
+              <span className="text-slate-400">
+                {c.lines.length} resource{c.lines.length > 1 ? 's' : ''} matched to your BOQ
+              </span>
+              <span className="flex-1 border-b border-dotted border-slate-700/70 translate-y-[-3px]" />
+              <span className="text-slate-200 shrink-0">{fmt(matchedActual)}</span>
+            </li>
+            <li className="flex items-baseline gap-2">
+              <span className="text-red-300">
+                {c.unmatched.length} charge{c.unmatched.length > 1 ? 's' : ''} with no BOQ line
+              </span>
+              <span className="flex-1 border-b border-dotted border-slate-700/70 translate-y-[-3px]" />
+              <span className="text-red-300 shrink-0">{fmt(c.unmatchedTotal)}</span>
+            </li>
+            <li className="flex items-baseline gap-2 pt-1.5 border-t border-slate-800">
+              <span className="text-slate-300 font-semibold">Total billed by Azure</span>
+              <span className="flex-1 border-b border-dotted border-slate-700/70 translate-y-[-3px]" />
+              <span className="text-white font-bold shrink-0">{fmt(c.actual)}</span>
+            </li>
+          </ul>
+
+          <details className="mt-3">
+            <summary className="text-[11px] text-sky-400 cursor-pointer select-none">
+              Show all {allCharges.length} charges, resource by resource
+            </summary>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full text-[11px] tabular-nums">
+                <thead>
+                  <tr className="text-slate-600 border-b border-slate-800">
+                    <th className="text-left font-medium py-1 pr-2">Resource</th>
+                    <th className="text-left font-medium py-1 pr-2">SKU / size</th>
+                    <th className="text-left font-medium py-1 pr-2">Meter</th>
+                    <th className="text-left font-medium py-1 pr-2">Resource group</th>
+                    <th className="text-left font-medium py-1 pr-2">BOQ line</th>
+                    <th className="text-right font-medium py-1">Cost / month</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allCharges.map((m, i) => (
+                    <tr key={i} className="border-b border-slate-800/60">
+                      <td className="py-1 pr-2 text-slate-200 break-all">{m.resource_name || '—'}</td>
+                      <td className="py-1 pr-2 text-slate-400 whitespace-nowrap">
+                        {m.sku ? `${m.sku}${m.size ? ` · ${m.size}` : ''}` : '—'}
+                      </td>
+                      <td className="py-1 pr-2 text-slate-400">{m.label}</td>
+                      <td className="py-1 pr-2 text-slate-500 break-all">{m.resource_group || '—'}</td>
+                      <td className="py-1 pr-2">
+                        {m.boqLine
+                          ? <span className="text-slate-400">{m.boqLine}</span>
+                          : <span className="text-red-300">Not in BOQ</span>}
+                      </td>
+                      <td className={`py-1 text-right font-medium whitespace-nowrap ${m.boqLine ? 'text-slate-200' : 'text-red-300'}`}>
+                        {fmt(m.cost)}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td colSpan={5} className="py-1.5 text-slate-300 font-semibold">Total</td>
+                    <td className="py-1.5 text-right text-white font-bold">{fmt(c.actual)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      )}
+
       {c.traffic && <TrafficPanel traffic={c.traffic} fmt={fmt} />}
 
       {c.lines.length > 0 && (
@@ -680,23 +765,43 @@ function TrafficPanel({ traffic, fmt }) {
 function WhyPanel({ line: l, fmt }) {
   const d = l.drivers;
   const unit = l.sku || 'resource';
+
+  // Charge the variance to the actual resources on the invoice. The cheapest
+  // ones are treated as the extras, so the budgeted slots are the ones the BOQ
+  // most plausibly priced. Every row here is a real resource you can go and
+  // look at in the portal, and they still add up to the headline variance.
+  const ranked = [...l.matches].sort((a, b) => b.cost - a.cost);
+  const budgeted = ranked.slice(0, d.qty);
+  const extras = ranked.slice(d.qty);
   const rows = [];
 
-  if (d.extraUnits !== 0) {
+  budgeted.forEach((m) => {
     rows.push({
-      amount: d.quantityEffect,
-      title: `${Math.abs(d.extraUnits)} ${d.extraUnits > 0 ? 'more' : 'fewer'} ${unit} than budgeted`,
-      detail: d.extraUnits > 0
-        ? `The BOQ paid for ${d.qty}, but ${d.billedCount} are running. At the budgeted rate of ${fmt(d.unitBudget)} each, those ${d.extraUnits} extra cost ${fmt(Math.abs(d.quantityEffect))}.`
-        : `The BOQ paid for ${d.qty}, but only ${d.billedCount} are running, saving ${fmt(Math.abs(d.quantityEffect))}.`,
+      amount: m.cost - d.unitBudget,
+      name: m.resource_name || m.label,
+      group: m.resource_group,
+      tag: 'Covered by the BOQ',
+      detail: `Budgeted ${fmt(d.unitBudget)} for this ${unit}, Azure billed ${fmt(m.cost)}.`,
     });
-  }
+  });
 
-  if (Math.abs(d.rateEffect) >= 1) {
+  extras.forEach((m) => {
     rows.push({
-      amount: d.rateEffect,
-      title: d.rateEffect > 0 ? `Each ${unit} costs more than estimated` : `Each ${unit} costs less than estimated`,
-      detail: `The BOQ assumed ${fmt(d.unitBudget)} per ${unit} per month; the invoice shows ${fmt(d.unitActual)}. Across ${d.billedCount} of them that is ${d.rateEffect > 0 ? 'an extra ' : 'a saving of '}${fmt(Math.abs(d.rateEffect))}. Usually a different region, redundancy setting or a partial-month proration.`,
+      amount: m.cost,
+      name: m.resource_name || m.label,
+      group: m.resource_group,
+      tag: 'Not budgeted',
+      detail: `The BOQ paid for ${d.qty} ${unit}${d.qty > 1 ? 's' : ''} only, so this whole ${fmt(m.cost)} is extra.`,
+    });
+  });
+
+  const unfilled = d.qty - l.matches.length;
+  if (unfilled > 0) {
+    rows.push({
+      amount: -(unfilled * d.unitBudget),
+      name: `${unfilled} × ${unit} never deployed`,
+      tag: 'Budgeted, not billed',
+      detail: `The BOQ paid for ${d.qty} but only ${l.matches.length} are on the invoice.`,
     });
   }
 
@@ -705,7 +810,46 @@ function WhyPanel({ line: l, fmt }) {
   return (
     <div className="mt-3 pt-3 border-t border-slate-700/50">
       <p className="text-[11px] text-slate-500 mb-2">
-        Why the difference is {l.variance >= 0 ? '+' : '−'}{fmt(Math.abs(l.variance))}:
+        BOQ estimate vs what Azure actually charged:
+      </p>
+      <table className="w-full text-[11px] mb-3 tabular-nums">
+        <thead>
+          <tr className="text-slate-600">
+            <th className="text-left font-medium pb-1"></th>
+            <th className="text-right font-medium pb-1">Qty</th>
+            <th className="text-right font-medium pb-1">Rate / {unit} / month</th>
+            <th className="text-right font-medium pb-1">Monthly total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-t border-slate-800">
+            <td className="py-1 text-slate-300">BOQ estimate</td>
+            <td className="py-1 text-right text-slate-300">{d.qty}</td>
+            <td className="py-1 text-right text-slate-300">{fmt(d.unitBudget)}</td>
+            <td className="py-1 text-right text-slate-300">{fmt(l.monthly_cost)}</td>
+          </tr>
+          <tr className="border-t border-slate-800">
+            <td className="py-1 text-slate-200 font-medium">Azure actual</td>
+            <td className="py-1 text-right text-slate-200 font-medium">{d.billedCount}</td>
+            <td className="py-1 text-right text-slate-200 font-medium">{fmt(d.unitActual)}</td>
+            <td className="py-1 text-right text-slate-200 font-medium">{fmt(l.actual)}</td>
+          </tr>
+          <tr className="border-t border-slate-800">
+            <td className="py-1 text-slate-500">Difference</td>
+            <td className={`py-1 text-right ${d.extraUnits > 0 ? 'text-red-400' : d.extraUnits < 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+              {d.extraUnits > 0 ? '+' : ''}{d.extraUnits}
+            </td>
+            <td className={`py-1 text-right ${d.unitActual > d.unitBudget ? 'text-red-400' : d.unitActual < d.unitBudget ? 'text-emerald-400' : 'text-slate-500'}`}>
+              {d.unitActual >= d.unitBudget ? '+' : '−'}{fmt(Math.abs(d.unitActual - d.unitBudget))}
+            </td>
+            <td className={`py-1 text-right font-semibold ${l.variance > 0 ? 'text-red-400' : l.variance < 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+              {l.variance >= 0 ? '+' : '−'}{fmt(Math.abs(l.variance))}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="text-[11px] text-slate-500 mb-2">
+        Which resources make up the {l.variance >= 0 ? '+' : '−'}{fmt(Math.abs(l.variance))}:
       </p>
       <ul className="space-y-2">
         {rows.map((r, i) => (
@@ -718,7 +862,17 @@ function WhyPanel({ line: l, fmt }) {
               {r.amount >= 0 ? '+' : '−'}{fmt(Math.abs(r.amount))}
             </span>
             <span className="min-w-0">
-              <span className="text-slate-200">{r.title}</span>
+              <span className="text-slate-200 font-medium break-all">{r.name}</span>
+              {r.group && <span className="text-[10px] text-slate-600 ml-1.5">{r.group}</span>}
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded ml-1.5 align-middle ${
+                  r.tag === 'Not budgeted'
+                    ? 'bg-red-500/20 text-red-300'
+                    : 'bg-slate-700 text-slate-300'
+                }`}
+              >
+                {r.tag}
+              </span>
               <span className="block text-[11px] text-slate-500 mt-0.5">{r.detail}</span>
             </span>
           </li>

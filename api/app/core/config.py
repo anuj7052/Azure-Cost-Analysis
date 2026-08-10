@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     ASSISTANT_MAX_TOKENS: int = 1500
     ASSISTANT_RATE_LIMIT_PER_HOUR: int = 60
 
+    # --- OpenAI (BOQ assistant) ---
+    # Set OPENAI_BASE_URL to point at a compatible gateway or proxy.
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = ""
+    OPENAI_MODEL: str = "gpt-4o"
+
     # --- Reports / storage ---
     REPORTS_STORAGE_ACCOUNT_URL: str = ""
     REPORTS_CONTAINER: str = "reports"

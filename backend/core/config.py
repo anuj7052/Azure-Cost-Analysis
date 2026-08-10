@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
     DB_PATH: str = "./data/azure_cost.db"
 
+    # --- BOQ chat assistant ---
+    # Leave OPENAI_BASE_URL empty for api.openai.com, or point it at a gateway.
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = ""
+    OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_MAX_TOKENS: int = 1500
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]

@@ -17,6 +17,7 @@ const Settings       = lazy(() => import('./pages/Settings'));
 const ResourceGroups = lazy(() => import('./pages/ResourceGroups'));
 const Bandwidth      = lazy(() => import('./pages/Bandwidth'));
 const Boq            = lazy(() => import('./pages/Boq'));
+const Deploy         = lazy(() => import('./pages/Deploy'));
 
 const PageLoader = () => (
   <div className="flex h-[60vh] items-center justify-center">
@@ -65,6 +66,7 @@ function AppShell() {
             <Route path="/resource-groups" element={<ResourceGroups />} />
             <Route path="/bandwidth" element={<Bandwidth />} />
             <Route path="/boq" element={<Boq />} />
+            <Route path="/deploy" element={<Deploy />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
           </Suspense>

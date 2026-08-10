@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, TrendingUp, Settings, AlertTriangle, Server, FolderOpen, Network, ClipboardList } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, Settings, AlertTriangle, Server, FolderOpen, Network, ClipboardList, FileCode } from 'lucide-react';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -7,6 +7,7 @@ const NAV = [
   { to: '/services', label: 'Services', icon: Server },
   { to: '/bandwidth', label: 'Bandwidth', icon: Network },
   { to: '/boq', label: 'BOQ vs Actual', icon: ClipboardList },
+  { to: '/deploy', label: 'BOQ to Code', icon: FileCode },
   { to: '/anomalies', label: 'Anomalies', icon: AlertTriangle },
   { to: '/resource-groups', label: 'Resource Groups', icon: FolderOpen },
   { to: '/settings', label: 'Settings', icon: Settings },

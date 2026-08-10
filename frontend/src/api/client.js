@@ -85,7 +85,7 @@ async function getSignInToken() {
   }
 }
 
-const LOCAL_ROUTES = ['/upload', '/boq/parse'];
+const LOCAL_ROUTES = ['/upload', '/boq'];
 
 // Attach Bearer token to every request
 api.interceptors.request.use(async (config) => {
@@ -140,5 +140,30 @@ export const uploadBoq = (file) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data);
 };
+
+/** Recover the Azure resources an estimate describes, without deploying them. */
+export const planBoq = (file, resourceGroup) => {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('resource_group', resourceGroup);
+  return api.post('/boq/plan', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+};
+
+/** Generate a Bicep or Terraform template for the estimate. */
+export const generateIac = (file, format, resourceGroup) => {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('format', format);
+  form.append('resource_group', resourceGroup);
+  return api.post('/boq/generate', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+};
+
+/** Chat about the estimate. The parsed BOQ is echoed back so nothing is stored. */
+export const chatAboutBoq = (body) =>
+  api.post('/boq/chat', body).then(r => r.data);
 
 export default api;

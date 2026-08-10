@@ -393,4 +393,89 @@ class AssistantAnswer(BaseModel):
     citations: list[dict[str, Any]]
 
 
+# --- BOQ / infrastructure-as-code -------------------------------------
+class BoqItemOut(BaseModel):
+    service_category: str
+    service_type: str
+    custom_name: str = ""
+    region: str = ""
+    description: str = ""
+    monthly_cost: float
+
+
+class BoqOut(BaseModel):
+    name: str
+    file_name: str
+    currency: str
+    items: list[BoqItemOut]
+    items_total: float
+    infrastructure_subtotal: float | None = None
+    managed_services: float | None = None
+    support: float | None = None
+    total_monthly: float
+
+
+class PlannedResourceOut(BaseModel):
+    kind: str
+    name: str
+    region: str
+    count: int
+    sku: str
+    size_gib: int | None = None
+    properties: dict[str, Any]
+    source_line: str
+    monthly_cost: float
+
+
+class UnplannedLineOut(BaseModel):
+    service_type: str
+    custom_name: str = ""
+    description: str = ""
+    monthly_cost: float
+    reason: str
+
+
+class IacPlanOut(BaseModel):
+    name: str
+    currency: str
+    resource_group: str
+    location: str
+    resources: list[PlannedResourceOut]
+    needs_review: list[UnplannedLineOut]
+    covered_monthly_cost: float
+    total_monthly_cost: float
+
+
+class IacTemplateOut(IacPlanOut):
+    format: Literal["bicep", "terraform"]
+    filename: str
+    content: str
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=4000)
+
+
+class BoqChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    # The parsed BOQ from POST /boq/parse, echoed back by the client. Nothing is
+    # persisted server-side, so the estimate never leaves the caller's session.
+    boq: BoqOut | None = None
+    history: list[ChatTurn] = Field(default_factory=list, max_length=20)
+    resource_group: str = Field(default="rg-boq", max_length=90)
+
+
+class ChatArtifactOut(BaseModel):
+    format: str
+    filename: str
+    content: str
+
+
+class BoqChatAnswer(BaseModel):
+    answer: str
+    used_tools: list[str]
+    artifacts: list[ChatArtifactOut] = Field(default_factory=list)
+
+
 ResourceDetailOut.model_rebuild()

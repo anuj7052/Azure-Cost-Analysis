@@ -10,6 +10,7 @@ import {
   BarChart3,
   Bell,
   Boxes,
+  FileCode,
   FileText,
   LayoutDashboard,
   Lock,
@@ -39,6 +40,7 @@ const NAV = [
   { href: "/security", label: "Security", icon: Lock },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/reports", label: "Reports", icon: FileText },
+  { href: "/boq", label: "BOQ to code", icon: FileCode },
   { href: "/assistant", label: "Assistant", icon: Sparkles },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

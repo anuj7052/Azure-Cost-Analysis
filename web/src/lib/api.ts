@@ -44,8 +44,35 @@ export async function apiFetch<T>(
   return body as T;
 }
 
-/** Filters shared by every cost-aware endpoint. */
-export type CostQuery = {
+/** Multipart POST. The browser must set its own boundary, so no Content-Type. */
+export async function uploadFetch<T>(
+  path: string,
+  fields: Record<string, string | File>,
+): Promise<T> {
+  const token = await acquireToken();
+  const form = new FormData();
+  Object.entries(fields).forEach(([key, value]) => form.append(key, value));
+
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    body: form,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: "no-store",
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = body?.error ?? {};
+    throw new ApiError(
+      response.status,
+      error.code ?? "unknown_error",
+      error.message ?? response.statusText,
+    );
+  }
+  return body as T;
+}
+
+/** Filters shared by every cost-aware endpoint. */export type CostQuery = {
   subscription_id?: string;
   currency?: string;
   /** Calendar month as YYYY-MM. Ignored when start+end are both set. */
@@ -171,6 +198,32 @@ export const api = {
       }),
     }),
   reports: () => apiFetch<ReportRun[]>("/reports"),
+
+  parseBoq: (file: File) => uploadFetch<Boq>("/boq/parse", { file }),
+  planBoq: (file: File, resourceGroup: string) =>
+    uploadFetch<IacPlan>("/boq/plan", { file, resource_group: resourceGroup }),
+  generateIac: (file: File, format: IacFormat, resourceGroup: string) =>
+    uploadFetch<IacTemplate>("/boq/generate", {
+      file,
+      format,
+      resource_group: resourceGroup,
+    }),
+  chatAboutBoq: (payload: {
+    message: string;
+    boq: Boq | null;
+    history: ChatTurn[];
+    resource_group: string;
+  }) =>
+    apiFetch<BoqChatAnswer>("/boq/chat", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  chatWithUpload: (file: File, message: string, resourceGroup: string) =>
+    uploadFetch<BoqChatAnswer>("/boq/chat/upload", {
+      file,
+      message,
+      resource_group: resourceGroup,
+    }),
 };
 
 // --- types mirroring the API schemas ---------------------------------
@@ -459,4 +512,74 @@ export interface ReportRun {
   state: string;
   blob_path: string;
   error: string | null;
+}
+
+// --- BOQ / infrastructure-as-code ------------------------------------
+export type IacFormat = "bicep" | "terraform";
+
+export interface BoqItem {
+  service_category: string;
+  service_type: string;
+  custom_name: string;
+  region: string;
+  description: string;
+  monthly_cost: number;
+}
+export interface Boq {
+  name: string;
+  file_name: string;
+  currency: string;
+  items: BoqItem[];
+  items_total: number;
+  infrastructure_subtotal: number | null;
+  managed_services: number | null;
+  support: number | null;
+  total_monthly: number;
+}
+export interface PlannedResource {
+  kind: string;
+  name: string;
+  region: string;
+  count: number;
+  sku: string;
+  size_gib: number | null;
+  properties: Record<string, string>;
+  source_line: string;
+  monthly_cost: number;
+}
+export interface UnplannedLine {
+  service_type: string;
+  custom_name: string;
+  description: string;
+  monthly_cost: number;
+  reason: string;
+}
+export interface IacPlan {
+  name: string;
+  currency: string;
+  resource_group: string;
+  location: string;
+  resources: PlannedResource[];
+  needs_review: UnplannedLine[];
+  covered_monthly_cost: number;
+  total_monthly_cost: number;
+}
+export interface IacTemplate extends IacPlan {
+  format: IacFormat;
+  filename: string;
+  content: string;
+}
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+export interface ChatArtifact {
+  format: string;
+  filename: string;
+  content: string;
+}
+export interface BoqChatAnswer {
+  answer: string;
+  used_tools: string[];
+  artifacts: ChatArtifact[];
 }

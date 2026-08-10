@@ -19,6 +19,7 @@ class Permission(StrEnum):
     MANAGE_RECOMMENDATIONS = "recommendations:manage"
     MANAGE_ALERT_RULES = "alerts:manage"
     RUN_REPORTS = "reports:run"
+    GENERATE_IAC = "iac:generate"
     MANAGE_CONNECTIONS = "connections:manage"
     MANAGE_USERS = "users:manage"
     VIEW_AUDIT_LOG = "audit:read"
@@ -32,6 +33,7 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
         Permission.MANAGE_RECOMMENDATIONS,
         Permission.MANAGE_ALERT_RULES,
         Permission.RUN_REPORTS,
+        Permission.GENERATE_IAC,
     },
     Role.ADMIN: set(Permission),
 }

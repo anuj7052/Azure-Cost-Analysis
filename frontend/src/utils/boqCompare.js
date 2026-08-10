@@ -39,6 +39,24 @@ const BUCKETS = [
 
 const OTHER = { key: 'other', label: 'Other services' };
 const BANDWIDTH_BUCKET = BUCKETS.find(b => b.key === 'bandwidth');
+const BACKUP_BUCKET = BUCKETS.find(b => b.key === 'backup');
+
+/**
+ * Azure Backup snapshots and Site Recovery cache are billed under the
+ * "Storage" service even though the money is spent on protection, which makes
+ * Storage look overspent and Backup look cheap. They are identifiable by the
+ * resources Azure creates for them, so route them to the Backup bucket.
+ *
+ * Deliberately narrow: an `-asrreplica` disk is a real managed disk that an
+ * estimate budgets for under storage, so it must stay where it is.
+ */
+function isBackupRow(row) {
+  const name = String(row.resource_name || '').toLowerCase();
+  const group = String(row.resource_group || '').toLowerCase();
+  return name.startsWith('azurebackup')
+    || name.includes('asrcache')
+    || group.startsWith('azurebackuprg');
+}
 
 /**
  * Pull the identifying hardware SKUs out of a piece of text.
@@ -337,7 +355,11 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR') {
   for (const row of rows) {
     // Egress meters hide under many services (Virtual Network, CDN, Storage),
     // so any data-transfer row is pulled into Bandwidth regardless of service.
-    const bucket = isBandwidthRow(row) ? BANDWIDTH_BUCKET : bucketFor(row.service);
+    const bucket = isBandwidthRow(row)
+      ? BANDWIDTH_BUCKET
+      : isBackupRow(row)
+        ? BACKUP_BUCKET
+        : bucketFor(row.service);
     const entry = actual.get(bucket.key) || { label: bucket.label, amount: 0, services: new Map(), rows: [] };
     entry.amount += row.cost;
     entry.services.set(row.service, (entry.services.get(row.service) || 0) + row.cost);

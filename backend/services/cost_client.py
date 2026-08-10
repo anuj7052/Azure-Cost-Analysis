@@ -12,7 +12,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import random
+import tempfile
 import time
 import httpx
 from datetime import datetime, date
@@ -30,9 +32,18 @@ MAX_CONCURRENT_QUERIES = 3
 MAX_RETRIES = 3
 MAX_RETRY_DELAY = 15.0
 CACHE_TTL_SECONDS = 600
+# Stale entries stay usable for a day so a throttled cold start still renders
+# yesterday's numbers instead of an empty dashboard.
+STALE_TTL_SECONDS = 24 * 60 * 60
+CACHE_FILE = os.path.join(
+    os.getenv("COST_CACHE_DIR") or tempfile.gettempdir(), "aca-cost-cache.json"
+)
 
 _query_gate = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
 _cache: Dict[str, tuple[float, Any]] = {}
+# Identical queries issued at the same moment (several pages mounting at once)
+# share a single Azure call instead of each burning a rate-limit token.
+_inflight: Dict[str, asyncio.Future] = {}
 
 # When Azure throttles us, every caller backs off until this moment instead of
 # queueing up more doomed requests (which is what makes the whole app hang).
@@ -58,6 +69,43 @@ def _start_cooldown(seconds: float) -> None:
     _throttled_until = max(_throttled_until, time.time() + seconds)
 
 
+def _load_cache() -> None:
+    """
+    Restore the cache from disk. The dev server restarts on every code change and
+    a cold, empty cache during a throttling window leaves the dashboard blank —
+    persisting it means restarts no longer cost the user their data.
+    """
+    try:
+        with open(CACHE_FILE, "r", encoding="utf-8") as fh:
+            saved = json.load(fh)
+    except (OSError, ValueError):
+        return
+    cutoff = time.time() - STALE_TTL_SECONDS
+    for key, entry in (saved or {}).items():
+        try:
+            expires_at, stored_at, value = entry
+        except (TypeError, ValueError):
+            continue
+        if stored_at >= cutoff:
+            _cache[key] = (expires_at, value)
+
+
+def _save_cache() -> None:
+    try:
+        now = time.time()
+        payload = {k: [exp, now, val] for k, (exp, val) in _cache.items()}
+        # Write via a temp file so a crash mid-write cannot corrupt the cache.
+        directory = os.path.dirname(CACHE_FILE) or "."
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=directory, delete=False
+        ) as fh:
+            json.dump(payload, fh)
+            tmp = fh.name
+        os.replace(tmp, CACHE_FILE)
+    except (OSError, TypeError, ValueError) as exc:
+        logger.debug("Could not persist cost cache: %s", exc)
+
+
 def _cache_key(url: str, body: dict) -> str:
     raw = url + json.dumps(body, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -69,7 +117,6 @@ def _cache_get(key: str):
         return None
     expires_at, value = hit
     if expires_at < time.time():
-        _cache.pop(key, None)
         return None
     return value
 
@@ -83,10 +130,13 @@ def _cache_get_stale(key: str):
 def _cache_put(key: str, value: Any) -> None:
     _cache[key] = (time.time() + CACHE_TTL_SECONDS, value)
     if len(_cache) > 500:  # keep the cache from growing unbounded
-        now = time.time()
+        # Only drop entries too old to serve as a throttling fallback; expired
+        # but recent ones are exactly what rescues a blank dashboard.
+        cutoff = time.time() - STALE_TTL_SECONDS + CACHE_TTL_SECONDS
         for k, (exp, _) in list(_cache.items()):
-            if exp < now:
+            if exp < cutoff:
                 _cache.pop(k, None)
+    _save_cache()
 
 
 def _retry_delay(resp: httpx.Response | None, attempt: int) -> float:
@@ -145,6 +195,33 @@ async def _run_paged_query(url: str, headers: dict, body: dict, timeout: int) ->
     if cached is not None:
         return cached
 
+    # Several pages mounting at once ask for the same data. Let the first caller
+    # do the work and have the rest await it, instead of firing duplicate
+    # queries that only serve to trigger throttling.
+    existing = _inflight.get(key)
+    if existing is not None:
+        return await asyncio.shield(existing)
+
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future = loop.create_future()
+    _inflight[key] = future
+    try:
+        pages = await _fetch_pages(url, headers, body, timeout, key)
+    except BaseException as exc:
+        if not future.done():
+            future.set_exception(exc)
+        # Nobody may be awaiting this future; stop asyncio warning about it.
+        future.exception()
+        raise
+    else:
+        if not future.done():
+            future.set_result(pages)
+        return pages
+    finally:
+        _inflight.pop(key, None)
+
+
+async def _fetch_pages(url: str, headers: dict, body: dict, timeout: int, key: str) -> List[dict]:
     pages: List[dict] = []
     next_url = url
     try:
@@ -153,15 +230,21 @@ async def _run_paged_query(url: str, headers: dict, body: dict, timeout: int) ->
                 data = await _post_query(client, next_url, headers, body)
                 pages.append(data)
                 next_url = data.get("properties", {}).get("nextLink")
-    except RateLimited:
+    except Exception:
+        # Throttling, a transport blip or an Azure 5xx should never blank the
+        # dashboard when we still hold a recent answer.
         stale = _cache_get_stale(key)
         if stale is not None:
-            logger.warning("Serving stale cached cost data while Azure is throttling")
+            logger.warning("Serving stale cached cost data (Azure unavailable or throttling)")
             return stale
         raise
 
     _cache_put(key, pages)
     return pages
+
+
+# Warm the in-memory cache from the last run so restarts don't blank the UI.
+_load_cache()
 
 
 def _build_date_range(months_back: int = 6) -> tuple[str, str]:
