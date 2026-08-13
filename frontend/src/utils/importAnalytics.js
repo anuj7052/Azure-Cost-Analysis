@@ -62,6 +62,110 @@ export function filterRows(rows, subscriptionIds) {
   return rows.filter(r => wanted.has(r.subscription_id));
 }
 
+/**
+ * Bring an import saved before multi-file support up to the current shape.
+ *
+ * Such an import has no `files` list and its rows carry no `file` tag, so
+ * merging a second month into it would keep the old rows while silently losing
+ * the old file's entry — leaving a set whose row data and file list disagree.
+ */
+function adoptLegacy(existing) {
+  if (!existing) return null;
+  if (existing.files?.length) return existing;
+  const name = existing.file_name || 'Previous import';
+  return {
+    ...existing,
+    files: [{
+      file_name: name,
+      source_type: existing.source_type,
+      rows_read: existing.rows_read || 0,
+      rows_used: existing.rows_used || 0,
+      months: existing.months || [],
+      dated: existing.dated,
+    }],
+    rows: (existing.rows || []).map(r => (r.file ? r : { ...r, file: name })),
+  };
+}
+
+/**
+ * Fold a freshly parsed file into the set already imported.
+ *
+ * Month-over-month questions ("why did this go up?") need more than one billing
+ * period loaded at once, and Azure exports one month per file. Re-uploading the
+ * same file name replaces its rows rather than doubling them.
+ *
+ * Two files covering the same month for the same subscription would double-count
+ * silently, so that overlap is detected and reported instead of hidden.
+ */
+export function mergeImports(existingRaw, incoming) {
+  const existing = adoptLegacy(existingRaw);
+  const name = incoming.file_name;
+  const stamped = (incoming.rows || []).map(r => ({ ...r, file: name }));
+
+  const files = [
+    ...(existing?.files || []).filter(f => f.file_name !== name),
+    {
+      file_name: name,
+      source_type: incoming.source_type,
+      rows_read: incoming.rows_read,
+      rows_used: incoming.rows_used,
+      months: incoming.months || [],
+      dated: incoming.dated,
+    },
+  ].sort((a, b) => (a.months[0] || '').localeCompare(b.months[0] || ''));
+
+  const rows = [
+    ...(existing?.rows || []).filter(r => r.file !== name),
+    ...stamped,
+  ];
+
+  // Flag any month+subscription pair contributed by more than one file.
+  const owners = new Map();
+  for (const r of rows) {
+    const key = `${r.month}::${r.subscription_id}`;
+    let set = owners.get(key);
+    if (!set) owners.set(key, (set = new Set()));
+    set.add(r.file || name);
+  }
+  const overlaps = [...owners.entries()]
+    .filter(([, set]) => set.size > 1)
+    .map(([key, set]) => ({ month: key.split('::')[0], files: [...set] }));
+
+  const subTotals = new Map();
+  const subNames = new Map();
+  for (const r of rows) {
+    subTotals.set(r.subscription_id, (subTotals.get(r.subscription_id) || 0) + r.cost);
+  }
+  for (const s of [...(existing?.subscriptions || []), ...(incoming.subscriptions || [])]) {
+    if (s.display_name) subNames.set(s.subscription_id, s.display_name);
+  }
+
+  return {
+    source: 'upload',
+    // The label the rest of the app shows for the active data source.
+    file_name: files.length === 1 ? name : `${files.length} files`,
+    files,
+    source_type: incoming.source_type,
+    rows_read: files.reduce((s, f) => s + (f.rows_read || 0), 0),
+    rows_used: files.reduce((s, f) => s + (f.rows_used || 0), 0),
+    columns: incoming.columns,
+    dated: files.every(f => f.dated !== false),
+    // An explicit correction the user made earlier must survive a new upload.
+    currency: existing?.currency || incoming.currency,
+    months: [...new Set(rows.map(r => r.month))].sort(),
+    overlaps,
+    subscriptions: [...subTotals.entries()]
+      .map(([subscription_id, total]) => ({
+        subscription_id,
+        display_name: subNames.get(subscription_id) || subscription_id,
+        state: 'Imported',
+        total_cost: round(total),
+      }))
+      .sort((a, b) => b.total_cost - a.total_cost),
+    rows,
+  };
+}
+
 /** Builds the `/api/costs` response shape. */
 export function buildCostSummary(rows, currency = 'USD') {
   const byMonth = new Map();

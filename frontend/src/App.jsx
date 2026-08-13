@@ -11,6 +11,7 @@ import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 // Lazy load pages — only loaded when user navigates to them
 const Dashboard      = lazy(() => import('./pages/Dashboard'));
 const CostTrends     = lazy(() => import('./pages/CostTrends'));
+const Compare        = lazy(() => import('./pages/Compare'));
 const ServiceAnalysis = lazy(() => import('./pages/ServiceAnalysis'));
 const Anomalies      = lazy(() => import('./pages/Anomalies'));
 const Settings       = lazy(() => import('./pages/Settings'));
@@ -61,6 +62,7 @@ function AppShell() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/trends" element={<CostTrends />} />
+            <Route path="/compare" element={<Compare />} />
             <Route path="/services" element={<ServiceAnalysis />} />
             <Route path="/anomalies" element={<Anomalies />} />
             <Route path="/resource-groups" element={<ResourceGroups />} />

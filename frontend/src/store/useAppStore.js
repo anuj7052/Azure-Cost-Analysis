@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { fetchTenants, fetchSubscriptions, fetchCosts, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth } from '../api/client';
-import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows } from '../utils/importAnalytics';
+import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
 import { evictAll, readCache, readPrefs, writeCache, writePrefs } from '../utils/persistCache';
 
 /**
@@ -333,6 +333,38 @@ export const useAppStore = create((set, get) => ({
       rgError: null,
     });
     get().recomputeImported();
+  },
+
+  /**
+   * Add one more file to the import instead of replacing what is loaded.
+   *
+   * Azure exports a single billing period per file, so answering "why did the
+   * bill go up?" means holding several of them at once.
+   */
+  addImport: (data) => {
+    const merged = mergeImports(get().imported, data);
+    get().setImported(merged);
+    return merged;
+  },
+
+  /** Drop one file from a multi-file import, keeping the rest loaded. */
+  removeImportFile: (fileName) => {
+    const { imported } = get();
+    if (!imported) return;
+    const remaining = (imported.files || []).filter(f => f.file_name !== fileName);
+    if (!remaining.length) return get().clearImported();
+
+    const rows = imported.rows.filter(r => r.file !== fileName);
+    let rebuilt = null;
+    for (const f of remaining) {
+      rebuilt = mergeImports(rebuilt, {
+        ...f,
+        currency: imported.currency,
+        subscriptions: imported.subscriptions,
+        rows: rows.filter(r => r.file === f.file_name),
+      });
+    }
+    get().setImported({ ...rebuilt, currency: imported.currency });
   },
 
   /**

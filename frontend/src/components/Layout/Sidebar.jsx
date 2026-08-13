@@ -1,9 +1,10 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, TrendingUp, Settings, AlertTriangle, Server, FolderOpen, Network, ClipboardList, FileCode } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, Settings, AlertTriangle, Server, FolderOpen, Network, ClipboardList, FileCode, GitCompareArrows } from 'lucide-react';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/trends', label: 'Cost Trends', icon: TrendingUp },
+  { to: '/compare', label: 'Month Compare', icon: GitCompareArrows },
   { to: '/services', label: 'Services', icon: Server },
   { to: '/bandwidth', label: 'Bandwidth', icon: Network },
   { to: '/boq', label: 'BOQ vs Actual', icon: ClipboardList },

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
-import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X, GitCompareArrows } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { deleteTenant, uploadCSV } from '../api/client';
 import AddTenantModal from '../components/TenantManager/AddTenantModal';
@@ -12,7 +13,8 @@ const ACCEPTED = '.csv,.tsv,.txt,.xlsx,.xlsm,.xls,.pdf';
 export default function Settings() {
   const {
     tenants, subscriptions, selectedSubscriptionIds, toggleSubscription,
-    removeTenantFromList, loadCosts, imported, setImported, clearImported, setImportCurrency,
+    removeTenantFromList, loadCosts, imported, addImport, clearImported, setImportCurrency,
+    removeImportFile,
   } = useAppStore();
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
@@ -37,16 +39,21 @@ export default function Settings() {
     }
   };
 
-  const importFile = async (file) => {
-    if (!file) return;
+  const importFiles = async (fileList) => {
+    const files = [...(fileList || [])];
+    if (!files.length) return;
     setUploading(true);
     try {
-      const data = await uploadCSV(file);
-      setImported(data);
-      toast.success(
-        `${data.file_name} imported — ${data.rows_used.toLocaleString()} rows, ` +
-        `${data.months.length} month(s), ${data.subscriptions.length} subscription(s)`
-      );
+      // Sequential: each upload folds into the previous result, and the API is
+      // the same rate-limited backend either way.
+      for (const file of files) {
+        const data = await uploadCSV(file);
+        const merged = addImport(data);
+        toast.success(
+          `${data.file_name} added — ${data.rows_used.toLocaleString()} rows, ` +
+          `${merged.months.length} month(s) loaded in total`
+        );
+      }
     } catch (err) {
       const detail = err.response?.data?.detail || err.message;
       toast.error(
@@ -58,14 +65,6 @@ export default function Settings() {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
     }
-  };
-
-  const handleFileUpload = (e) => importFile(e.target.files?.[0]);
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragging(false);
-    importFile(e.dataTransfer.files?.[0]);
   };
 
   return (
@@ -175,10 +174,11 @@ export default function Settings() {
 
       {/* File import */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 elevated">
-        <h2 className="text-sm font-semibold text-white mb-1">Import cost file</h2>
+        <h2 className="text-sm font-semibold text-white mb-1">Import cost files</h2>
         <p className="text-xs text-slate-500 mb-4">
-          Upload an Azure cost export as <strong className="text-slate-400">CSV, Excel or PDF</strong>.
-          It replaces live API data for this session and stays fully filterable by subscription and date.
+          Upload Azure cost exports as <strong className="text-slate-400">CSV, Excel or PDF</strong>.
+          Add <strong className="text-slate-400">one file per month</strong> to unlock the
+          month-over-month comparison that explains why the bill moved.
         </p>
 
         {imported ? (
@@ -203,10 +203,64 @@ export default function Settings() {
             </div>
 
             <div className="grid grid-cols-3 gap-2">
+              <SummaryStat label="Files" value={imported.files?.length ?? 1} />
               <SummaryStat label="Months" value={imported.months.length} />
-              <SummaryStat label="Subscriptions" value={imported.subscriptions.length} />
               <SummaryStat label="Period" value={`${imported.months[0] ?? '—'} → ${imported.months.at(-1) ?? '—'}`} />
             </div>
+
+            {(imported.files?.length ?? 0) > 0 && (
+              <div className="space-y-1.5">
+                {imported.files.map(f => (
+                  <div key={f.file_name} className="flex items-center gap-2 bg-slate-800/60 rounded-lg px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-slate-200 truncate">{f.file_name}</p>
+                      <p className="text-[11px] text-slate-500">
+                        {f.months.join(', ') || 'no month'} · {f.rows_used.toLocaleString()} rows
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => removeImportFile(f.file_name)}
+                      title="Remove just this file"
+                      className="text-slate-500 hover:text-red-400 transition p-1 shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {imported.overlaps?.length > 0 && (
+              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
+                {imported.overlaps.length} month/subscription pair(s) appear in more than one file
+                (e.g. <span className="font-semibold">{imported.overlaps[0].month}</span>), so those
+                costs are counted twice. Remove the overlapping file to get accurate totals.
+              </p>
+            )}
+
+            <DropZone
+              accepted={ACCEPTED}
+              uploading={uploading}
+              dragging={dragging}
+              setDragging={setDragging}
+              onFiles={importFiles}
+              title={uploading ? 'Parsing…' : 'Add another month'}
+              subtitle={
+                imported.months.length < 2
+                  ? 'Add a second month to unlock the comparison'
+                  : `${imported.months.length} months loaded — add more or compare them`
+              }
+            />
+
+            {imported.months.length > 1 && (
+              <Link
+                to="/compare"
+                className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-[#fff] text-xs font-medium transition"
+              >
+                <GitCompareArrows className="w-3.5 h-3.5" />
+                Compare months
+              </Link>
+            )}
 
             <label className="flex items-center gap-2 text-xs text-slate-400">
               <span>Currency</span>
@@ -242,28 +296,17 @@ export default function Settings() {
             </button>
           </div>
         ) : (
-          <label
-            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={handleDrop}
-            className={`flex flex-col items-center gap-3 border-2 border-dashed rounded-xl p-8 cursor-pointer transition ${
-              uploading || dragging ? 'border-blue-500 bg-blue-950/20' : 'border-slate-700 hover:border-slate-600'
-            }`}
-          >
-            <input ref={fileRef} type="file" accept={ACCEPTED} onChange={handleFileUpload} className="sr-only" disabled={uploading} />
-            <Upload className={`w-8 h-8 ${uploading ? 'text-blue-400 animate-bounce' : 'text-slate-500'}`} />
-            <div className="text-center">
-              <p className="text-sm font-medium text-slate-300">
-                {uploading ? 'Parsing your file…' : 'Drop a file here, or click to browse'}
-              </p>
-              <p className="text-xs text-slate-600 mt-0.5">Max 20 MB</p>
-            </div>
-            <div className="flex items-center gap-4 text-[11px] text-slate-500">
-              <span className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> CSV</span>
-              <span className="flex items-center gap-1.5"><FileSpreadsheet className="w-3.5 h-3.5" /> Excel</span>
-              <span className="flex items-center gap-1.5"><FileType className="w-3.5 h-3.5" /> PDF</span>
-            </div>
-          </label>
+          <DropZone
+            accepted={ACCEPTED}
+            uploading={uploading}
+            dragging={dragging}
+            setDragging={setDragging}
+            onFiles={importFiles}
+            fileRef={fileRef}
+            large
+            title={uploading ? 'Parsing your file…' : 'Drop files here, or click to browse'}
+            subtitle="Max 20 MB per file · select several months at once"
+          />
         )}
 
         <div className="mt-4 p-3 bg-slate-800/60 rounded-xl space-y-1">
@@ -291,5 +334,47 @@ function SummaryStat({ label, value }) {
       <p className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">{label}</p>
       <p className="text-xs font-bold text-white mt-0.5 truncate">{value}</p>
     </div>
+  );
+}
+
+/**
+ * The one place files enter the app. It is shown both before the first import
+ * and alongside an existing one, because adding a second month is the normal
+ * next step — not an edge case hidden behind a link.
+ */
+function DropZone({
+  accepted, uploading, dragging, setDragging, onFiles, fileRef, large, title, subtitle,
+}) {
+  return (
+    <label
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => { e.preventDefault(); setDragging(false); onFiles(e.dataTransfer.files); }}
+      className={`flex flex-col items-center gap-2 border-2 border-dashed rounded-xl cursor-pointer transition ${
+        large ? 'p-8 gap-3' : 'p-5'
+      } ${uploading || dragging ? 'border-blue-500 bg-blue-950/20' : 'border-slate-700 hover:border-blue-600/60 hover:bg-slate-800/40'}`}
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept={accepted}
+        multiple
+        onChange={(e) => onFiles(e.target.files)}
+        className="sr-only"
+        disabled={uploading}
+      />
+      <Upload className={`${large ? 'w-8 h-8' : 'w-5 h-5'} ${uploading ? 'text-blue-400 animate-bounce' : 'text-slate-500'}`} />
+      <div className="text-center">
+        <p className="text-sm font-medium text-slate-200">{title}</p>
+        <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
+      </div>
+      {large && (
+        <div className="flex items-center gap-4 text-[11px] text-slate-500">
+          <span className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> CSV</span>
+          <span className="flex items-center gap-1.5"><FileSpreadsheet className="w-3.5 h-3.5" /> Excel</span>
+          <span className="flex items-center gap-1.5"><FileType className="w-3.5 h-3.5" /> PDF</span>
+        </div>
+      )}
+    </label>
   );
 }
