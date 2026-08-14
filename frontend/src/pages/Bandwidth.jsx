@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import {
   ArrowDownToLine, ArrowUpFromLine, Gauge, Network, Repeat, Layers,
+  ChevronDown, ChevronRight,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -229,8 +230,10 @@ export default function Bandwidth() {
       {/* ── Meter table ──────────────────────────────────────────────── */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
         <h2 className="text-sm font-semibold text-slate-300 mb-1">Data Transfer Meters</h2>
-        <p className="text-xs text-slate-500 mb-4">Exact size and amount per Azure meter</p>
-        <MeterTable meters={bw?.meters} loading={loading} currency={currency} total={total} />
+        <p className="text-xs text-slate-500 mb-4">
+          Exact size and amount per Azure meter — click any row for the full breakdown
+        </p>
+        <MeterTable meters={bw?.meters} loading={loading} currency={currency} total={total} subMap={subMap} />
       </div>
 
       <PortalGuide {...BANDWIDTH_GUIDE} />
@@ -316,6 +319,7 @@ export default function Bandwidth() {
                 meters={metersFor(detail === 'cost' || detail === 'rate' ? 'total' : detail)}
                 currency={currency}
                 total={total}
+                subMap={subMap}
                 compact
               />
             </section>
@@ -407,13 +411,21 @@ function SubscriptionBandwidthTable({ rows, loading, currency, total, subMap }) 
   );
 }
 
-function MeterTable({ meters, loading, currency, total, compact = false }) {
+function MeterTable({ meters, loading, currency, total, compact = false, subMap = {} }) {
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (key) => setOpen(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
+
   if (loading) {
     return <div className="space-y-2">{[...Array(5)].map((_, i) => <div key={i} className="h-10 bg-slate-800 rounded-lg animate-pulse" />)}</div>;
   }
   if (!meters?.length) {
     return <p className="text-slate-500 text-sm text-center py-6">No meters in this category</p>;
   }
+  const span = compact ? 4 : 7;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -425,35 +437,178 @@ function MeterTable({ meters, loading, currency, total, compact = false }) {
             <th className="pb-2 font-medium text-right">GB</th>
             {!compact && <th className="pb-2 font-medium text-right">Share</th>}
             <th className="pb-2 font-medium text-right">Amount</th>
+            {!compact && <th className="pb-2 w-8" />}
           </tr>
         </thead>
         <tbody>
-          {meters.map((m, i) => (
-            <tr key={`${m.meter}-${i}`} className="border-b border-slate-800/50 hover:bg-slate-800/30">
-              <td className="py-2.5 text-slate-200">
-                {m.meter}
-                {!compact && <span className="block text-[11px] text-slate-500">{m.category}</span>}
-              </td>
-              {!compact && (
-                <td className="py-2.5">
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full border ${
-                    m.direction === 'egress'  ? 'border-rose-500/40 text-rose-300' :
-                    m.direction === 'ingress' ? 'border-emerald-500/40 text-emerald-300' :
-                    m.direction === 'intra'   ? 'border-violet-500/40 text-violet-300' :
-                                                'border-slate-600 text-slate-400'
-                  }`}>{m.direction}</span>
-                </td>
-              )}
-              <td className="py-2.5 text-right text-white font-medium">{formatBytes(m.bytes)}</td>
-              <td className="py-2.5 text-right text-slate-400 tabular-nums">{(m.bytes / GB).toFixed(2)}</td>
-              {!compact && (
-                <td className="py-2.5 text-right text-slate-400">{pctOf(m.bytes, total).toFixed(1)}%</td>
-              )}
-              <td className="py-2.5 text-right text-slate-200">{formatAmount(m.cost, currency)}</td>
-            </tr>
-          ))}
+          {meters.map((m, i) => {
+            const key = `${m.meter}-${i}`;
+            const expanded = open.has(key);
+            const Chevron = expanded ? ChevronDown : ChevronRight;
+            return (
+              <Fragment key={key}>
+                <tr
+                  onClick={() => toggle(key)}
+                  className="border-b border-slate-800/50 hover:bg-slate-800/30 cursor-pointer"
+                >
+                  <td className="py-2.5 text-slate-200">
+                    {m.meter}
+                    {!compact && <span className="block text-[11px] text-slate-500">{m.category}</span>}
+                  </td>
+                  {!compact && (
+                    <td className="py-2.5">
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full border ${
+                        m.direction === 'egress'  ? 'border-rose-500/40 text-rose-300' :
+                        m.direction === 'ingress' ? 'border-emerald-500/40 text-emerald-300' :
+                        m.direction === 'intra'   ? 'border-violet-500/40 text-violet-300' :
+                                                    'border-slate-600 text-slate-400'
+                      }`}>{m.direction}</span>
+                    </td>
+                  )}
+                  <td className="py-2.5 text-right text-white font-medium">
+                    {m.bytes
+                      ? formatBytes(m.bytes)
+                      : <span className="text-slate-500">{(m.quantity ?? 0).toLocaleString('en-IN')} {m.unit || ''}</span>}
+                  </td>
+                  <td className="py-2.5 text-right text-slate-400 tabular-nums">
+                    {m.bytes ? (m.bytes / GB).toFixed(2) : <span className="text-slate-600">—</span>}
+                  </td>
+                  {!compact && (
+                    <td className="py-2.5 text-right text-slate-400">
+                      {m.bytes ? `${pctOf(m.bytes, total).toFixed(1)}%` : <span className="text-slate-600">—</span>}
+                    </td>
+                  )}
+                  <td className="py-2.5 text-right text-slate-200">{formatAmount(m.cost, currency)}</td>
+                  {!compact && (
+                    <td className="py-2.5 text-right">
+                      <Chevron className="w-4 h-4 text-slate-500 inline" />
+                    </td>
+                  )}
+                </tr>
+
+                {expanded && (
+                  <tr className="border-b border-slate-800 bg-slate-950/40">
+                    <td colSpan={span} className="px-3 py-4">
+                      <MeterDetail meter={m} currency={currency} total={total} subMap={subMap} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const DIRECTION_HINT = {
+  egress: 'Data leaving Azure for the internet or another region — this is what Azure charges for.',
+  ingress: 'Data coming into Azure. Normally free, so any cost here is the service, not the transfer.',
+  intra: 'Movement between availability zones inside one region, billed at a reduced rate.',
+  other: 'A network charge that is not a simple in/out transfer — a gateway, firewall or processing fee.',
+};
+
+/** Everything known about one meter: what it is, and where the charge came from. */
+function MeterDetail({ meter, currency, total, subMap }) {
+  const money = (v) => formatAmount(v, currency);
+  const gb = meter.bytes / GB;
+  // Gateways and firewalls bill by the hour, so they have a cost but no volume.
+  const volumeless = !meter.bytes;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-[11px] text-slate-300 bg-slate-800/50 border border-slate-700/60 rounded-lg px-3 py-2 leading-relaxed">
+        <span className="font-semibold text-white">{meter.meter}</span> — {DIRECTION_HINT[meter.direction] || DIRECTION_HINT.other}
+        {volumeless ? (
+          <>
+            {' '}It is billed per {meter.unit || 'unit'} rather than per GB, so it carries no transfer
+            volume — {(meter.quantity ?? 0).toLocaleString('en-IN')} {meter.unit || 'units'} cost {money(meter.cost)}.
+          </>
+        ) : (
+          <>
+            {' '}It moved {formatBytes(meter.bytes)} ({gb.toFixed(2)} GB) for {money(meter.cost)}
+            {meter.cost_per_gb ? `, working out at ${formatAmountFull(meter.cost_per_gb, currency)} per GB` : ''}
+            {' '}— {pctOf(meter.bytes, total).toFixed(1)}% of all transfer.
+          </>
+        )}
+      </p>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <DetailStat label="Billed quantity" value={`${(meter.quantity ?? 0).toLocaleString('en-IN')}`} hint={meter.unit || 'units'} />
+        <DetailStat label="Unit rate" value={meter.unit_rate == null ? '—' : formatAmountFull(meter.unit_rate, currency)} hint={meter.unit ? `per ${meter.unit}` : ''} />
+        <DetailStat label="Cost per GB" value={meter.cost_per_gb ? formatAmountFull(meter.cost_per_gb, currency) : 'n/a'} hint={volumeless ? 'not a volume charge' : ''} />
+        <DetailStat label="Category" value={meter.category || '—'} hint={meter.regions?.length ? meter.regions.slice(0, 3).join(', ') : ''} />
+      </div>
+
+      {!!meter.months?.length && (
+        <section>
+          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Month by month</h4>
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-slate-500 border-b border-slate-800">
+                <th className="text-left font-medium pb-1.5">Month</th>
+                <th className="text-right font-medium pb-1.5">Size</th>
+                <th className="text-right font-medium pb-1.5">GB</th>
+                <th className="text-right font-medium pb-1.5">Quantity</th>
+                <th className="text-right font-medium pb-1.5">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {meter.months.map(mm => (
+                <tr key={mm.month} className="border-b border-slate-800/50">
+                  <td className="py-1.5 text-slate-300">{mm.month}</td>
+                  <td className="py-1.5 text-right text-white">
+                    {mm.bytes ? formatBytes(mm.bytes) : <span className="text-slate-600">—</span>}
+                  </td>
+                  <td className="py-1.5 text-right text-slate-400 tabular-nums">
+                    {mm.bytes ? (mm.bytes / GB).toFixed(2) : <span className="text-slate-600">—</span>}
+                  </td>
+                  <td className="py-1.5 text-right text-slate-400 tabular-nums">{mm.quantity}</td>
+                  <td className="py-1.5 text-right text-slate-200">{money(mm.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      <div className="grid md:grid-cols-2 gap-4">
+        {!!meter.subscriptions?.length && (
+          <section>
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Which subscriptions</h4>
+            <div className="space-y-1.5">
+              {meter.subscriptions.map(s => (
+                <div key={s.subscription_id} className="flex items-center justify-between gap-3 bg-slate-800/40 rounded-lg px-3 py-2">
+                  <span className="text-[11px] text-slate-300 truncate">{subMap[s.subscription_id] || s.subscription_id}</span>
+                  <span className="text-[11px] text-white shrink-0">
+                    {s.bytes ? `${formatBytes(s.bytes)} · ` : ''}{money(s.cost)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {!!meter.resources?.length && (
+          <section>
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Top resources</h4>
+            <div className="space-y-1.5">
+              {meter.resources.map(r => (
+                <div key={r.name} className="flex items-center justify-between gap-3 bg-slate-800/40 rounded-lg px-3 py-2">
+                  <span className="text-[11px] text-slate-300 truncate">
+                    {r.name}
+                    {r.resource_group && <span className="block text-slate-500">{r.resource_group}</span>}
+                  </span>
+                  <span className="text-[11px] text-white shrink-0">
+                    {r.bytes ? `${formatBytes(r.bytes)} · ` : ''}{money(r.cost)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   );
 }

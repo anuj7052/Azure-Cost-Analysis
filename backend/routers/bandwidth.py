@@ -6,7 +6,11 @@ from core.db import get_db
 from models.schemas import BandwidthRequest, BandwidthResponse
 from routers.costs import _get_token
 from services.bandwidth import build_bandwidth_report
-from services.cost_client import query_usage, friendly_error, summarise_errors
+from services.cost_client import (
+    gather_by_subscription,
+    query_usage,
+    summarise_errors,
+)
 
 router = APIRouter(prefix="/api/bandwidth", tags=["bandwidth"])
 
@@ -24,22 +28,18 @@ async def get_bandwidth(
     """
     token = await _get_token(body.tenant_id, current_user, db)
 
-    all_records = []
-    errors = []
-    for sub_id in body.subscription_ids:
-        try:
-            records = await query_usage(
-                token=token,
-                subscription_id=sub_id,
-                months=body.months,
-                group_by=["MeterCategory", "MeterSubcategory", "Meter"],
-                granularity=body.granularity,
-                from_date=body.from_date,
-                to_date=body.to_date,
-            )
-            all_records.extend(records)
-        except Exception as exc:
-            errors.append({"subscription_id": sub_id, "error": friendly_error(exc)})
+    async def read_sub(sub_id: str):
+        return await query_usage(
+            token=token,
+            subscription_id=sub_id,
+            months=body.months,
+            group_by=["MeterCategory", "MeterSubcategory", "Meter"],
+            granularity=body.granularity,
+            from_date=body.from_date,
+            to_date=body.to_date,
+        )
+
+    all_records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
 
     if not all_records and errors:
         raise HTTPException(status_code=502, detail=summarise_errors(errors, "bandwidth data"))

@@ -59,6 +59,15 @@ UNIT_TO_BYTES = {
 }
 
 
+# Units that measure time or operations rather than volume. A NAT gateway or
+# firewall billed per hour is a network charge, but 744 hours is not 744 GB.
+NON_DATA_UNITS = (
+    "hour", "day", "month", "minute", "second", "operation", "request",
+    "transaction", "message", "instance", "node", "count", "connection",
+    "query", "event",
+)
+
+
 def _norm(value: Any) -> str:
     return (value or "").strip().lower()
 
@@ -76,6 +85,8 @@ def is_bandwidth_record(rec: Dict[str, Any]) -> bool:
 def detect_unit_bytes(rec: Dict[str, Any]) -> int:
     """Resolve how many bytes one unit of UsageQuantity represents."""
     unit = _norm(rec.get("UnitOfMeasure") or rec.get("unitOfMeasure"))
+    if any(u in unit for u in NON_DATA_UNITS):
+        return 0  # charged by time or operation, so it carries no volume
     if unit in UNIT_TO_BYTES:
         return UNIT_TO_BYTES[unit]
     for key, factor in UNIT_TO_BYTES.items():
@@ -167,13 +178,54 @@ def build_bandwidth_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "bytes": 0.0,
                 "cost": 0.0,
                 "quantity": 0.0,
+                "unit": "",
+                "_months": {},
+                "_subs": {},
+                "_resources": {},
+                "_regions": set(),
             },
         )
         meter["bytes"] += size_bytes
         meter["cost"] += cost
         meter["quantity"] += qty
+        if not meter["unit"]:
+            meter["unit"] = _norm(rec.get("UnitOfMeasure") or rec.get("unitOfMeasure"))
+        region = rec.get("ResourceLocation") or rec.get("resourceLocation")
+        if region:
+            meter["_regions"].add(region)
 
         month_key = _record_month(rec)
+
+        # Per-meter drilldowns, so a row can explain where its own charge came from.
+        mm = meter["_months"].setdefault(
+            month_key, {"month": month_key, "bytes": 0.0, "cost": 0.0, "quantity": 0.0}
+        )
+        mm["bytes"] += size_bytes
+        mm["cost"] += cost
+        mm["quantity"] += qty
+
+        sub_id = rec.get("SubscriptionId") or "unknown"
+        ms = meter["_subs"].setdefault(
+            sub_id, {"subscription_id": sub_id, "bytes": 0.0, "cost": 0.0}
+        )
+        ms["bytes"] += size_bytes
+        ms["cost"] += cost
+
+        res_name = rec.get("ResourceId") or rec.get("ResourceGroup") or rec.get("ResourceGroupName")
+        if res_name:
+            res_name = str(res_name).rsplit("/", 1)[-1]
+            mr = meter["_resources"].setdefault(
+                res_name,
+                {
+                    "name": res_name,
+                    "resource_group": rec.get("ResourceGroup") or rec.get("ResourceGroupName") or "",
+                    "bytes": 0.0,
+                    "cost": 0.0,
+                },
+            )
+            mr["bytes"] += size_bytes
+            mr["cost"] += cost
+
         month = months.setdefault(
             month_key,
             {"month": month_key, "egress_bytes": 0.0, "ingress_bytes": 0.0,
@@ -183,7 +235,6 @@ def build_bandwidth_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         month["total_bytes"] += size_bytes
         month["cost"] += cost
 
-        sub_id = rec.get("SubscriptionId") or "unknown"
         sub = subs.setdefault(
             sub_id,
             {
@@ -218,6 +269,35 @@ def build_bandwidth_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         item["bytes"] = round(item["bytes"])
         item["cost"] = round(item["cost"], 2)
         return item
+
+    def _finish_meter(meter: Dict[str, Any]) -> Dict[str, Any]:
+        """Attach the per-meter drilldowns and drop the internal accumulators."""
+        by_month = meter.pop("_months", {})
+        by_sub = meter.pop("_subs", {})
+        by_res = meter.pop("_resources", {})
+        regions = meter.pop("_regions", set())
+
+        meter["regions"] = sorted(regions)
+        meter["cost_per_gb"] = (
+            round(meter["cost"] / (meter["bytes"] / GB), 4) if meter["bytes"] else 0.0
+        )
+        meter["unit_rate"] = (
+            round(meter["cost"] / meter["quantity"], 4) if meter["quantity"] else None
+        )
+        meter["quantity"] = round(meter["quantity"], 3)
+        meter["months"] = [
+            {**m, "bytes": round(m["bytes"]), "cost": round(m["cost"], 2),
+             "quantity": round(m["quantity"], 3)}
+            for m in sorted(by_month.values(), key=lambda m: m["month"])
+        ]
+        meter["subscriptions"] = [
+            _round(dict(s)) for s in sorted(by_sub.values(), key=lambda s: s["cost"], reverse=True)
+        ]
+        meter["resources"] = [
+            _round(dict(r))
+            for r in sorted(by_res.values(), key=lambda r: r["cost"], reverse=True)[:10]
+        ]
+        return _round(meter)
 
     def _finish_sub(sub: Dict[str, Any]) -> Dict[str, Any]:
         """Add the derived rate / meter fields and drop the internal accumulator."""
@@ -254,7 +334,7 @@ def build_bandwidth_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             for m in month_list
         ],
         "meters": [
-            _round(m) for m in sorted(meters.values(), key=lambda m: m["cost"], reverse=True)
+            _finish_meter(m) for m in sorted(meters.values(), key=lambda m: m["cost"], reverse=True)
         ],
         "by_subscription": [
             _finish_sub(s)

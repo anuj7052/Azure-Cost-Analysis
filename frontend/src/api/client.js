@@ -101,6 +101,7 @@ api.interceptors.request.use(async (config) => {
 
 export const fetchTenants = () => api.get('/tenants').then(r => r.data);
 export const addTenant = (body) => api.post('/tenants', body).then(r => r.data);
+export const addSessionToken = (body) => api.post('/tenants/token', body).then(r => r.data);
 export const deleteTenant = (tenantId) => api.delete(`/tenants/${tenantId}`);
 
 export const fetchSubscriptions = (tenantId) =>
@@ -108,6 +109,10 @@ export const fetchSubscriptions = (tenantId) =>
 
 export const fetchCosts = (body) =>
   api.post('/costs', body).then(r => r.data);
+
+/** Per-meter monthly rows — the granularity the month comparison needs. */
+export const fetchCostRows = (body) =>
+  api.post('/costs/rows', body).then(r => r.data);
 
 export const fetchRgCosts = (body) =>
   api.post('/costs/rg', body).then(r => r.data);

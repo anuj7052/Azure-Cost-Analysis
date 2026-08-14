@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
+import json
 import re
 
 
@@ -8,7 +9,10 @@ import re
 class TenantInfo(BaseModel):
     tenant_id: str
     tenant_name: str
-    source: str = "delegated"  # "delegated" | "service_principal"
+    source: str = "delegated"  # "delegated" | "service_principal" | "session_token"
+    expires_at: Optional[str] = None      # session tokens only
+    account: Optional[str] = None         # who the session token belongs to
+    subscription_count: Optional[int] = None
 
 
 class SubscriptionInfo(BaseModel):
@@ -16,6 +20,47 @@ class SubscriptionInfo(BaseModel):
     display_name: str
     tenant_id: str
     state: str
+
+
+class AddSessionTokenRequest(BaseModel):
+    """A raw Azure management access token pasted by the user."""
+    access_token: str
+    tenant_name: Optional[str] = None
+
+    @field_validator("access_token")
+    @classmethod
+    def strip_bearer(cls, v: str) -> str:
+        """Accept whatever the user pasted and dig the raw JWT out of it.
+
+        People paste the whole `az account get-access-token` JSON blob far more
+        often than the bare token, so pull `accessToken` out of it rather than
+        making them edit the text by hand.
+        """
+        v = (v or "").strip()
+
+        # Whole JSON output from `az account get-access-token`.
+        if v.startswith("{"):
+            try:
+                blob = json.loads(v)
+            except ValueError:
+                raise ValueError(
+                    "That looks like JSON but it could not be parsed. Paste the full "
+                    "output of `az account get-access-token`, or just the accessToken value."
+                )
+            token = blob.get("accessToken") or blob.get("access_token")
+            if not token:
+                raise ValueError("That JSON has no 'accessToken' field.")
+            v = str(token).strip()
+
+        v = v.strip().strip('"').strip("'").strip()
+        if v.lower().startswith("bearer "):
+            v = v[7:].strip()
+        # A token copied out of a terminal can arrive with wrapped lines; a JWT
+        # never contains whitespace, so anything in the middle is safe to drop.
+        v = "".join(v.split())
+        if not v:
+            raise ValueError("Access token is required")
+        return v
 
 
 class AddTenantRequest(BaseModel):
@@ -77,6 +122,27 @@ class CostQueryResponse(BaseModel):
     top_services: List[dict]          # [{ name, cost, mom_change_pct }]
     anomalies: List[dict]             # [{ service, month, pct_change, reason }]
     savings: List[dict]               # [{ service, month, pct_change }]
+
+
+class CostRow(BaseModel):
+    """One month of one meter — the granularity month-over-month analysis needs."""
+    month: str                        # "2026-07"
+    cost: float
+    quantity: float = 0.0
+    unit_of_measure: str = ""
+    service: str = ""
+    meter: str = ""
+    resource_group: str = ""
+    resource_name: str = ""
+    subscription_id: str = ""
+    region: str = ""
+
+
+class CostRowsResponse(BaseModel):
+    rows: List[CostRow]
+    months: List[str]
+    currency: str = "USD"
+    errors: List[dict] = []
 
 
 # ── Services ───────────────────────────────────────────────────────────────

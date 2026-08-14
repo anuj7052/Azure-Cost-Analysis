@@ -18,6 +18,17 @@ async def init_db():
                 created_at  TEXT    DEFAULT (datetime('now'))
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS session_tokens (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id    TEXT    NOT NULL UNIQUE,
+                tenant_name  TEXT    NOT NULL,
+                access_token TEXT    NOT NULL,
+                expires_at   TEXT,
+                account      TEXT,
+                created_at   TEXT    DEFAULT (datetime('now'))
+            )
+        """)
         await db.commit()
 
 

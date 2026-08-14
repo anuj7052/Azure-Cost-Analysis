@@ -1,11 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException
 import aiosqlite
 from auth.dependencies import get_current_user
-from services.azure_mgmt import get_sp_token
-from services.cost_client import query_costs, friendly_error, summarise_errors
-from services.analysis import aggregate_by_month, build_summary, aggregate_by_rg, aggregate_daily
+from services.token_resolver import resolve_tenant_token
+from services.cost_client import (
+    gather_by_subscription,
+    query_costs,
+    query_usage,
+    friendly_error,
+    summarise_errors,
+)
+from services.analysis import (
+    aggregate_by_month,
+    build_summary,
+    aggregate_by_rg,
+    aggregate_daily,
+    to_cost_rows,
+)
 from models.schemas import (
     CostQueryRequest, CostQueryResponse,
+    CostRow, CostRowsResponse,
     RgCostRequest, RgCostResponse, RgCostItem,
     DailyCostRequest, DailyCostResponse, DailyCostItem,
 )
@@ -25,21 +38,7 @@ async def get_costs(
     Aggregates data from all subscriptions and returns analysis summary.
     """
     # Determine token
-    if body.tenant_id == current_user.get("tenant_id"):
-        token = current_user["token"]
-    else:
-        async with db.execute(
-            "SELECT client_id, client_secret FROM service_principals WHERE tenant_id = ?",
-            (body.tenant_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-        if not row:
-            token = current_user["token"]
-        else:
-            try:
-                token = get_sp_token(body.tenant_id, row["client_id"], row["client_secret"])
-            except RuntimeError as exc:
-                raise HTTPException(status_code=502, detail=str(exc))
+    token = await resolve_tenant_token(body.tenant_id, current_user, db)
 
     # Query each subscription and combine
     all_records = []
@@ -71,19 +70,46 @@ async def get_costs(
 
 async def _get_token(body_tenant_id: str, current_user: dict, db: aiosqlite.Connection) -> str:
     """Helper: resolve token for a given tenant_id."""
-    if body_tenant_id == current_user.get("tenant_id"):
-        return current_user["token"]
-    async with db.execute(
-        "SELECT client_id, client_secret FROM service_principals WHERE tenant_id = ?",
-        (body_tenant_id,),
-    ) as cursor:
-        row = await cursor.fetchone()
-    if not row:
-        return current_user["token"]
-    try:
-        return get_sp_token(body_tenant_id, row["client_id"], row["client_secret"])
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+    return await resolve_tenant_token(body_tenant_id, current_user, db)
+
+
+@router.post("/rows", response_model=CostRowsResponse)
+async def get_cost_rows(
+    body: CostQueryRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Monthly cost *and usage quantity* per meter, flattened one row per month.
+
+    This is the same shape the CSV/Excel import produces, so the month-over-month
+    comparison works identically on live Azure data and on an uploaded file —
+    including splitting a rise into "used more" versus "charged more per unit",
+    which needs the quantity alongside the cost.
+    """
+    token = await _get_token(body.tenant_id, current_user, db)
+
+    async def read_sub(sub_id: str):
+        return await query_usage(
+            token=token,
+            subscription_id=sub_id,
+            months=body.months,
+            # Three dimensions is the most the Cost Management query API accepts.
+            group_by=["ServiceName", "ResourceGroupName", "Meter"],
+            granularity="Monthly",
+            from_date=body.from_date,
+            to_date=body.to_date,
+        )
+
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+
+    if not records and errors:
+        raise HTTPException(status_code=502, detail=summarise_errors(errors, "cost detail"))
+
+    rows = [CostRow(**r) for r in to_cost_rows(records)]
+    months = sorted({r.month for r in rows})
+    currency = next((r.get("Currency") for r in records if r.get("Currency")), "USD")
+    return CostRowsResponse(rows=rows, months=months, currency=currency, errors=errors)
 
 
 @router.post("/rg", response_model=RgCostResponse)

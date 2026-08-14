@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { uploadBoq } from '../api/client';
 import { formatAmount } from '../utils/currency';
@@ -17,20 +17,29 @@ import {
 const ACCEPTED = '.csv,.xlsx,.xlsm,.xls';
 
 export default function Boq() {
-  const { boqs, addBoq, removeBoq, toggleBoq, costData, imported, detailedUsageRows } = useAppStore();
+  const { boqs, addBoq, removeBoq, toggleBoq, costData, imported, rowsData, loadCosts, loadCostRows, detailedUsageRows } = useAppStore();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [focus, setFocus] = useState(null);
   const inputRef = useRef(null);
   const t = useChartTheme();
 
+  // Matching a budget line to the resource that actually billed needs meter
+  // level detail, which the cost summary does not carry — fetch both on a plain
+  // login so the comparison works without visiting the dashboard first.
+  useEffect(() => {
+    if (imported) return;
+    loadCosts();
+    loadCostRows();
+  }, [imported, loadCosts, loadCostRows]);
+
   const active = boqs.filter(b => b.enabled !== false);
   const currency = costData?.currency || active[0]?.currency || 'INR';
   const fmt = (v) => formatAmount(v, currency);
 
   // The estimate is a monthly figure, so usage is averaged per month to match.
-  // Meter-level rows are used when a file is imported, which is what allows the
-  // per-resource match (P20 disk to P20 disk); live data only has service totals.
+  // Meter-level rows give the per-resource match (P20 disk to P20 disk); the
+  // service-level summary is only a fallback.
   const report = useMemo(() => {
     if (!active.length || !costData?.months?.length) return null;
     const detailed = detailedUsageRows();
@@ -40,7 +49,8 @@ export default function Boq() {
           Object.entries(m.by_service || {}).map(([service, cost]) => ({ service, cost })),
         );
     return compareBoqToUsage(active, rows, costData.months.length, currency);
-  }, [boqs, costData, currency, imported]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boqs, costData, currency, imported, rowsData]);
 
   async function handleFiles(fileList) {
     const files = [...fileList];
@@ -250,8 +260,9 @@ export default function Boq() {
               <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
               <div className="text-sm text-red-200">
                 <span className="font-semibold">{fmt(report.unbudgetedTotal)} per month</span> is
-                being spent on categories that appear nowhere in your BOQ. These are highlighted
-                in red below.
+                being spent in whole categories your BOQ never budgeted for — separate from the{' '}
+                {fmt(report.notInBoqTotal)} of individual charges with no matching budget line.
+                Both are highlighted in red below.
               </div>
             </div>
           )}

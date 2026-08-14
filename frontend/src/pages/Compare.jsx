@@ -1,4 +1,4 @@
-import { useMemo, useState, Fragment } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import { ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight, Upload, Minus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
@@ -246,6 +246,11 @@ function TrendTable({ trend, currency, groupLabel, stepGroupsFor, expanded, onTo
 
 export default function Compare() {
   const imported = useAppStore(s => s.imported);
+  const rowsData = useAppStore(s => s.rowsData);
+  const rowsLoading = useAppStore(s => s.rowsLoading);
+  const rowsError = useAppStore(s => s.rowsError);
+  const loadCostRows = useAppStore(s => s.loadCostRows);
+  const selectedTenantId = useAppStore(s => s.selectedTenantId);
   const selectedSubscriptionIds = useAppStore(s => s.selectedSubscriptionIds);
 
   const [groupBy, setGroupBy] = useState('service');
@@ -253,11 +258,20 @@ export default function Compare() {
   const [pair, setPair] = useState(null); // [prevMonth, currMonth] once the user picks
   const [view, setView] = useState(null); // 'all' | 'pair', defaults from month count
 
-  // Compare across the whole import, not the active date window — the point of
+  // Without an uploaded file, pull the same per-meter rows straight from Azure
+  // so this page works on a plain login too.
+  useEffect(() => {
+    if (!imported) loadCostRows();
+  }, [imported, loadCostRows, selectedTenantId, selectedSubscriptionIds]);
+
+  const source = imported || rowsData;
+  const live = !imported && !!rowsData;
+
+  // Compare across the whole history, not the active date window — the point of
   // this page is to reach back to an older month the dashboard filter hides.
   const rows = useMemo(
-    () => filterRows(imported?.rows || [], selectedSubscriptionIds),
-    [imported, selectedSubscriptionIds],
+    () => filterRows(source?.rows || [], selectedSubscriptionIds),
+    [source, selectedSubscriptionIds],
   );
   const months = useMemo(() => monthsIn(rows), [rows]);
 
@@ -293,7 +307,7 @@ export default function Compare() {
   // exactly two there is nothing a trend can show that the pair view does not.
   const mode = view || (months.length > 2 ? 'all' : 'pair');
 
-  const currency = imported?.currency || 'INR';
+  const currency = source?.currency || 'INR';
 
   // Explanations need to render money the same way the rest of the page does.
   const ctx = useMemo(
@@ -307,7 +321,21 @@ export default function Compare() {
     return next;
   });
 
-  if (!imported) {
+  if (!source) {
+    if (rowsLoading) {
+      return <Empty title="Reading your billing months…" body="Pulling per-meter costs from Azure. This can take a moment the first time." />;
+    }
+    if (rowsError) {
+      return <Empty title="Could not load cost detail" body={rowsError} />;
+    }
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) {
+      return (
+        <Empty
+          title="Choose a tenant and subscriptions"
+          body="Pick at least one subscription on the dashboard, or upload monthly cost exports, and this page will explain what changed."
+        />
+      );
+    }
     return (
       <Empty
         title="Import your monthly cost files first"
@@ -320,7 +348,9 @@ export default function Compare() {
     return (
       <Empty
         title="One month loaded — add another to compare"
-        body={`Only ${months[0] || 'a single period'} is available. Import a second month's export and this page will break down exactly which resources drove the change.`}
+        body={live
+          ? `Azure has only returned ${months[0] || 'a single period'} for these subscriptions. A comparison needs at least two complete billing months.`
+          : `Only ${months[0] || 'a single period'} is available. Import a second month's export and this page will break down exactly which resources drove the change.`}
       />
     );
   }
@@ -332,7 +362,7 @@ export default function Compare() {
           <h1 className="text-2xl font-bold text-white">Month comparison</h1>
           <p className="text-slate-400 text-sm mt-1">
             {mode === 'all'
-              ? `All ${months.length} imported months side by side.`
+              ? `All ${months.length} billing months side by side${live ? ', live from Azure' : ''}.`
               : 'Why the bill moved — split into new resources, removed resources, usage and rate.'}
           </p>
         </div>
@@ -381,7 +411,7 @@ export default function Compare() {
         </div>
       </div>
 
-      {imported.overlaps?.length > 0 && (
+      {imported?.overlaps?.length > 0 && (
         <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
           Some months appear in more than one imported file, so these figures double-count.
           Remove the duplicate file in <Link to="/settings" className="underline">Settings</Link>.

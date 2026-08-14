@@ -24,6 +24,15 @@ const UNIT_TO_BYTES = [
 
 const lower = (v) => (v || '').toString().trim().toLowerCase();
 
+// Units that measure time or operations rather than volume. A NAT gateway or
+// firewall billed per hour is a network charge, but 744 hours is not 744 GB.
+const NON_DATA_UNITS = [
+  'hour', 'day', 'month', 'minute', 'second', 'operation', 'request', 'transaction',
+  'message', 'instance', 'node', 'count', 'connection', 'query', 'event',
+];
+
+const isNonDataUnit = (unit) => NON_DATA_UNITS.some(u => unit.includes(u));
+
 export function isBandwidthRow(row) {
   if (BANDWIDTH_CATEGORIES.includes(lower(row.meter_category))) return true;
   const hay = `${lower(row.meter)} ${lower(row.meter_subcategory)} ${lower(row.service)}`;
@@ -33,6 +42,8 @@ export function isBandwidthRow(row) {
 /** Resolve how many bytes one unit of `quantity` represents. */
 export function unitBytes(row) {
   const unit = lower(row.unit_of_measure);
+  // Charged by time or operation, so it carries no transfer volume at all.
+  if (isNonDataUnit(unit)) return 0;
   // Azure writes units like "10 GB" or "100 GB/Month" — the leading number is a multiplier.
   const multiplier = parseFloat(unit) || 1;
   for (const [token, factor] of UNIT_TO_BYTES) {
@@ -277,12 +288,35 @@ export function buildBandwidthSummary(rows, currency = 'USD') {
     const meterName = r.meter || r.meter_subcategory || r.service || 'Unknown meter';
     let meter = meters.get(meterName);
     if (!meter) {
-      meter = { meter: meterName, category: r.meter_category || 'Bandwidth', direction, bytes: 0, cost: 0, quantity: 0 };
+      meter = {
+        meter: meterName, category: r.meter_category || 'Bandwidth', direction,
+        bytes: 0, cost: 0, quantity: 0, unit: r.unit_of_measure || '',
+        _months: new Map(), _subs: new Map(), _resources: new Map(), _regions: new Set(),
+      };
       meters.set(meterName, meter);
     }
     meter.bytes += bytes;
     meter.cost += cost;
     meter.quantity += r.quantity || 0;
+    if (!meter.unit && r.unit_of_measure) meter.unit = r.unit_of_measure;
+    if (r.region) meter._regions.add(r.region);
+
+    // Per-meter drilldowns, so a row can explain where its own charge came from.
+    const mm = meter._months.get(r.month) || { month: r.month, bytes: 0, cost: 0, quantity: 0 };
+    mm.bytes += bytes; mm.cost += cost; mm.quantity += r.quantity || 0;
+    meter._months.set(r.month, mm);
+
+    const ms = meter._subs.get(r.subscription_id) || { subscription_id: r.subscription_id, bytes: 0, cost: 0 };
+    ms.bytes += bytes; ms.cost += cost;
+    meter._subs.set(r.subscription_id, ms);
+
+    const resName = r.resource_name || r.resource_group || null;
+    if (resName) {
+      const mr = meter._resources.get(resName)
+        || { name: resName, resource_group: r.resource_group || '', bytes: 0, cost: 0 };
+      mr.bytes += bytes; mr.cost += cost;
+      meter._resources.set(resName, mr);
+    }
 
     let month = months.get(r.month);
     if (!month) {
@@ -341,7 +375,25 @@ export function buildBandwidthSummary(rows, currency = 'USD') {
       cost: round(m.cost),
     })),
     meters: [...meters.values()]
-      .map(m => ({ ...m, bytes: Math.round(m.bytes), cost: round(m.cost) }))
+      .map(({ _months, _subs, _resources, _regions, ...m }) => ({
+        ...m,
+        bytes: Math.round(m.bytes),
+        cost: round(m.cost),
+        quantity: round(m.quantity, 3),
+        cost_per_gb: m.bytes ? round(m.cost / (m.bytes / GB), 4) : 0,
+        unit_rate: m.quantity ? round(m.cost / m.quantity, 4) : null,
+        regions: [..._regions].sort(),
+        months: [..._months.values()]
+          .sort((a, b) => a.month.localeCompare(b.month))
+          .map(x => ({ ...x, bytes: Math.round(x.bytes), cost: round(x.cost), quantity: round(x.quantity, 3) })),
+        subscriptions: [..._subs.values()]
+          .sort((a, b) => b.cost - a.cost)
+          .map(x => ({ ...x, bytes: Math.round(x.bytes), cost: round(x.cost) })),
+        resources: [..._resources.values()]
+          .sort((a, b) => b.cost - a.cost)
+          .slice(0, 10)
+          .map(x => ({ ...x, bytes: Math.round(x.bytes), cost: round(x.cost) })),
+      }))
       .sort((a, b) => b.cost - a.cost),
     by_subscription: [...subs.values()]
       .map(({ _meters, ...s }) => ({

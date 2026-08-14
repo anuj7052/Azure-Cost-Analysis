@@ -69,6 +69,46 @@ def aggregate_by_month(records: List[Dict[str, Any]]) -> Dict[str, Dict]:
     }
 
 
+def _first(record: Dict[str, Any], *keys: str) -> str:
+    """First non-empty value among `keys` — Azure names columns inconsistently."""
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def to_cost_rows(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Flatten raw Cost Management records into the same row shape the file import
+    produces, so month-over-month analysis is identical for live and uploaded data.
+
+    Rows with no cost *and* no quantity are dropped: Azure emits a lot of these
+    and they would otherwise show up as meaningless zero-value lines.
+    """
+    rows: List[Dict[str, Any]] = []
+    for r in records:
+        cost = float(r.get("PreTaxCost") or r.get("Cost") or r.get("totalCost") or 0.0)
+        qty = float(r.get("UsageQuantity") or r.get("usageQuantity") or 0.0)
+        if cost == 0.0 and qty == 0.0:
+            continue
+        rows.append({
+            "month": _parse_usage_date(
+                r.get("BillingMonth") or r.get("UsageDate") or r.get("Date") or "19700101"
+            ),
+            "cost": cost,
+            "quantity": qty,
+            "unit_of_measure": _first(r, "UnitOfMeasure"),
+            "service": _first(r, "ServiceName", "MeterCategory") or "Unknown",
+            "meter": _first(r, "Meter", "MeterName", "MeterSubcategory"),
+            "resource_group": _first(r, "ResourceGroupName", "ResourceGroup"),
+            "resource_name": _first(r, "ResourceId").split("/")[-1],
+            "subscription_id": _first(r, "SubscriptionId", "SubscriptionGuid"),
+            "region": _first(r, "ResourceLocation", "Location"),
+        })
+    return rows
+
+
 def mom_change_pct(current: float, previous: float) -> float | None:
     """Calculate month-over-month percentage change."""
     if previous == 0:

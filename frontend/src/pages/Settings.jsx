@@ -1,14 +1,27 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X, GitCompareArrows } from 'lucide-react';
+import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X, GitCompareArrows, KeyRound } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { deleteTenant, uploadCSV } from '../api/client';
 import AddTenantModal from '../components/TenantManager/AddTenantModal';
+import AddSessionTokenModal from '../components/TenantManager/AddSessionTokenModal';
 import PortalGuide, { EXPORT_GUIDE } from '../components/Common/PortalGuide';
 import { formatAmount } from '../utils/currency';
 import toast from 'react-hot-toast';
 
 const ACCEPTED = '.csv,.tsv,.txt,.xlsx,.xlsm,.xls,.pdf';
+
+/** How long a pasted session token has left, in words. */
+function expiryLabel(expiresAt) {
+  if (!expiresAt) return 'no expiry in token';
+  const ms = new Date(expiresAt) - new Date();
+  if (Number.isNaN(ms)) return 'unknown expiry';
+  if (ms <= 0) return 'expired — paste a fresh token';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `expires in ${mins} min`;
+  const hours = Math.round(mins / 60);
+  return `expires in ${hours} hour${hours === 1 ? '' : 's'}`;
+}
 
 export default function Settings() {
   const {
@@ -17,6 +30,7 @@ export default function Settings() {
     removeImportFile,
   } = useAppStore();
   const [showModal, setShowModal] = useState(false);
+  const [showTokenModal, setShowTokenModal] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -76,18 +90,29 @@ export default function Settings() {
 
       {/* Tenants */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-5">
           <div>
             <h2 className="text-sm font-semibold text-white">Connected Tenants</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Delegated (your login) + Service Principal tenants</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Your Microsoft login, plus any Service Principal or session-token tenants
+            </p>
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-[#fff] text-sm px-3 py-2 rounded-xl transition"
-          >
-            <Plus className="w-4 h-4" />
-            Add Tenant
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowTokenModal(true)}
+              className="flex items-center gap-2 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-sm px-3 py-2 rounded-xl transition"
+            >
+              <KeyRound className="w-4 h-4" />
+              Session token
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-[#fff] text-sm px-3 py-2 rounded-xl transition"
+            >
+              <Plus className="w-4 h-4" />
+              Add Tenant
+            </button>
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -98,14 +123,23 @@ export default function Settings() {
             <div key={t.tenant_id} className="flex items-center gap-3 bg-slate-800 rounded-xl px-4 py-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-white truncate">{t.tenant_name}</p>
-                <p className="text-xs text-slate-500 font-mono">{t.tenant_id}</p>
+                <p className="text-xs text-slate-500 font-mono truncate">{t.tenant_id}</p>
+                {t.source === 'session_token' && (
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {t.account ? `${t.account} · ` : ''}{expiryLabel(t.expires_at)}
+                  </p>
+                )}
               </div>
-              <span className={`text-xs px-2 py-0.5 rounded-full ${
-                t.source === 'delegated' ? 'bg-blue-900/60 text-blue-300' : 'bg-purple-900/60 text-purple-300'
+              <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
+                t.source === 'delegated' ? 'bg-blue-900/60 text-blue-300'
+                  : t.source === 'session_token' ? 'bg-amber-900/60 text-amber-300'
+                  : 'bg-purple-900/60 text-purple-300'
               }`}>
-                {t.source === 'delegated' ? 'Microsoft Login' : 'Service Principal'}
+                {t.source === 'delegated' ? 'Microsoft Login'
+                  : t.source === 'session_token' ? 'Session Token'
+                  : 'Service Principal'}
               </span>
-              {t.source === 'service_principal' && (
+              {t.source !== 'delegated' && (
                 <button
                   onClick={() => handleDeleteTenant(t)}
                   disabled={deletingId === t.tenant_id}
@@ -324,6 +358,7 @@ export default function Settings() {
       <PortalGuide {...EXPORT_GUIDE} />
 
       {showModal && <AddTenantModal onClose={() => setShowModal(false)} />}
+      {showTokenModal && <AddSessionTokenModal onClose={() => setShowTokenModal(false)} />}
     </div>
   );
 }

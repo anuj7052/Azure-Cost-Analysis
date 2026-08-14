@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { fetchTenants, fetchSubscriptions, fetchCosts, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth } from '../api/client';
+import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth } from '../api/client';
 import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
-import { evictAll, readCache, readPrefs, writeCache, writePrefs } from '../utils/persistCache';
+import { readCache, readPrefs, writeCache, writePrefs } from '../utils/persistCache';
 
 /**
  * Azure Cost Management throttles hard (HTTP 429). Several pages mount effects
@@ -38,6 +38,22 @@ function retryAfterSeconds(err) {
   return Math.min(match ? Number(match[1]) : 5, 30);
 }
 
+/**
+ * A 200 response can still be incomplete: the backend returns whatever
+ * subscriptions it managed to read plus an `errors` list for the throttled
+ * ones. Those totals are wrong, so they must never be cached as fresh.
+ */
+function isPartial(data) {
+  return Array.isArray(data?.errors) && data.errors.length > 0;
+}
+
+/** How long to wait before re-asking for the subscriptions that got throttled. */
+function partialRetryDelay(data) {
+  const detail = data.errors.map(e => e?.error).join(' ');
+  const match = detail.match(/about (\d+)\s*s/i);
+  return Math.min(match ? Number(match[1]) : 5, 30);
+}
+
 async function cached(key, run, apply, { force = false } = {}) {
   const hit = force ? null : readCache(key);
   if (hit) {
@@ -46,12 +62,17 @@ async function cached(key, run, apply, { force = false } = {}) {
   }
 
   let lastErr;
+  let partial = null;
   for (let attempt = 0; attempt <= RATE_LIMIT_RETRIES; attempt++) {
     try {
       const data = await dedupe(key, run);
-      writeCache(key, data);
+      writeCache(key, data, { stale: isPartial(data) });
       apply(data, { fromCache: false });
-      return data;
+      if (!isPartial(data)) return data;
+      // Show the partial answer now, then quietly go back for the rest.
+      partial = data;
+      if (attempt === RATE_LIMIT_RETRIES) return data;
+      await new Promise(r => setTimeout(r, (partialRetryDelay(data) + 1) * 1000));
     } catch (err) {
       lastErr = err;
       const wait = attempt < RATE_LIMIT_RETRIES ? retryAfterSeconds(err) : null;
@@ -60,6 +81,7 @@ async function cached(key, run, apply, { force = false } = {}) {
     }
   }
 
+  if (partial) return partial;
   if (hit) return hit.value; // keep showing cached data instead of an error
   throw lastErr;
 }
@@ -275,6 +297,37 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
+  // ── Per-meter monthly rows (month-over-month comparison) ──
+  // Deliberately ignores the date filter and always asks for a span of months:
+  // comparing one month to the next is impossible inside a single-month window.
+  rowsData: null,
+  rowsLoading: false,
+  rowsError: null,
+
+  loadCostRows: async (opts = {}) => {
+    const { selectedTenantId, selectedSubscriptionIds, months, imported } = get();
+    // An uploaded file already carries these rows; never overwrite them.
+    if (imported) return;
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
+    set({ rowsLoading: true, rowsError: null });
+    try {
+      const payload = {
+        tenant_id: selectedTenantId,
+        subscription_ids: selectedSubscriptionIds,
+        months: Math.max(months || 1, 6),
+      };
+      await cached(
+        `rows:${JSON.stringify(payload)}`,
+        () => fetchCostRows(payload),
+        (data) => set({ rowsData: data, rowsLoading: false, rowsError: null }),
+        opts,
+      );
+      set({ rowsLoading: false });
+    } catch (err) {
+      set({ rowsLoading: false, rowsError: err.response?.data?.detail || err.message });
+    }
+  },
+
   // ── Bandwidth / Data Transfer ──
   bandwidthData: null,
   bandwidthLoading: false,
@@ -423,15 +476,33 @@ export const useAppStore = create((set, get) => ({
   },
 
   /**
-   * Meter-level usage rows for the active filters, or null when running on live
-   * data (the Cost Management summary has no meter breakdown). The BOQ
-   * comparison uses these to match individual disks and VM sizes to their
-   * budget lines instead of stopping at the service name.
+   * Meter-level usage rows for the active filters, or null when no meter-level
+   * data is available at all. The BOQ comparison uses these to match individual
+   * disks and VM sizes to their budget lines instead of stopping at the service
+   * name. Uploaded files provide them directly; on a plain login they come from
+   * `/costs/rows`, so BOQ vs Actual works without an import.
    */
   detailedUsageRows: () => {
-    const { imported, selectedSubscriptionIds, importedRowsInRange } = get();
-    if (!imported) return null;
-    return filterRows(importedRowsInRange(), selectedSubscriptionIds);
+    const { imported, rowsData, selectedSubscriptionIds, importedRowsInRange } = get();
+    if (imported) return filterRows(importedRowsInRange(), selectedSubscriptionIds);
+    if (rowsData?.rows?.length) {
+      return filterRows(get().liveRowsInRange(), selectedSubscriptionIds);
+    }
+    return null;
+  },
+
+  /** Live per-meter rows narrowed to the active date filter. */
+  liveRowsInRange: () => {
+    const { rowsData, months, dateMode, fromDate, toDate } = get();
+    const rows = rowsData?.rows || [];
+    if (dateMode === 'custom' && fromDate && toDate) {
+      const from = fromDate.slice(0, 7);
+      const to = toDate.slice(0, 7);
+      return rows.filter(r => r.month >= from && r.month <= to);
+    }
+    const available = rowsData?.months || [];
+    const window = new Set(available.slice(-months));
+    return rows.filter(r => window.has(r.month));
   },
 
   /** Rows of the import that fall inside the active date filter. */

@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 MAX_CONCURRENT_QUERIES = 3
 MAX_RETRIES = 3
 MAX_RETRY_DELAY = 15.0
+# A short cooldown is worth waiting out. Failing fast turns a two-second delay
+# into a "2 subscriptions could not be read" banner and wrong totals, which is
+# far worse for the user than a slightly slower page.
+MAX_COOLDOWN_WAIT = 20.0
 CACHE_TTL_SECONDS = 600
 # Stale entries stay usable for a day so a throttled cold start still renders
 # yesterday's numbers instead of an empty dashboard.
@@ -62,6 +66,11 @@ class RateLimited(RuntimeError):
 
 def _cooldown_remaining() -> float:
     return max(0.0, _throttled_until - time.time())
+
+
+def cooldown_remaining() -> float:
+    """Seconds until Azure will accept cost queries again (0 when not throttled)."""
+    return _cooldown_remaining()
 
 
 def _start_cooldown(seconds: float) -> None:
@@ -156,8 +165,12 @@ async def _post_query(client: httpx.AsyncClient, url: str, headers: dict, body: 
     """POST a Cost Management query, retrying through throttling responses."""
     cooldown = _cooldown_remaining()
     if cooldown:
-        # Fail fast rather than adding to a queue Azure is already refusing.
-        raise RateLimited(cooldown)
+        if cooldown > MAX_COOLDOWN_WAIT:
+            # Too long to hold the request open; let the caller fall back to
+            # cached data and tell the user when to retry.
+            raise RateLimited(cooldown)
+        logger.info("Waiting out %.1fs cost API cooldown", cooldown)
+        await asyncio.sleep(cooldown)
 
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
@@ -271,6 +284,43 @@ def _columnar_to_records(response_data: dict) -> List[Dict[str, Any]]:
     columns = [c["name"] for c in props.get("columns", [])]
     rows = props.get("rows", [])
     return [dict(zip(columns, row)) for row in rows]
+
+
+MAX_THROTTLE_WAIT = 45.0
+
+
+async def gather_by_subscription(subscription_ids, fetch):
+    """
+    Run `fetch(sub_id)` for every subscription, returning (records, errors).
+
+    Subscriptions that fail only because Azure was throttling get a second
+    chance once the cooldown expires. Silently dropping them would understate
+    every total on the page, which is far worse than a slower response.
+    """
+    records: List[Any] = []
+    pending = list(subscription_ids)
+    failed: List[tuple] = []
+
+    for attempt in range(2):
+        failed = []
+        for sub_id in pending:
+            try:
+                records.extend(await fetch(sub_id))
+            except Exception as exc:
+                failed.append((sub_id, exc))
+
+        if not failed or attempt == 1:
+            break
+
+        wait = _cooldown_remaining()
+        if not 0 < wait <= MAX_THROTTLE_WAIT:
+            break
+        logger.info("Retrying %s throttled subscription(s) in %.0fs", len(failed), wait)
+        await asyncio.sleep(wait + 1)
+        pending = [s for s, _ in failed]
+
+    errors = [{"subscription_id": s, "error": friendly_error(e)} for s, e in failed]
+    return records, errors
 
 
 def friendly_error(exc: Exception) -> str:

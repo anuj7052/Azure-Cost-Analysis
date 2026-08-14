@@ -38,10 +38,18 @@ export function readCache(key) {
   }
 }
 
-export function writeCache(key, value) {
+/**
+ * Store a value.
+ *
+ * `stale: true` back-dates the entry so it still renders instantly on the next
+ * visit but is always revalidated. Used for partial answers — showing them is
+ * better than a blank page, trusting them for 15 minutes is not.
+ */
+export function writeCache(key, value, { stale = false } = {}) {
   const store = safeStorage();
   if (!store) return;
-  const payload = JSON.stringify({ t: Date.now(), v: value });
+  const t = stale ? Date.now() - FRESH_MS : Date.now();
+  const payload = JSON.stringify({ t, v: value });
   try {
     store.setItem(PREFIX + key, payload);
   } catch {
