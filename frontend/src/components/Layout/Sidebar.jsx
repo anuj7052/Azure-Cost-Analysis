@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, TrendingUp, Settings, AlertTriangle, Server, FolderOpen, Network, ClipboardList, FileCode, GitCompareArrows } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, Settings, AlertTriangle, Server, FolderOpen, Network, ClipboardList, FileCode, GitCompareArrows, ShieldCheck } from 'lucide-react';
+import { useAppStore } from '../../store/useAppStore';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -15,6 +16,11 @@ const NAV = [
 ];
 
 export default function Sidebar() {
+  const isAdmin = useAppStore(s => s.me?.is_admin);
+  const nav = isAdmin
+    ? [...NAV, { to: '/admin', label: 'Admin Center', icon: ShieldCheck }]
+    : NAV;
+
   return (
     <aside className="w-60 min-h-screen bg-slate-900 border-r border-slate-800 flex flex-col sticky top-0 h-screen">
       {/* Logo */}
@@ -32,7 +38,7 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {NAV.map(({ to, label, icon: Icon }) => (
+        {nav.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

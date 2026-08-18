@@ -19,6 +19,8 @@ const ResourceGroups = lazy(() => import('./pages/ResourceGroups'));
 const Bandwidth      = lazy(() => import('./pages/Bandwidth'));
 const Boq            = lazy(() => import('./pages/Boq'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
+const Admin          = lazy(() => import('./pages/Admin'));
+const Onboarding     = lazy(() => import('./pages/Onboarding'));
 
 const PageLoader = () => (
   <div className="flex h-[60vh] items-center justify-center">
@@ -35,6 +37,12 @@ function AppShell() {
   const { accounts } = useMsal();
   const loadTenants     = useAppStore(s => s.loadTenants);
   const addTenantToList = useAppStore(s => s.addTenantToList);
+  const loadMe          = useAppStore(s => s.loadMe);
+  const me              = useAppStore(s => s.me);
+
+  useEffect(() => {
+    if (isAuthenticated) loadMe();
+  }, [isAuthenticated, loadMe]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -51,6 +59,21 @@ function AppShell() {
     // Then load full list from backend (which will enrich the display name)
     loadTenants();
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Wait for the account before deciding what to show, otherwise a returning
+  // user sees the onboarding screen flash before their dashboard.
+  if (!me) return <PageLoader />;
+
+  // Registering a tenant is how a customer subscribes to the product, so it is
+  // mandatory rather than skippable. Administrators are exempt: they run the
+  // service and manage accounts, they do not bring Azure spend of their own.
+  if (!me.is_admin && me.tenant_count === 0) {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <Onboarding />
+      </Suspense>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-slate-950">
@@ -70,6 +93,9 @@ function AppShell() {
             <Route path="/boq" element={<Boq />} />
             <Route path="/deploy" element={<Deploy />} />
             <Route path="/settings" element={<Settings />} />
+            {/* Rendered only for admins. The backend enforces this too, so
+                hiding the route is convenience, not the security boundary. */}
+            {me?.is_admin && <Route path="/admin" element={<Admin />} />}
           </Routes>
           </Suspense>
         </main>

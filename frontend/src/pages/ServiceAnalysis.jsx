@@ -7,7 +7,7 @@ import { Search } from 'lucide-react';
 const RESOURCE_TYPE_SHORT = (type) => type.split('/').slice(1).join('/') || type;
 
 export default function ServiceAnalysis() {
-  const { costData, costLoading, activeServices, servicesLoading, loadServices, selectedTenantId, selectedSubscriptionIds, dateKey } = useAppStore();
+  const { costData, costLoading, activeServices, servicesLoading, servicesError, loadServices, selectedTenantId, selectedSubscriptionIds, dateKey } = useAppStore();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 20;
@@ -22,9 +22,12 @@ export default function ServiceAnalysis() {
   const pageCount = Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // Build service cost map from latest month
+  // Build service cost map from latest month. Keyed by Azure service name,
+  // which is what a resource's `service` field carries — matching on the
+  // resource *type* never hit, so every row used to show a dash.
   const latestMonth = costData?.months?.at(-1);
   const serviceCostMap = latestMonth?.by_service || {};
+  const currency = activeServices[0]?.currency || costData?.currency || 'USD';
 
   // Group active resources by service type
   const typeGroups = {};
@@ -40,6 +43,13 @@ export default function ServiceAnalysis() {
         <h1 className="text-2xl font-bold text-white">Service Analysis</h1>
         <p className="text-slate-400 text-sm mt-1">Cost breakdown by service + all active Azure resources</p>
       </div>
+
+      {servicesError && (
+        <div className="bg-red-950/30 border border-red-500/30 rounded-xl p-4">
+          <p className="text-sm font-medium text-red-300">Could not load resources</p>
+          <p className="text-xs text-slate-400 mt-1">{servicesError}</p>
+        </div>
+      )}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -110,14 +120,15 @@ export default function ServiceAnalysis() {
                     <th className="pb-2 font-medium">Billed for</th>
                     <th className="pb-2 font-medium">Resource Group</th>
                     <th className="pb-2 font-medium">Location</th>
-                    <th className="pb-2 font-medium text-right">Latest Cost</th>
+                    <th className="pb-2 font-medium text-right">Cost</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paged.map((s, i) => {
-                    // An imported file carries its own per-row cost; live data
-                    // only knows the cost of the service the resource belongs to.
-                    const serviceCost = s.cost ?? serviceCostMap[s.type] ?? null;
+                    // Live data now carries the resource's own billed cost;
+                    // fall back to its service total only when Cost Management
+                    // has nothing for that resource id.
+                    const serviceCost = s.cost ?? serviceCostMap[s.service] ?? null;
                     return (
                       <tr key={i} className="border-b border-slate-800/50 hover:bg-slate-800/30 align-top">
                         <td className="py-2.5 text-slate-200 font-medium truncate max-w-[220px]" title={s.name}>
@@ -130,10 +141,12 @@ export default function ServiceAnalysis() {
                           )}
                         </td>
                         <td className="py-2.5 text-xs whitespace-nowrap">
-                          {s.sku ? (
+                          {s.sku || s.size || s.tier ? (
                             <>
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-700 text-[#fff]">{s.sku}</span>
-                              <span className="text-slate-300 ml-1.5">{s.size}</span>
+                              {s.sku && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-700 text-[#fff]">{s.sku}</span>
+                              )}
+                              {s.size && <span className="text-slate-300 ml-1.5">{s.size}</span>}
                               {s.tier && <span className="block text-[10px] text-slate-600">{s.tier}</span>}
                             </>
                           ) : (
@@ -155,7 +168,7 @@ export default function ServiceAnalysis() {
                         <td className="py-2.5 text-slate-500 text-xs">{s.resource_group}</td>
                         <td className="py-2.5 text-slate-500 text-xs">{s.location}</td>
                         <td className="py-2.5 text-right text-slate-400 text-xs">
-                          {serviceCost != null ? formatAmount(serviceCost, costData?.currency || 'USD') : '—'}
+                          {serviceCost != null ? formatAmount(serviceCost, currency) : '—'}
                         </td>
                       </tr>
                     );

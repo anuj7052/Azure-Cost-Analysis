@@ -4,6 +4,120 @@ import json
 import re
 
 
+# ── Accounts / admin ───────────────────────────────────────────────────────
+
+INTEGRATION_KINDS = ("openai", "azure_openai", "webhook", "custom")
+
+
+class Integration(BaseModel):
+    """A customer-supplied endpoint. The key is never returned, only a hint."""
+    id: int
+    label: str
+    kind: str
+    base_url: str = ""
+    model: str = ""
+    enabled: bool = True
+    has_key: bool = False
+    key_hint: str = ""
+    created_at: Optional[str] = None
+
+
+class CreateIntegrationRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=60)
+    kind: str = "openai"
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    enabled: bool = True
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in INTEGRATION_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(INTEGRATION_KINDS)}")
+        return v
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url(cls, v: str) -> str:
+        v = (v or "").strip()
+        # Anything other than https would send the customer's own key over the
+        # wire in the clear. localhost is allowed for development gateways.
+        if v and not (v.startswith("https://") or v.startswith("http://localhost")):
+            raise ValueError("base_url must start with https://")
+        return v
+
+
+class UpdateIntegrationRequest(BaseModel):
+    label: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    kind: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None      # omit to keep the stored key
+    enabled: Optional[bool] = None
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in INTEGRATION_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(INTEGRATION_KINDS)}")
+        return v
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if v and not (v.startswith("https://") or v.startswith("http://localhost")):
+            raise ValueError("base_url must start with https://")
+        return v
+
+
+class UserSummary(BaseModel):
+    id: int
+    email: str
+    name: str
+    role: str                      # "user" | "admin"
+    status: str                    # "active" | "suspended"
+    azure_tenant_id: str = ""
+    created_at: Optional[str] = None
+    last_login_at: Optional[str] = None
+    tenant_count: int = 0
+
+
+class UserConnection(BaseModel):
+    tenant_id: str
+    tenant_name: str
+    source: str                    # "service_principal" | "session_token"
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    account: Optional[str] = None
+
+
+class UserDetail(UserSummary):
+    connections: List[UserConnection] = []
+
+
+class UpdateUserRequest(BaseModel):
+    role: Optional[str] = None
+    status: Optional[str] = None
+
+    @field_validator("role")
+    @classmethod
+    def valid_role(cls, v):
+        if v is not None and v not in ("user", "admin"):
+            raise ValueError("role must be 'user' or 'admin'")
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def valid_status(cls, v):
+        if v is not None and v not in ("active", "suspended"):
+            raise ValueError("status must be 'active' or 'suspended'")
+        return v
+
+
 # ── Tenant / Subscription ──────────────────────────────────────────────────
 
 class TenantInfo(BaseModel):
@@ -147,6 +261,11 @@ class CostRowsResponse(BaseModel):
 
 # ── Services ───────────────────────────────────────────────────────────────
 
+class ServiceMeter(BaseModel):
+    name: str
+    cost: float
+
+
 class ActiveService(BaseModel):
     name: str
     type: str
@@ -154,6 +273,16 @@ class ActiveService(BaseModel):
     subscription_id: str
     location: str
     tags: dict = {}
+    # Size and price of the resource. All optional: Resource Graph does not
+    # report a SKU for every provider, and Cost Management only knows about
+    # resources that have actually been billed.
+    sku: str = ""
+    size: str = ""
+    tier: str = ""
+    service: str = ""
+    cost: Optional[float] = None
+    currency: str = "USD"
+    meters: List[ServiceMeter] = []
 
 
 # ── CSV Upload ─────────────────────────────────────────────────────────────

@@ -1,16 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import AnomalyCard from '../components/Cards/AnomalyCard';
-import { TrendingDown } from 'lucide-react';
+import { TrendingDown, AlertTriangle, CalendarRange } from 'lucide-react';
 import { formatAmount } from '../utils/currency';
 
 export default function Anomalies() {
-  const { costData, costLoading, subscriptions } = useAppStore();
+  const {
+    costData, costLoading, costError, subscriptions,
+    loadCosts, selectedTenantId, selectedSubscriptionIds, dateKey,
+  } = useAppStore();
   const [filter, setFilter] = useState('all');
   const [tab, setTab] = useState('spikes');
 
+  // This page used to rely on the Dashboard having already fetched the costs,
+  // so opening it directly (or reloading on it) showed a permanently empty
+  // page. It now asks for its own data like every other page.
+  useEffect(() => {
+    if (selectedTenantId && selectedSubscriptionIds.length > 0) loadCosts();
+  }, [selectedTenantId, selectedSubscriptionIds.join(','), dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const anomalies = costData?.anomalies || [];
   const savings = costData?.savings || [];
+  const monthCount = costData?.months?.length || 0;
+  // A spike is a month-over-month comparison, so a single-month window can
+  // never produce one. Saying so beats showing a convincing empty state.
+  const needsWiderRange = !costLoading && !costError && monthCount < 2;
 
   // subscription id → name lookup
   const subMap = Object.fromEntries((subscriptions || []).map(s => [s.subscription_id, s.display_name]));
@@ -35,6 +49,32 @@ export default function Anomalies() {
           Services with sudden cost changes — shown across all subscriptions
         </p>
       </div>
+
+      {costError && (
+        <div className="flex items-start gap-3 bg-red-950/30 border border-red-500/30 rounded-xl p-4">
+          <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-red-300">Could not load cost data</p>
+            <p className="text-xs text-slate-400 mt-1">{costError}</p>
+          </div>
+        </div>
+      )}
+
+      {needsWiderRange && (
+        <div className="flex items-start gap-3 bg-amber-950/30 border border-amber-500/30 rounded-xl p-4">
+          <CalendarRange className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-300">
+              {monthCount === 0 ? 'No cost data for this selection' : 'Only one month selected'}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              {monthCount === 0
+                ? 'Pick a tenant and at least one subscription, then widen the date range.'
+                : 'Spikes and savings compare one month against the previous one, so pick a range covering at least two months.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Legend box — explain what anomaly means */}
       <div className="bg-blue-950/30 border border-blue-500/20 rounded-xl p-4 text-sm text-slate-300 space-y-1">

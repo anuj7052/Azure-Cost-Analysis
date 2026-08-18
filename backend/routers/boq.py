@@ -1,11 +1,13 @@
 from typing import Any, Dict, List, Literal, Optional
 
+import aiosqlite
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from auth.dependencies import get_current_user
-from services import iac_service
+from core.db import get_db
+from services import iac_service, integration_service
 from services.boq_chat_service import BoqChatService
 from services.boq_parser import BOQ_EXTENSIONS, parse_boq_file
 
@@ -126,9 +128,11 @@ class BoqChatRequest(BaseModel):
 async def chat_about_boq(
     payload: BoqChatRequest,
     current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
 ) -> Dict[str, Any]:
     """Converse about an estimate and generate templates on request."""
-    service = BoqChatService(payload.boq, resource_group=payload.resource_group)
+    llm = await integration_service.llm_config(db, current_user["account_id"])
+    service = BoqChatService(payload.boq, resource_group=payload.resource_group, llm=llm)
     return await service.chat(
         payload.message, [t.model_dump() for t in payload.history]
     )
@@ -140,8 +144,10 @@ async def chat_with_upload(
     message: str = Form("Generate the infrastructure-as-code for this estimate."),
     resource_group: str = Form("rg-boq"),
     current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
 ) -> Dict[str, Any]:
     """Upload an estimate and act on it in a single call."""
     boq = await _read_estimate(file)
-    service = BoqChatService(boq, resource_group=resource_group)
+    llm = await integration_service.llm_config(db, current_user["account_id"])
+    service = BoqChatService(boq, resource_group=resource_group, llm=llm)
     return await service.chat(message, [])

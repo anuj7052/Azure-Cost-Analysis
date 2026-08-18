@@ -1,4 +1,5 @@
 import axios from 'axios';
+import toast from 'react-hot-toast';
 import { msalInstance, managementRequest, loginRequest } from '../auth/msalConfig';
 
 const api = axios.create({
@@ -85,19 +86,99 @@ async function getSignInToken() {
   }
 }
 
-const LOCAL_ROUTES = ['/upload', '/boq'];
+// Routes our own server answers without ever calling Azure. They only need
+// proof of sign-in, so they take the ID token — which MSAL serves from cache
+// and therefore keeps working after a reload, when silent renewal of an Azure
+// management token is blocked by the browser's iframe restrictions.
+const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations'];
+
+// A sign-in popup may only open off a real click. These two routes run from a
+// file picker, so recovering the session there is allowed; the rest load in the
+// background and must fail quietly instead of firing a blocked popup.
+const GESTURE_ROUTES = ['/upload', '/boq'];
 
 // Attach Bearer token to every request
 api.interceptors.request.use(async (config) => {
-  // These two run off a click, so a sign-in popup here is allowed to open.
-  const userInitiated = LOCAL_ROUTES.some((r) => (config.url || '').startsWith(r));
-  const token = (userInitiated ? await getSignInToken() : null)
+  const url = config.url || '';
+  const localRoute = LOCAL_ROUTES.some((r) => url.startsWith(r));
+  const userInitiated = GESTURE_ROUTES.some((r) => url.startsWith(r));
+  const token = (localRoute ? await getSignInToken() : null)
     || (await getToken(userInitiated));
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
+/**
+ * Tell the user when their access has lapsed.
+ *
+ * An expired credential fails every request at once, so pages just went blank
+ * or kept showing cached figures with no explanation. The two causes need
+ * different actions, so they get different messages: a pasted session token is
+ * replaced in Settings, whereas an expired Microsoft sign-in needs a new login.
+ * One alert per burst, since a single page load can fire a dozen requests.
+ */
+let lastExpiryAlert = 0;
+
+function alertSessionExpired(detail) {
+  const now = Date.now();
+  if (now - lastExpiryAlert < 15000) return;
+  lastExpiryAlert = now;
+
+  const sessionToken = /session token/i.test(detail || '');
+  toast.error(
+    sessionToken
+      ? 'Session token expired — paste a fresh one in Settings to keep reading this tenant.'
+      : 'Your sign-in has expired. Sign out and sign in again to continue.',
+    { id: 'session-expired', duration: 8000 },
+  );
+}
+
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      // The cached management token is useless now; drop it so the next request
+      // tries to renew instead of replaying the dead one.
+      _cachedToken = null;
+      _tokenExpiry = 0;
+      alertSessionExpired(err.response?.data?.detail);
+    }
+    return Promise.reject(err);
+  },
+);
+
 // ── API functions ──────────────────────────────────────────────────────────
+
+export const fetchMe = () => api.get('/me').then(r => r.data);
+
+/** Fetches the guide as a blob so the download carries the auth header. */
+export const downloadSetupGuide = async () => {
+  const res = await api.get('/guide/setup.pdf', { responseType: 'blob' });
+  const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'azure-cost-analysis-setup-guide.pdf';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+export const fetchAdminUsers = (params = {}) =>
+  api.get('/admin/users', { params }).then(r => r.data);
+export const fetchAdminStats = () => api.get('/admin/stats').then(r => r.data);
+export const fetchAdminUser = (id) => api.get(`/admin/users/${id}`).then(r => r.data);
+export const updateAdminUser = (id, body) =>
+  api.patch(`/admin/users/${id}`, body).then(r => r.data);
+export const deleteAdminUser = (id) => api.delete(`/admin/users/${id}`);
+
+// Endpoints the customer brings themselves. The key is write-only: the API
+// returns a masked hint, never the value.
+export const fetchIntegrations = () => api.get('/integrations').then(r => r.data);
+export const createIntegration = (body) => api.post('/integrations', body).then(r => r.data);
+export const updateIntegration = (id, body) =>
+  api.patch(`/integrations/${id}`, body).then(r => r.data);
+export const deleteIntegration = (id) => api.delete(`/integrations/${id}`);
 
 export const fetchTenants = () => api.get('/tenants').then(r => r.data);
 export const addTenant = (body) => api.post('/tenants', body).then(r => r.data);
@@ -123,9 +204,16 @@ export const fetchDailyCosts = (body) =>
 export const fetchBandwidth = (body) =>
   api.post('/bandwidth', body).then(r => r.data);
 
-export const fetchServices = (tenantId, subscriptionIds) =>
+export const fetchServices = (tenantId, subscriptionIds, months = 1, range = {}) =>
   api.get('/services', {
-    params: { tenant_id: tenantId, subscription_ids: subscriptionIds },
+    params: {
+      tenant_id: tenantId,
+      subscription_ids: subscriptionIds,
+      months,
+      ...(range.from_date && range.to_date
+        ? { from_date: range.from_date, to_date: range.to_date }
+        : {}),
+    },
     paramsSerializer: { indexes: null },
   }).then(r => r.data);
 

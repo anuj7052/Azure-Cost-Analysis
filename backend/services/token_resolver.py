@@ -7,6 +7,9 @@ Three ways in, tried in order:
      own login.
   2. A stored service principal for that tenant.
   3. The caller's own delegated token from the Microsoft sign-in.
+
+Stored credentials are always filtered by the calling account, so one customer
+can never borrow another's service principal by guessing a tenant id.
 """
 import aiosqlite
 from fastapi import HTTPException
@@ -19,9 +22,12 @@ async def resolve_tenant_token(
     current_user: dict,
     db: aiosqlite.Connection,
 ) -> str:
+    account_id = current_user["account_id"]
+
     async with db.execute(
-        "SELECT access_token, expires_at FROM session_tokens WHERE tenant_id = ?",
-        (tenant_id,),
+        "SELECT access_token, expires_at FROM session_tokens "
+        "WHERE tenant_id = ? AND user_id = ?",
+        (tenant_id, account_id),
     ) as cursor:
         row = await cursor.fetchone()
     if row:
@@ -39,8 +45,9 @@ async def resolve_tenant_token(
         return current_user["token"]
 
     async with db.execute(
-        "SELECT client_id, client_secret FROM service_principals WHERE tenant_id = ?",
-        (tenant_id,),
+        "SELECT client_id, client_secret FROM service_principals "
+        "WHERE tenant_id = ? AND user_id = ?",
+        (tenant_id, account_id),
     ) as cursor:
         row = await cursor.fetchone()
     if not row:

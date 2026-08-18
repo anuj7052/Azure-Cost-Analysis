@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { uploadBoq } from '../api/client';
 import { formatAmount } from '../utils/currency';
@@ -17,7 +17,7 @@ import {
 const ACCEPTED = '.csv,.xlsx,.xlsm,.xls';
 
 export default function Boq() {
-  const { boqs, addBoq, removeBoq, toggleBoq, costData, imported, rowsData, loadCosts, loadCostRows, detailedUsageRows } = useAppStore();
+  const { boqs, addBoq, removeBoq, toggleBoq, costData, imported, rowsData, rowsLoading, loadCosts, loadCostRows, detailedUsageRows, selectedTenantId, selectedSubscriptionIds, dateKey } = useAppStore();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [focus, setFocus] = useState(null);
@@ -27,11 +27,16 @@ export default function Boq() {
   // Matching a budget line to the resource that actually billed needs meter
   // level detail, which the cost summary does not carry — fetch both on a plain
   // login so the comparison works without visiting the dashboard first.
+  // Switching tenant or subscription has to refetch as well, otherwise the page
+  // keeps the previous account's meters or, worse, falls back to service totals
+  // and reports a charge like "Backup" as one figure that cannot be explained.
   useEffect(() => {
     if (imported) return;
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
     loadCosts();
     loadCostRows();
-  }, [imported, loadCosts, loadCostRows]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imported, selectedTenantId, selectedSubscriptionIds.join(','), dateKey]);
 
   const active = boqs.filter(b => b.enabled !== false);
   const currency = costData?.currency || active[0]?.currency || 'INR';
@@ -43,6 +48,11 @@ export default function Boq() {
   const report = useMemo(() => {
     if (!active.length || !costData?.months?.length) return null;
     const detailed = detailedUsageRows();
+    // While the meter-level rows are still in flight there is nothing to match
+    // on, and the service totals would roll every backup charge into one
+    // unexplainable lump. Waiting is better than showing a figure that cannot
+    // be broken down.
+    if (!detailed?.length && rowsLoading) return null;
     const rows = detailed?.length
       ? detailed
       : costData.months.flatMap(m =>
@@ -50,7 +60,12 @@ export default function Boq() {
         );
     return compareBoqToUsage(active, rows, costData.months.length, currency);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boqs, costData, currency, imported, rowsData]);
+  }, [boqs, costData, currency, imported, rowsData, rowsLoading]);
+
+  // Service totals carry no meter, resource or quantity, so a comparison built
+  // from them cannot be drilled into. Say so rather than letting it pass for
+  // the real thing.
+  const coarse = !!report && !detailedUsageRows()?.length;
 
   async function handleFiles(fileList) {
     const files = [...fileList];
@@ -206,6 +221,22 @@ export default function Boq() {
         </div>
       ) : (
         <>
+          {coarse && (
+            <div className="flex items-start gap-2.5 border border-amber-500/40 bg-amber-500/[0.07] rounded-xl px-4 py-3">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm text-amber-200 font-medium">
+                  Showing service totals only — no meter detail available
+                </p>
+                <p className="text-xs text-amber-200/70 mt-0.5">
+                  Each service is one figure that cannot be opened up or matched to a resource,
+                  so budget lines are grouped rather than compared one by one. Use Refresh, or
+                  import a usage file in Settings, to get the per-meter breakdown.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Headline variance */}
           <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
             <SummaryCard
@@ -381,9 +412,8 @@ export default function Boq() {
                     const open = expanded[c.key];
                     const over = c.variance > 0;
                     return (
-                      <>
+                      <Fragment key={c.key}>
                         <tr
-                          key={c.key}
                           onClick={() => setExpanded(s => ({ ...s, [c.key]: !s[c.key] }))}
                           className={`border-b border-slate-800/50 cursor-pointer transition ${
                             c.unbudgeted
@@ -414,14 +444,14 @@ export default function Boq() {
                           </td>
                         </tr>
                         {open && (
-                          <tr key={`${c.key}-detail`} className="border-b border-slate-800/50 bg-slate-950/40">
+                          <tr className="border-b border-slate-800/50 bg-slate-950/40">
                             <td />
                             <td colSpan={6} className="py-4 pr-2">
                               <ResourceBreakdown category={c} fmt={fmt} />
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -903,29 +933,78 @@ function WhyPanel({ line: l, fmt }) {
   );
 }
 
-/** One billed meter on a single line: what it is on the left, what it cost on the right. */
+/**
+ * One billed meter: what it is on the left, what it cost on the right.
+ *
+ * The headline figure is an average across the months in view, which is not
+ * something a finance team can reconcile on its own — so every row opens up to
+ * the individual monthly charges, with the metered quantity behind each one.
+ */
 function MeterRow({ meter, fmt, tone = 'text-slate-200' }) {
+  const [open, setOpen] = useState(false);
+  const parts = meter.parts || [];
+  const canOpen = parts.length > 0;
+
   return (
-    <li className="flex items-baseline gap-2 text-xs">
-      {meter.resource_name && (
-        <span className="text-slate-200 font-medium shrink-0 max-w-[190px] truncate" title={meter.resource_name}>
-          {meter.resource_name}
-        </span>
+    <li className="text-xs">
+      <div
+        className={`flex items-baseline gap-2 ${canOpen ? 'cursor-pointer group' : ''}`}
+        onClick={canOpen ? () => setOpen(o => !o) : undefined}
+        role={canOpen ? 'button' : undefined}
+        tabIndex={canOpen ? 0 : undefined}
+        onKeyDown={canOpen ? (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); }
+        } : undefined}
+      >
+        {canOpen && (
+          <ChevronRight
+            className={`w-3 h-3 shrink-0 text-slate-500 transition-transform ${open ? 'rotate-90' : ''}`}
+          />
+        )}
+        {meter.resource_name && (
+          <span className="text-slate-200 font-medium shrink-0 max-w-[190px] truncate" title={meter.resource_name}>
+            {meter.resource_name}
+          </span>
+        )}
+        {meter.size && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-[#fff] shrink-0">
+            {meter.sku} · {meter.size}
+          </span>
+        )}
+        <span className="text-slate-400 truncate">{meter.label}</span>
+        {meter.resource_group && (
+          <span className="text-[10px] text-slate-600 shrink-0">{meter.resource_group}</span>
+        )}
+        <span className="flex-1 border-b border-dotted border-slate-700/70 translate-y-[-3px]" />
+        <span className={`font-medium shrink-0 ${tone || 'text-slate-200'}`}>{fmt(meter.cost)}</span>
+      </div>
+
+      {open && (
+        <div className="ml-5 mt-1.5 mb-2 border-l border-slate-700/70 pl-3">
+          <p className="text-[10px] text-slate-500 mb-1">
+            {parts.length === 1
+              ? `Billed once, in ${parts[0].month || 'the period shown'}:`
+              : `${fmt(meter.cost)} is the average of ${parts.length} months of charges on this meter:`}
+          </p>
+          <table className="w-full max-w-md text-[11px] tabular-nums">
+            <tbody>
+              {parts.map((p) => (
+                <tr key={p.month}>
+                  <td className="py-0.5 pr-4 text-slate-400 whitespace-nowrap w-16">{p.month || '—'}</td>
+                  <td className="py-0.5 pr-4 text-slate-500 whitespace-nowrap">
+                    {p.quantity ? `${p.quantity}${p.unit ? ` ${p.unit}` : ''}` : ''}
+                  </td>
+                  <td className="py-0.5 text-right text-slate-200 whitespace-nowrap">{fmt(p.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
-      {meter.size && (
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-[#fff] shrink-0">
-          {meter.sku} · {meter.size}
-        </span>
-      )}
-      <span className="text-slate-400 truncate">{meter.label}</span>
-      {meter.resource_group && (
-        <span className="text-[10px] text-slate-600 shrink-0">{meter.resource_group}</span>
-      )}
-      <span className="flex-1 border-b border-dotted border-slate-700/70 translate-y-[-3px]" />
-      <span className={`font-medium shrink-0 ${tone || 'text-slate-200'}`}>{fmt(meter.cost)}</span>
     </li>
   );
 }
+
 
 function Figure({ label, value, sub, className = 'text-slate-300', strong = false }) {  return (
     <div className="text-right">

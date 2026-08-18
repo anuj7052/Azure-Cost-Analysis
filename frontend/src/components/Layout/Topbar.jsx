@@ -14,10 +14,10 @@ const ALL_MONTHS = [
 export default function Topbar() {
   const { accounts, instance } = useMsal();
   const {
-    loadCosts, costLoading, months, setMonths,
+    costLoading, months, setMonths,
     dateMode, fromDate, toDate, setCustomDateRange,
     selectedTenantId, tenants, setSelectedTenant,
-    imported, clearImported, loadBandwidth,
+    imported, clearImported, refreshAll,
   } = useAppStore();
   const theme       = useTheme(s => s.theme);
   const toggleTheme = useTheme(s => s.toggleTheme);
@@ -29,12 +29,19 @@ export default function Topbar() {
   // For month picker — stores "YYYY-M" strings e.g. "2026-3"
   const [pickedYear]                    = useState(new Date().getFullYear());
 
-  // Refresh must bypass the local cache, otherwise it would re-serve the very
-  // data the user is asking to replace.
-  const hardRefresh = () => {
-    loadCosts({ force: true });
-    loadBandwidth({ force: true });
+  // Refresh must empty the local cache, not just bypass it for the two datasets
+  // this bar happens to know about: anything left behind is re-served the moment
+  // the user navigates, which reads as "refresh did nothing".
+  const [refreshing, setRefreshing] = useState(false);
+  const hardRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshAll();
+    } finally {
+      setRefreshing(false);
+    }
   };
+  const busy = refreshing || costLoading;
 
   const user = accounts[0];
   const initials = user?.name
@@ -275,11 +282,11 @@ export default function Topbar() {
       {/* Refresh */}
       <button
         onClick={hardRefresh}
-        disabled={costLoading}
-        className="flex items-center gap-2 text-slate-400 hover:text-white transition text-sm"
+        disabled={busy}
+        className="flex items-center gap-2 text-slate-400 hover:text-white transition text-sm disabled:opacity-60"
       >
-        <RefreshCw className={`w-4 h-4 ${costLoading ? 'animate-spin' : ''}`} />
-        <span className="hidden md:inline">{costLoading ? 'Loading…' : 'Refresh'}</span>
+        <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
+        <span className="hidden md:inline">{busy ? 'Refreshing…' : 'Refresh'}</span>
       </button>
 
       {/* Theme toggle */}

@@ -94,7 +94,9 @@ async def get_cost_rows(
             token=token,
             subscription_id=sub_id,
             months=body.months,
-            # Three dimensions is the most the Cost Management query API accepts.
+            # Three dimensions is the most the Cost Management query API accepts,
+            # and ResourceId is not one it will group a usage-quantity query by,
+            # so the group name is the finest split available here.
             group_by=["ServiceName", "ResourceGroupName", "Meter"],
             granularity="Monthly",
             from_date=body.from_date,

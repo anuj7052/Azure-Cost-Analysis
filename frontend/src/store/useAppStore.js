@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth } from '../api/client';
+import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe } from '../api/client';
 import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
-import { readCache, readPrefs, writeCache, writePrefs } from '../utils/persistCache';
+import { readCache, readPrefs, writeCache, writePrefs, evictApiCache } from '../utils/persistCache';
 
 /**
  * Azure Cost Management throttles hard (HTTP 429). Several pages mount effects
@@ -9,6 +9,19 @@ import { readCache, readPrefs, writeCache, writePrefs } from '../utils/persistCa
  * share a single promise instead of hitting the API once per caller.
  */
 const inFlight = new Map();
+
+/**
+ * Move a YYYY-MM-DD date back by whole months, landing on the first of the month.
+ *
+ * Meter rows are fetched for a wider window than the user selected so that a
+ * month-over-month comparison still has a previous month to compare against.
+ */
+function widenBackByMonths(isoDate, back) {
+  const [y, m] = String(isoDate).split('-').map(Number);
+  // Date handles the year rollover; month is zero-based here.
+  const start = new Date(Date.UTC(y, (m - 1) - back, 1));
+  return start.toISOString().slice(0, 10);
+}
 
 function dedupe(key, run) {
   const existing = inFlight.get(key);
@@ -107,6 +120,21 @@ function savePrefs(get) {
 }
 
 export const useAppStore = create((set, get) => ({
+  // ── Signed-in account ──
+  // Role comes from the backend, never from the token, so the admin nav cannot
+  // be unlocked by editing anything in the browser.
+  me: null,
+  meLoading: false,
+
+  loadMe: async () => {
+    set({ meLoading: true });
+    try {
+      set({ me: await fetchMe(), meLoading: false });
+    } catch {
+      set({ me: null, meLoading: false });
+    }
+  },
+
   // ── Tenants ──
   tenants: readCache('tenants')?.value ?? [],
   selectedTenantId: prefs.selectedTenantId ?? null,
@@ -298,14 +326,16 @@ export const useAppStore = create((set, get) => ({
   },
 
   // ── Per-meter monthly rows (month-over-month comparison) ──
-  // Deliberately ignores the date filter and always asks for a span of months:
-  // comparing one month to the next is impossible inside a single-month window.
+  // Always asks for a span of several months, because comparing one month to
+  // the next is impossible inside a single-month window. A custom range is
+  // still honoured — widened backwards, never narrowed — so any month the user
+  // picks, including the one in progress, actually has meter rows behind it.
   rowsData: null,
   rowsLoading: false,
   rowsError: null,
 
   loadCostRows: async (opts = {}) => {
-    const { selectedTenantId, selectedSubscriptionIds, months, imported } = get();
+    const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate, imported } = get();
     // An uploaded file already carries these rows; never overwrite them.
     if (imported) return;
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
@@ -316,6 +346,13 @@ export const useAppStore = create((set, get) => ({
         subscription_ids: selectedSubscriptionIds,
         months: Math.max(months || 1, 6),
       };
+      // Without an explicit range the API only returns whole past months, so a
+      // range covering the current month would come back with no meter rows at
+      // all and every charge would collapse into a bare service total.
+      if (dateMode === 'custom' && fromDate && toDate) {
+        payload.from_date = widenBackByMonths(fromDate, 5);
+        payload.to_date = toDate;
+      }
       await cached(
         `rows:${JSON.stringify(payload)}`,
         () => fetchCostRows(payload),
@@ -542,23 +579,59 @@ export const useAppStore = create((set, get) => ({
   // ── Active Services ──
   activeServices: [],
   servicesLoading: false,
+  servicesError: null,
   loadServices: async (opts = {}) => {
-    const { selectedTenantId, selectedSubscriptionIds, imported, recomputeImported } = get();
+    const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate, imported, recomputeImported } = get();
     if (imported) return recomputeImported();
     if (!selectedTenantId || !selectedSubscriptionIds.length) return;
 
-    set({ servicesLoading: true });
+    // The custom range has to reach the query, or picking a different month
+    // would silently keep showing the rolling window's costs.
+    const range = dateMode === 'custom' && fromDate && toDate
+      ? { from_date: fromDate, to_date: toDate }
+      : {};
+
+    set({ servicesLoading: true, servicesError: null });
     try {
       await cached(
-        `services:${selectedTenantId}:${selectedSubscriptionIds.join(',')}`,
-        () => fetchServices(selectedTenantId, selectedSubscriptionIds),
-        (data) => set({ activeServices: data, servicesLoading: false }),
+        `services:${selectedTenantId}:${selectedSubscriptionIds.join(',')}:${months}:${range.from_date || ''}:${range.to_date || ''}`,
+        () => fetchServices(selectedTenantId, selectedSubscriptionIds, months, range),
+        (data) => set({ activeServices: data, servicesLoading: false, servicesError: null }),
         opts,
       );
       set({ servicesLoading: false });
-    } catch {
-      set({ servicesLoading: false });
+    } catch (err) {
+      set({ servicesLoading: false, servicesError: err.response?.data?.detail || err.message });
     }
+  },
+
+  // ── Refresh ──
+  /**
+   * Throw away every cached API answer and re-fetch what is on screen.
+   *
+   * Pressing Refresh has to mean "go and ask Azure again". Forcing only the
+   * loaders for the current page left every other page serving a stale copy
+   * from localStorage, so the cache is emptied first and each dataset the store
+   * already holds is re-requested with the cache bypassed. Pages that are not
+   * loaded yet simply have nothing cached to re-serve when they mount.
+   *
+   * An uploaded file and the BOQ list are the user's own data, not an Azure
+   * answer, so they survive.
+   */
+  refreshAll: async () => {
+    const s = get();
+    evictApiCache();
+    if (s.imported) {
+      s.recomputeImported();
+      return;
+    }
+    if (!s.selectedTenantId || s.selectedSubscriptionIds.length === 0) return;
+    const force = { force: true };
+    const jobs = [s.loadCosts(force), s.loadBandwidth(force), s.loadCostRows(force)];
+    if (s.activeServices.length) jobs.push(s.loadServices(force));
+    if (s.rgData) jobs.push(s.loadRgCosts(force));
+    if (s.dailyData) jobs.push(s.loadDailyCosts(null, force));
+    await Promise.allSettled(jobs);
   },
 }));
 

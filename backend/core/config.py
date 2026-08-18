@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
     DB_PATH: str = "./data/azure_cost.db"
 
+    # Comma-separated emails that get platform-admin rights. Kept out of the
+    # database on purpose: an admin cannot be created by anything the app
+    # itself exposes, only by whoever controls the deployment environment.
+    ADMIN_EMAILS: str = ""
+
     # --- BOQ chat assistant ---
     # Leave OPENAI_BASE_URL empty for api.openai.com, or point it at a gateway.
     OPENAI_API_KEY: str = ""
@@ -22,6 +27,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]
+
+    @property
+    def admin_emails_list(self) -> List[str]:
+        return [e.strip().lower() for e in self.ADMIN_EMAILS.split(",") if e.strip()]
 
 
 settings = Settings()

@@ -74,6 +74,26 @@ export function evictAll() {
   }
 }
 
+/**
+ * Remove cached Azure answers, keeping anything the user supplied.
+ *
+ * Used by Refresh: an uploaded usage file and the BOQ list are the user's own
+ * data and re-fetching cannot bring them back, so wiping them would turn a
+ * refresh into data loss.
+ */
+const KEEP = ['pref:', 'import:', 'boq:'];
+
+export function evictApiCache() {
+  const store = safeStorage();
+  if (!store) return;
+  for (const key of Object.keys(store)) {
+    if (!key.startsWith(PREFIX)) continue;
+    const name = key.slice(PREFIX.length);
+    if (KEEP.some(p => name.startsWith(p))) continue;
+    store.removeItem(key);
+  }
+}
+
 /** Persisted UI preferences (tenant + subscription selection, date range). */
 export function readPrefs() {
   return readCache('pref:ui')?.value ?? null;

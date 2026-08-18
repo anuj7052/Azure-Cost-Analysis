@@ -54,7 +54,10 @@ async def get_tenants(
         pass  # Non-fatal: user's own tenant already added above
 
     # 2. Service principal tenants from DB
-    async with db.execute("SELECT tenant_id, tenant_name FROM service_principals") as cursor:
+    async with db.execute(
+        "SELECT tenant_id, tenant_name FROM service_principals WHERE user_id = ?",
+        (current_user["account_id"],),
+    ) as cursor:
         rows = await cursor.fetchall()
         for row in rows:
             if row["tenant_id"] not in seen_ids:
@@ -69,7 +72,9 @@ async def get_tenants(
     #    tenant, because the user added them to reach something their own login
     #    could not.
     async with db.execute(
-        "SELECT tenant_id, tenant_name, expires_at, account FROM session_tokens"
+        "SELECT tenant_id, tenant_name, expires_at, account FROM session_tokens "
+        "WHERE user_id = ?",
+        (current_user["account_id"],),
     ) as cursor:
         rows = await cursor.fetchall()
 
@@ -151,15 +156,16 @@ async def add_session_token(
 
     await db.execute(
         """
-        INSERT INTO session_tokens (tenant_id, tenant_name, access_token, expires_at, account)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(tenant_id) DO UPDATE SET
+        INSERT INTO session_tokens (user_id, tenant_id, tenant_name, access_token,
+                                    expires_at, account)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, tenant_id) DO UPDATE SET
             tenant_name=excluded.tenant_name,
             access_token=excluded.access_token,
             expires_at=excluded.expires_at,
             account=excluded.account
         """,
-        (tenant_id, name, body.access_token, expires_at, account),
+        (current_user["account_id"], tenant_id, name, body.access_token, expires_at, account),
     )
     await db.commit()
 
@@ -183,14 +189,16 @@ async def add_tenant(
     try:
         await db.execute(
             """
-            INSERT INTO service_principals (tenant_id, tenant_name, client_id, client_secret)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(tenant_id) DO UPDATE SET
+            INSERT INTO service_principals (user_id, tenant_id, tenant_name,
+                                            client_id, client_secret)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, tenant_id) DO UPDATE SET
                 tenant_name=excluded.tenant_name,
                 client_id=excluded.client_id,
                 client_secret=excluded.client_secret
             """,
-            (body.tenant_id, body.tenant_name, body.client_id, body.client_secret),
+            (current_user["account_id"], body.tenant_id, body.tenant_name,
+             body.client_id, body.client_secret),
         )
         await db.commit()
     except Exception as exc:
@@ -210,10 +218,13 @@ async def delete_tenant(
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """Remove a stored Service Principal or session-token tenant."""
+    account_id = current_user["account_id"]
     await db.execute(
-        "DELETE FROM service_principals WHERE tenant_id = ?", (tenant_id,)
+        "DELETE FROM service_principals WHERE tenant_id = ? AND user_id = ?",
+        (tenant_id, account_id),
     )
     await db.execute(
-        "DELETE FROM session_tokens WHERE tenant_id = ?", (tenant_id,)
+        "DELETE FROM session_tokens WHERE tenant_id = ? AND user_id = ?",
+        (tenant_id, account_id),
     )
     await db.commit()

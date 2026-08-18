@@ -467,7 +467,18 @@ async def query_active_resources(
         "query": (
             "Resources "
             "| where type != 'microsoft.resources/subscriptions/resourcegroups' "
-            "| project name, type, resourceGroup, subscriptionId, location, tags "
+            # Size lives in a different place for every provider: an object on
+            # `sku` for most, but inside `properties` for VMs, disks and web
+            # apps. Pulling all of them here means the table shows a real size
+            # instead of a dash for the resources people care about most.
+            "| extend skuName = tostring(sku.name), "
+            "         skuTier = tostring(sku.tier), "
+            "         skuSize = tostring(sku.size), "
+            "         vmSize = tostring(properties.hardwareProfile.vmSize), "
+            "         diskGb = tostring(properties.diskSizeGB), "
+            "         diskTier = tostring(properties.tier) "
+            "| project id, name, type, resourceGroup, subscriptionId, location, tags, "
+            "          skuName, skuTier, skuSize, vmSize, diskGb, diskTier "
             "| order by type asc"
         ),
         "options": {"$top": 1000},

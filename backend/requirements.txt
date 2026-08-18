@@ -15,3 +15,4 @@ python-dateutil==2.9.0
 openpyxl==3.1.5
 pdfplumber==0.11.4
 openai==1.59.6
+reportlab>=4.0

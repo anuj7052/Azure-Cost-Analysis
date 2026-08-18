@@ -1,9 +1,10 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X, GitCompareArrows, KeyRound } from 'lucide-react';
+import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X, GitCompareArrows, KeyRound, Download } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import { deleteTenant, uploadCSV } from '../api/client';
+import { deleteTenant, downloadSetupGuide, uploadCSV } from '../api/client';
 import AddTenantModal from '../components/TenantManager/AddTenantModal';
+import IntegrationsPanel from '../components/Settings/IntegrationsPanel';
 import AddSessionTokenModal from '../components/TenantManager/AddSessionTokenModal';
 import PortalGuide, { EXPORT_GUIDE } from '../components/Common/PortalGuide';
 import { formatAmount } from '../utils/currency';
@@ -98,6 +99,20 @@ export default function Settings() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                try {
+                  await downloadSetupGuide();
+                  toast.success('Setup guide downloaded');
+                } catch {
+                  toast.error('Could not download the guide.');
+                }
+              }}
+              className="flex items-center gap-2 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-sm px-3 py-2 rounded-xl transition"
+            >
+              <Download className="w-4 h-4" />
+              Setup guide
+            </button>
             <button
               onClick={() => setShowTokenModal(true)}
               className="flex items-center gap-2 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-sm px-3 py-2 rounded-xl transition"
@@ -205,6 +220,9 @@ export default function Settings() {
           )}
         </div>
       )}
+
+      {/* Customer-supplied endpoints */}
+      <IntegrationsPanel />
 
       {/* File import */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 elevated">

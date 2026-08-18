@@ -78,6 +78,21 @@ def _first(record: Dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def _resource_group_of(resource_id: str) -> str:
+    """
+    Pull the resource group out of an ARM id.
+
+    Cost Management only accepts three grouping dimensions, so the query asks for
+    the resource id rather than the group name and recovers the group from the
+    id — the segment after `resourceGroups`, whatever its casing.
+    """
+    parts = resource_id.split("/")
+    for i, part in enumerate(parts):
+        if part.lower() == "resourcegroups" and i + 1 < len(parts):
+            return parts[i + 1]
+    return ""
+
+
 def to_cost_rows(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Flatten raw Cost Management records into the same row shape the file import
@@ -101,7 +116,8 @@ def to_cost_rows(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "unit_of_measure": _first(r, "UnitOfMeasure"),
             "service": _first(r, "ServiceName", "MeterCategory") or "Unknown",
             "meter": _first(r, "Meter", "MeterName", "MeterSubcategory"),
-            "resource_group": _first(r, "ResourceGroupName", "ResourceGroup"),
+            "resource_group": _first(r, "ResourceGroupName", "ResourceGroup")
+            or _resource_group_of(_first(r, "ResourceId")),
             "resource_name": _first(r, "ResourceId").split("/")[-1],
             "subscription_id": _first(r, "SubscriptionId", "SubscriptionGuid"),
             "region": _first(r, "ResourceLocation", "Location"),
@@ -220,6 +236,49 @@ def top_services(monthly: Dict[str, Dict], top_n: int = 10) -> List[Dict]:
         })
 
     return result
+
+
+def resource_cost_index(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Index Cost Management rows grouped by ResourceId so each resource can be
+    shown with what it actually cost, which service billed it, and the meters
+    behind the charge.
+
+    Keys are lower-cased resource ids: Azure is inconsistent about the casing
+    of the id between Resource Graph and Cost Management, and matching on the
+    raw string silently loses most of the rows.
+    """
+    index: Dict[str, Dict[str, Any]] = {}
+
+    for r in records:
+        resource_id = _first(r, "ResourceId", "resourceId", "Resource")
+        if not resource_id:
+            continue
+        cost = float(r.get("PreTaxCost") or r.get("Cost") or r.get("totalCost") or 0.0)
+        entry = index.setdefault(
+            resource_id.lower(),
+            {"cost": 0.0, "service": "", "meters": defaultdict(float)},
+        )
+        entry["cost"] += cost
+        service = _first(r, "ServiceName", "MeterCategory")
+        if service and not entry["service"]:
+            entry["service"] = service
+        meter = _first(r, "Meter", "MeterName", "MeterSubcategory")
+        if meter:
+            entry["meters"][meter] += cost
+
+    return {
+        key: {
+            "cost": round(v["cost"], 2),
+            "service": v["service"],
+            # Priciest meter first — it is the one that identifies the resource.
+            "meters": [
+                {"name": name, "cost": round(amount, 2)}
+                for name, amount in sorted(v["meters"].items(), key=lambda x: x[1], reverse=True)
+            ],
+        }
+        for key, v in index.items()
+    }
 
 
 def aggregate_by_rg(records: List[Dict[str, Any]]) -> Dict[str, Dict]:

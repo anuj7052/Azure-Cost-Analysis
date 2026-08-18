@@ -74,6 +74,38 @@ def test_resource_name_comes_from_the_last_segment_of_the_resource_id():
     assert row["resource_name"] == "mmshdb01"
 
 
+def test_resource_group_is_recovered_from_the_resource_id():
+    """
+    Only three grouping dimensions are allowed, so the query asks for ResourceId
+    and the group name has to be read back out of it.
+    """
+    rec = _record(ResourceId="/subscriptions/s/resourceGroups/rg-backup/providers/x/vaults/v1")
+    del rec["ResourceGroupName"]
+    (row,) = to_cost_rows([rec])
+    assert row["resource_group"] == "rg-backup"
+
+
+def test_resource_group_casing_in_the_id_does_not_matter():
+    rec = _record(ResourceId="/subscriptions/s/RESOURCEGROUPS/rg-backup/providers/x/vaults/v1")
+    del rec["ResourceGroupName"]
+    (row,) = to_cost_rows([rec])
+    assert row["resource_group"] == "rg-backup"
+
+
+def test_the_explicit_group_dimension_still_wins_when_present():
+    (row,) = to_cost_rows([
+        _record(ResourceId="/subscriptions/s/resourceGroups/other/providers/x/vm/a")
+    ])
+    assert row["resource_group"] == "rg-sap"
+
+
+def test_a_charge_with_no_resource_id_does_not_invent_a_group():
+    rec = _record()
+    del rec["ResourceGroupName"]
+    (row,) = to_cost_rows([rec])
+    assert row["resource_group"] == ""
+
+
 def test_costs_are_not_silently_rounded_away():
     """Small per-meter charges must survive; they add up across hundreds of rows."""
     (row,) = to_cost_rows([_record(PreTaxCost=0.0007, UsageQuantity=0)])

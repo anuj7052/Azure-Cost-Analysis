@@ -48,24 +48,40 @@ Rules you must follow:
 class BoqChatService:
     """OpenAI-backed chat over a single in-request BOQ."""
 
-    def __init__(self, boq: dict[str, Any] | None, resource_group: str = "rg-boq") -> None:
+    def __init__(
+        self,
+        boq: dict[str, Any] | None,
+        resource_group: str = "rg-boq",
+        llm: dict[str, Any] | None = None,
+    ) -> None:
         self.boq = boq
         self.resource_group = resource_group
+        # When the customer has registered their own endpoint the assistant
+        # runs on their key and quota; otherwise the deployment-wide one.
+        self.llm = llm or {
+            "api_key": settings.OPENAI_API_KEY,
+            "base_url": settings.OPENAI_BASE_URL or "",
+            "model": settings.OPENAI_MODEL,
+        }
         self.artifacts: list[dict[str, str]] = []
         self._client: AsyncOpenAI | None = None
         self._plan: dict[str, Any] | None = None
 
     @property
     def client(self) -> AsyncOpenAI:
-        if not settings.OPENAI_API_KEY:
+        if not self.llm.get("api_key"):
             raise HTTPException(
                 status_code=503,
-                detail="The chat assistant is not configured — OPENAI_API_KEY is unset.",
+                detail=(
+                    "The chat assistant is not configured. Add your own model "
+                    "endpoint under Settings → Integrations, or ask your "
+                    "administrator to set OPENAI_API_KEY."
+                ),
             )
         if self._client is None:
             self._client = AsyncOpenAI(
-                api_key=settings.OPENAI_API_KEY,
-                base_url=settings.OPENAI_BASE_URL or None,
+                api_key=self.llm["api_key"],
+                base_url=self.llm.get("base_url") or None,
             )
         return self._client
 
@@ -225,7 +241,7 @@ class BoqChatService:
         used: list[str] = []
         for _ in range(MAX_STEPS):
             response = await self.client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
+                model=self.llm.get("model") or settings.OPENAI_MODEL,
                 messages=messages,
                 tools=self._tool_schema(),
                 tool_choice="auto",

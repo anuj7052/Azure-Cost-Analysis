@@ -134,6 +134,31 @@ function meterIdentity(row) {
 /** Group meters by the resource they belong to, so one disk is one entry. */
 const meterKey = (row) => `${row.resource_name || ''}::${usageLabel(row)}::${row.resource_group || ''}`;
 
+/**
+ * Record the individual monthly charge behind a rolled-up meter total, so a
+ * figure like "Backup ₹10.48K" can always be opened up and read as the bills it
+ * was averaged from. Costs here are the real amount billed in that month, not
+ * the per-month average, otherwise the detail would not tie back to the invoice.
+ */
+function addPart(entry, row) {
+  const month = row.month || '';
+  const cost = Number(row.cost) || 0;
+  const quantity = Number(row.quantity) || 0;
+  const found = entry.parts.find(p => p.month === month);
+  if (found) {
+    found.cost += cost;
+    found.quantity += quantity;
+  } else {
+    entry.parts.push({ month, cost, quantity, unit: row.unit_of_measure || '' });
+  }
+}
+
+/** Monthly charges oldest first, rounded for display. */
+const shapeParts = (parts = []) =>
+  parts
+    .map(p => ({ ...p, cost: round(p.cost), quantity: round(p.quantity) }))
+    .sort((a, b) => String(a.month).localeCompare(String(b.month)));
+
 /** Bytes moved by a row, when the meter is measured in data volume. */
 const rowBytes = (row) =>
   isBandwidthRow(row) ? (Number(row.quantity) || 0) * unitBytes(row) : 0;
@@ -242,14 +267,19 @@ function compareLines(budgetLines, usageRows, span) {
     if (best && bestScore >= 100) {
       best.actual += cost;
       const existing = best.matches.find(m => m.id === id);
-      if (existing) { existing.cost += cost; existing.bytes += bytes; }
-      else best.matches.push({ id, ...meterIdentity(row), cost, bytes });
+      if (existing) { existing.cost += cost; existing.bytes += bytes; addPart(existing, row); }
+      else {
+        const entry = { id, ...meterIdentity(row), cost, bytes, parts: [] };
+        addPart(entry, row);
+        best.matches.push(entry);
+      }
     } else if (cost > 0) {
       // Charged, but no estimate line claims this SKU.
       // Zero-cost meters (prepaid reservations, included quotas) are noise here.
-      const entry = unmatched.get(id) || { id, ...meterIdentity(row), cost: 0, bytes: 0 };
+      const entry = unmatched.get(id) || { id, ...meterIdentity(row), cost: 0, bytes: 0, parts: [] };
       entry.cost += cost;
       entry.bytes += bytes;
+      addPart(entry, row);
       unmatched.set(id, entry);
     }
   }
@@ -268,13 +298,13 @@ function compareLines(budgetLines, usageRows, span) {
       billedCount,
       drivers: costDrivers(line, billedCount),
       matches: line.matches
-        .map(m => ({ ...m, cost: round(m.cost) }))
+        .map(m => ({ ...m, cost: round(m.cost), parts: shapeParts(m.parts) }))
         .sort((a, b) => b.cost - a.cost),
     };
   };
 
   const unmatchedList = [...unmatched.values()]
-    .map(u => ({ ...u, cost: round(u.cost) }))
+    .map(u => ({ ...u, cost: round(u.cost), parts: shapeParts(u.parts) }))
     .sort((a, b) => b.cost - a.cost);
   const unmatchedTotal = round(unmatchedList.reduce((s, u) => s + u.cost, 0));
 
