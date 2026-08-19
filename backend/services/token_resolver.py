@@ -51,7 +51,10 @@ async def resolve_tenant_token(
     ) as cursor:
         row = await cursor.fetchone()
     if not row:
-        return current_user["token"]
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this tenant.",
+        )
 
     try:
         return get_sp_token(tenant_id, row["client_id"], row["client_secret"])

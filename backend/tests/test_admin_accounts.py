@@ -131,9 +131,9 @@ async def test_one_user_cannot_use_another_users_service_principal(db):
         "tenant_id": "tenant-b",
         "token": "intruder-own-token",
     }
-    # Falls back to the intruder's own delegated token instead of minting one
-    # from the owner's stored secret.
-    assert await resolve_tenant_token("victim-tenant", caller, db) == "intruder-own-token"
+    with pytest.raises(HTTPException) as exc:
+        await resolve_tenant_token("victim-tenant", caller, db)
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -149,7 +149,9 @@ async def test_one_user_cannot_use_another_users_session_token(db):
     await db.commit()
 
     caller = {"account_id": intruder["id"], "tenant_id": "tenant-b", "token": "own"}
-    assert await resolve_tenant_token("victim-tenant", caller, db) == "own"
+    with pytest.raises(HTTPException) as exc:
+        await resolve_tenant_token("victim-tenant", caller, db)
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio

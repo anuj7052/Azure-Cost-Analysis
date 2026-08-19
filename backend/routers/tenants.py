@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import aiosqlite
 from auth.dependencies import get_current_user
 from services.azure_mgmt import (
-    is_expired, list_subscriptions, list_user_tenants, read_token_claims, token_expiry,
+    get_sp_token, is_expired, list_subscriptions, read_token_claims, token_expiry,
 )
 from models.schemas import TenantInfo, AddTenantRequest, AddSessionTokenRequest
 from core.db import get_db
@@ -29,31 +29,8 @@ async def get_tenants(
         ))
         seen_ids.add(own_tenant_id)
 
-    # 1. Try to enrich / list more tenants via management API (non-fatal)
-    try:
-        user_tenants = await list_user_tenants(current_user["token"])
-        for t in user_tenants:
-            tid = t.get("tenantId", "")
-            display = t.get("displayName") or tid
-            if not tid:
-                continue
-            if tid in seen_ids:
-                # Update the display name for the already-added tenant
-                for r in results:
-                    if r.tenant_id == tid:
-                        r.tenant_name = display
-                        break
-            else:
-                results.append(TenantInfo(
-                    tenant_id=tid,
-                    tenant_name=display,
-                    source="delegated",
-                ))
-                seen_ids.add(tid)
-    except Exception:
-        pass  # Non-fatal: user's own tenant already added above
-
-    # 2. Service principal tenants from DB
+    # Only the signed-in tenant and credentials explicitly registered by this
+    # account are returned. Do not enumerate every directory the user can see.
     async with db.execute(
         "SELECT tenant_id, tenant_name FROM service_principals WHERE user_id = ?",
         (current_user["account_id"],),
@@ -68,7 +45,7 @@ async def get_tenants(
                 ))
                 seen_ids.add(row["tenant_id"])
 
-    # 3. Pasted session tokens. These win over a delegated entry for the same
+    # Pasted session tokens win over a delegated entry for the same
     #    tenant, because the user added them to reach something their own login
     #    could not.
     async with db.execute(
@@ -185,7 +162,21 @@ async def add_tenant(
     current_user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    """Store a Service Principal tenant configuration."""
+    """Validate and store a Service Principal tenant configuration."""
+    try:
+        subscriptions = await list_subscriptions(
+            get_sp_token(body.tenant_id, body.client_id, body.client_secret)
+        )
+    except Exception as exc:
+        reason = str(exc)
+        for secret in (body.client_secret, body.client_id):
+            reason = reason.replace(secret, "<redacted>")
+        if len(reason) > 200:
+            reason = reason[:200] + "..."
+        raise HTTPException(
+            status_code=502,
+            detail=f"Azure rejected these service principal credentials: {reason}",
+        )
     try:
         await db.execute(
             """
@@ -201,13 +192,14 @@ async def add_tenant(
              body.client_id, body.client_secret),
         )
         await db.commit()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"DB error: {exc}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not save the tenant connection.")
 
     return TenantInfo(
         tenant_id=body.tenant_id,
         tenant_name=body.tenant_name,
         source="service_principal",
+        subscription_count=len(subscriptions),
     )
 
 
