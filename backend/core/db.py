@@ -60,7 +60,51 @@ _SCHEMAS = {
             UNIQUE (user_id, label)
         )
     """,
+    # A point-in-time capture of one tenant's estate. Every visibility feature
+    # that answers "what did this look like then" or "what changed" reads from
+    # here rather than from Azure, because Azure only ever reports *now*.
+    "scans": """
+        CREATE TABLE IF NOT EXISTS scans (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id      TEXT    NOT NULL,
+            status         TEXT    NOT NULL DEFAULT 'running',
+            started_at     TEXT    DEFAULT (datetime('now')),
+            finished_at    TEXT,
+            resource_count INTEGER NOT NULL DEFAULT 0,
+            error          TEXT
+        )
+    """,
+    # Resources as they existed in one scan.
+    #
+    # Rows are never updated. A resource that changes produces a new row in the
+    # next scan and the old one stays exactly as captured — that immutability is
+    # what makes point-in-time browsing and change tracking possible at all.
+    "scan_resources": """
+        CREATE TABLE IF NOT EXISTS scan_resources (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_id         INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+            resource_id     TEXT    NOT NULL,
+            name            TEXT    NOT NULL DEFAULT '',
+            name_lower      TEXT    NOT NULL DEFAULT '',
+            type            TEXT    NOT NULL DEFAULT '',
+            resource_group  TEXT    NOT NULL DEFAULT '',
+            subscription_id TEXT    NOT NULL DEFAULT '',
+            location        TEXT    NOT NULL DEFAULT '',
+            sku             TEXT    NOT NULL DEFAULT '',
+            tags            TEXT    NOT NULL DEFAULT '{}'
+        )
+    """,
 }
+
+# Search runs against name_lower across every scan the user owns, so without
+# these it degrades to a full table scan once a few scans have accumulated.
+_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_scans_owner ON scans (user_id, tenant_id, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_scan_resources_scan ON scan_resources (scan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_scan_resources_name ON scan_resources (name_lower)",
+    "CREATE INDEX IF NOT EXISTS idx_scan_resources_rid ON scan_resources (resource_id)",
+]
 
 
 async def _columns(db: aiosqlite.Connection, table: str) -> set[str]:
@@ -120,6 +164,10 @@ async def init_db():
         await db.execute(_SCHEMAS["service_principals"])
         await db.execute(_SCHEMAS["session_tokens"])
         await db.execute(_SCHEMAS["user_integrations"])
+        await db.execute(_SCHEMAS["scans"])
+        await db.execute(_SCHEMAS["scan_resources"])
+        for statement in _INDEXES:
+            await db.execute(statement)
         await db.commit()
 
 
