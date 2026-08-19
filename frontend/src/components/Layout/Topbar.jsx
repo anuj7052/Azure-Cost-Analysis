@@ -1,9 +1,10 @@
 import { useMsal } from '@azure/msal-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useTheme } from '../../store/useTheme';
-import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText } from 'lucide-react';
+import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Hash } from 'lucide-react';
 import { useState } from 'react';
 import { evictAll } from '../../utils/persistCache';
+import { COMPACT, EXACT, getAmountMode, setAmountMode } from '../../utils/currency';
 
 const ROLLING_OPTIONS = [1, 3, 6, 12];
 const ALL_MONTHS = [
@@ -28,6 +29,13 @@ export default function Topbar() {
   const [customTo, setCustomTo]         = useState('');
   // For month picker — stores "YYYY-M" strings e.g. "2026-3"
   const [pickedYear]                    = useState(new Date().getFullYear());
+
+  // Amount formatting lives outside React (chart axis formatters are plain
+  // functions), so flipping it needs a local state bump to force a re-render.
+  const [amountMode, setMode] = useState(getAmountMode);
+  const toggleAmounts = () => {
+    setMode(setAmountMode(amountMode === EXACT ? COMPACT : EXACT));
+  };
 
   // Refresh must empty the local cache, not just bypass it for the two datasets
   // this bar happens to know about: anything left behind is re-served the moment
@@ -92,12 +100,12 @@ export default function Topbar() {
   };
 
   return (
-    <header className="h-14 bg-slate-900/85 backdrop-blur-xl border-b border-slate-800 flex items-center px-5 gap-3 sticky top-0 z-40 elevated">
+    <header className="h-16 bg-slate-950/75 backdrop-blur-xl border-b border-slate-800/80 flex items-center px-5 gap-3 sticky top-0 z-40 elevated">
       {/* Tenant selector */}
       <div className="relative">
         <button
           onClick={() => setTenantOpen(o => !o)}
-          className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-sm text-slate-300 transition"
+           className="flex items-center gap-2 bg-slate-900/80 hover:bg-slate-800 border border-slate-800 px-3 py-2 rounded-xl text-sm text-slate-300 transition"
         >
           <span className="max-w-[180px] truncate">{tenantLabel}</span>
           <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
@@ -134,7 +142,7 @@ export default function Topbar() {
       <div className="relative">
         <button
           onClick={() => setFilterOpen(o => !o)}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition ${
+           className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition ${
             dateMode === 'custom'
               ? 'bg-blue-600/20 border border-blue-500/40 text-blue-300 hover:bg-blue-600/30'
               : 'bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700'
@@ -289,12 +297,31 @@ export default function Topbar() {
         <span className="hidden md:inline">{busy ? 'Refreshing…' : 'Refresh'}</span>
       </button>
 
+      {/* Exact vs compact amounts */}
+      <button
+        onClick={toggleAmounts}
+        title={
+          amountMode === EXACT
+            ? 'Showing full amounts — click for compact (1.24L)'
+            : 'Showing compact amounts — click for full (1,23,456.79)'
+        }
+        aria-pressed={amountMode === EXACT}
+        className={`flex items-center gap-1.5 px-2.5 h-10 rounded-xl border text-xs font-semibold transition ${
+          amountMode === EXACT
+            ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
+            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+        }`}
+      >
+        <Hash className="w-3.5 h-3.5" />
+        <span className="hidden lg:inline">{amountMode === EXACT ? 'Full' : 'Short'}</span>
+      </button>
+
       {/* Theme toggle */}
       <button
         onClick={toggleTheme}
         title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        className="relative w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 flex items-center justify-center transition-colors overflow-hidden"
+         className="relative w-10 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-center transition-colors overflow-hidden"
       >
         <Sun
           className={`w-4 h-4 absolute transition-all duration-300 ${
@@ -317,7 +344,7 @@ export default function Topbar() {
           {user?.name || user?.username || 'User'}
         </span>
         <button
-          onClick={() => { evictAll(); instance.logoutPopup(); }}
+          onClick={() => { evictAll(); instance.clearCache(); instance.logoutPopup(); }}
           title="Sign out"
           className="text-slate-500 hover:text-red-400 transition"
         >
@@ -327,6 +354,5 @@ export default function Topbar() {
     </header>
   );
 }
-
 
 

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    // Figma's official Dev Mode MCP server.
+    //
+    // Google Stitch has no MCP server of its own, but it exports to Figma —
+    // so Figma is the bridge that gets a Stitch design into this project as
+    // real frames rather than screenshots.
+    //
+    // Before enabling:
+    //   1. In Stitch, export the design to Figma.
+    //   2. Open the file in the Figma *desktop* app (the browser cannot host
+    //      the server).
+    //   3. Figma menu -> Preferences -> enable "Dev Mode MCP Server".
+    //   4. Set "enabled" below to true and restart opencode.
+    "figma": {
+      "type": "remote",
+      "url": "http://127.0.0.1:3845/mcp",
+      "enabled": false
+    }
+  }
+}

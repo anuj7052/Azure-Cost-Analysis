@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 @import "tailwindcss";
 
 /* ============================================================================
@@ -73,7 +74,7 @@ html[data-theme="light"] {
     margin: 0;
     background-color: var(--app-bg);
     color: var(--color-white);
-    font-family: "Inter", "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-family: "DM Sans", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     transition: background-color 0.2s ease, color 0.2s ease;
@@ -82,13 +83,21 @@ html[data-theme="light"] {
   /* Numeric columns stay aligned across every table and KPI. */
   table { font-variant-numeric: tabular-nums; }
 
-  h1, h2, h3 { letter-spacing: -0.015em; }
+  h1, h2, h3 { font-family: "Space Grotesk", "DM Sans", sans-serif; letter-spacing: -0.025em; }
 
   :focus-visible {
     outline: 2px solid var(--color-blue-500);
     outline-offset: 2px;
     border-radius: 0.5rem;
   }
+}
+
+@layer components {
+  .bg-slate-950 { background-image: radial-gradient(circle at 20% 0%, rgb(30 64 175 / 0.12), transparent 30rem); }
+  .bg-slate-900 { background-color: rgb(15 23 42 / 0.82); }
+  .border-slate-800 { border-color: rgb(51 65 85 / 0.72); }
+  .rounded-2xl { border-radius: 1rem; }
+  button, a, input, select { transition-duration: 180ms; }
 }
 
 @utility elevated { box-shadow: var(--shadow-card); }
