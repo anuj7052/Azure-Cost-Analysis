@@ -208,6 +208,155 @@ class AddTenantRequest(BaseModel):
         return v
 
 
+# ── Pricing model (reserved vs on-demand) ──────────────────────────────────
+
+class PricingServiceSplit(BaseModel):
+    service: str
+    total: float
+    reserved: float = 0.0
+    on_demand: float = 0.0
+    spot: float = 0.0
+    savings_plan: float = 0.0
+
+
+class PricingMonthSplit(BaseModel):
+    month: str
+    reserved: float = 0.0
+    on_demand: float = 0.0
+    spot: float = 0.0
+    savings_plan: float = 0.0
+    total: float = 0.0
+
+
+class PricingResponse(BaseModel):
+    currency: str = "USD"
+    total: float = 0.0
+    reserved: float = 0.0
+    savings_plan: float = 0.0
+    spot: float = 0.0
+    on_demand: float = 0.0
+    committed: float = 0.0
+    # None when there is no spend at all. Zero spend is not full coverage, and
+    # reporting 100% for an empty subscription would be actively misleading.
+    committed_pct: Optional[float] = None
+    by_model: dict = {}
+    services: List[PricingServiceSplit] = []
+    months: List[PricingMonthSplit] = []
+    # False when Azure never returned the PricingModel dimension — the split
+    # cannot be drawn and the UI has to say why rather than show zeroes.
+    has_pricing_data: bool = False
+    errors: List[dict] = []
+
+
+class ReservedMeter(BaseModel):
+    name: str
+    cost: float
+
+
+class ReservedResource(BaseModel):
+    resource_id: str
+    # "Unattributed" when Azure bills the reservation at the scope rather than
+    # against a specific resource — a real case, not a parsing failure.
+    name: str
+    resource_group: str = ""
+    subscription_id: str = ""
+    resource_type: str = ""
+    service: str = ""
+    cost: float = 0.0
+    # The meter name carries the SKU (e.g. "D2s v3"), which is what a renewal
+    # decision turns on, so meters are kept rather than summed away.
+    meters: List[ReservedMeter] = []
+
+
+class ReservedDetailResponse(BaseModel):
+    currency: str = "USD"
+    total: float = 0.0
+    resource_count: int = 0
+    resources: List[ReservedResource] = []
+    errors: List[dict] = []
+
+
+# ── Scans and search ───────────────────────────────────────────────────────
+
+class ScanRequest(BaseModel):
+    tenant_id: str
+    subscription_ids: List[str]
+
+
+class ScanSummary(BaseModel):
+    id: int
+    tenant_id: str
+    status: str                     # "running" | "complete" | "failed"
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    resource_count: int = 0
+    error: Optional[str] = None
+
+
+class SearchResult(BaseModel):
+    resource_id: str
+    name: str
+    type: str
+    resource_group: str
+    subscription_id: str
+    location: str
+    sku: str = ""
+    tags: dict = {}
+    # False means the resource was present in an earlier scan but not the latest
+    # one — the deleted-resource case the Azure portal cannot answer at all.
+    live: bool
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+
+
+class SearchResponse(BaseModel):
+    results: List[SearchResult]
+    total: int
+    # None means no completed scan exists yet, which is a different answer to
+    # "nothing matched" and needs a different prompt in the UI.
+    latest_scan_id: Optional[int] = None
+    truncated: bool = False
+
+
+# ── Orphaned resources ─────────────────────────────────────────────────────
+
+class OrphanedRequest(BaseModel):
+    tenant_id: str
+    subscription_ids: List[str]
+
+
+class OrphanedItem(BaseModel):
+    id: str
+    name: str
+    type: str
+    resource_group: str
+    subscription_id: str
+    location: str
+    tags: dict = {}
+    detail: str = ""
+    # None means "Cost Management did not report a charge for this resource",
+    # which is not the same as "it is free" — the query may have been throttled.
+    monthly_cost: Optional[float] = None
+
+
+class OrphanedCategory(BaseModel):
+    key: str
+    title: str
+    severity: str            # "certain" | "likely"
+    reason: str
+    count: int
+    monthly_cost: float
+    items: List[OrphanedItem]
+
+
+class OrphanedResponse(BaseModel):
+    categories: List[OrphanedCategory]
+    total_count: int
+    total_monthly_cost: float
+    currency: str = "USD"
+    errors: List[dict] = []
+
+
 # ── Cost Query ─────────────────────────────────────────────────────────────
 
 class CostQueryRequest(BaseModel):
