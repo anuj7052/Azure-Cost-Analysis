@@ -21,7 +21,9 @@ from models.schemas import (
     CostRow, CostRowsResponse,
     RgCostRequest, RgCostResponse, RgCostItem,
     DailyCostRequest, DailyCostResponse, DailyCostItem,
+    PricingResponse, ReservedDetailResponse,
 )
+from services.pricing import summarise_pricing, reserved_detail
 from core.db import get_db
 
 router = APIRouter(prefix="/api/costs", tags=["costs"])
@@ -198,3 +200,87 @@ async def get_daily_costs(
     total = round(sum(d.total for d in day_items), 2)
     currency = day_items[0].currency if day_items else "USD"
     return DailyCostResponse(days=day_items, total=total, currency=currency)
+
+
+@router.post("/pricing", response_model=PricingResponse)
+async def get_pricing_split(
+    body: CostQueryRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Split spend into reserved, on-demand, spot and savings-plan.
+
+    A single total answers "what did we spend" but not the question actually
+    asked about reservations: how much is already committed, and how much is
+    still being bought at list price.
+
+    The split comes from Azure's PricingModel dimension rather than from meter
+    names, because a VM meter looks identical whether or not a reservation
+    happened to cover it.
+    """
+    token = await resolve_tenant_token(body.tenant_id, current_user, db)
+
+    async def read_sub(sub_id: str):
+        return await query_costs(
+            token=token,
+            subscription_id=sub_id,
+            months=body.months,
+            group_by=["PricingModel", "ServiceName"],
+            granularity="Monthly",
+            from_date=body.from_date,
+            to_date=body.to_date,
+        )
+
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+
+    if not records and errors:
+        raise HTTPException(
+            status_code=502, detail=summarise_errors(errors, "reservation coverage")
+        )
+
+    return PricingResponse(**summarise_pricing(records), errors=errors)
+
+
+@router.post("/pricing/reserved", response_model=ReservedDetailResponse)
+async def get_reserved_detail(
+    body: CostQueryRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Which resources the reservation actually paid for.
+
+    "You spent X on reserved instances" is not actionable by itself; the next
+    question is always *which* machines, in *which* resource group, on *which*
+    SKU. This resolves each reserved charge back to the resource and meter
+    behind it.
+
+    Deliberately a separate endpoint rather than part of the pricing summary:
+    it costs an extra Cost Management query per subscription, and Azure
+    throttles those hard, so it only runs when somebody opens the detail.
+    """
+    token = await resolve_tenant_token(body.tenant_id, current_user, db)
+
+    async def read_sub(sub_id: str):
+        return await query_costs(
+            token=token,
+            subscription_id=sub_id,
+            months=body.months,
+            # Three dimensions is the maximum Cost Management accepts, so these
+            # are the three that identify a charge: how it was priced, what it
+            # was spent on, and which meter (the SKU) billed it.
+            group_by=["PricingModel", "ResourceId", "Meter"],
+            granularity="Monthly",
+            from_date=body.from_date,
+            to_date=body.to_date,
+        )
+
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+
+    if not records and errors:
+        raise HTTPException(
+            status_code=502, detail=summarise_errors(errors, "reservation detail")
+        )
+
+    return ReservedDetailResponse(**reserved_detail(records), errors=errors)
