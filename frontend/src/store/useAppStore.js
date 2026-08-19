@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe } from '../api/client';
+import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe, fetchOrphaned, fetchPricing } from '../api/client';
 import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
 import { readCache, readPrefs, writeCache, writePrefs, evictApiCache } from '../utils/persistCache';
 
@@ -125,13 +125,20 @@ export const useAppStore = create((set, get) => ({
   // be unlocked by editing anything in the browser.
   me: null,
   meLoading: false,
+  // Distinguishes "still loading" from "asked and failed". Without it the shell
+  // cannot tell the two apart and spins forever on any error.
+  meError: null,
 
   loadMe: async () => {
-    set({ meLoading: true });
+    set({ meLoading: true, meError: null });
     try {
-      set({ me: await fetchMe(), meLoading: false });
-    } catch {
-      set({ me: null, meLoading: false });
+      set({ me: await fetchMe(), meLoading: false, meError: null });
+    } catch (err) {
+      set({
+        me: null,
+        meLoading: false,
+        meError: err.response?.data?.detail || err.message || 'Could not load your account.',
+      });
     }
   },
 
@@ -576,6 +583,68 @@ export const useAppStore = create((set, get) => ({
     });
   },
 
+  // ── Reserved vs on-demand spend ──
+  // Reservation coverage is a property of live billing data. An uploaded export
+  // rarely carries the PricingModel column, so this stays live-only rather than
+  // reporting an import's missing column as "nothing is reserved".
+  pricingData: null,
+  pricingLoading: false,
+  pricingError: null,
+
+  loadPricing: async (opts = {}) => {
+    const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate, imported } = get();
+    if (imported) return;
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
+    set({ pricingLoading: true, pricingError: null });
+    try {
+      const payload = {
+        tenant_id: selectedTenantId,
+        subscription_ids: selectedSubscriptionIds,
+        months,
+        ...(dateMode === 'custom' && fromDate && toDate ? { from_date: fromDate, to_date: toDate } : {}),
+      };
+      await cached(
+        `pricing:${JSON.stringify(payload)}`,
+        () => fetchPricing(payload),
+        (data) => set({ pricingData: data, pricingLoading: false, pricingError: null }),
+        opts,
+      );
+      set({ pricingLoading: false });
+    } catch (err) {
+      set({ pricingLoading: false, pricingError: err.response?.data?.detail || err.message });
+    }
+  },
+
+  // ── Orphaned resources ──
+  // Findings come from Resource Graph, which an uploaded file cannot provide:
+  // a billing export lists charges, not what those resources are attached to.
+  // So this dataset is live-only and simply stays empty during an import.
+  orphanedData: null,
+  orphanedLoading: false,
+  orphanedError: null,
+
+  loadOrphaned: async (opts = {}) => {
+    const { selectedTenantId, selectedSubscriptionIds, imported } = get();
+    if (imported) return;
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
+    set({ orphanedLoading: true, orphanedError: null });
+    try {
+      const payload = {
+        tenant_id: selectedTenantId,
+        subscription_ids: selectedSubscriptionIds,
+      };
+      await cached(
+        `orphaned:${JSON.stringify(payload)}`,
+        () => fetchOrphaned(payload),
+        (data) => set({ orphanedData: data, orphanedLoading: false, orphanedError: null }),
+        opts,
+      );
+      set({ orphanedLoading: false });
+    } catch (err) {
+      set({ orphanedLoading: false, orphanedError: err.response?.data?.detail || err.message });
+    }
+  },
+
   // ── Active Services ──
   activeServices: [],
   servicesLoading: false,
@@ -630,6 +699,8 @@ export const useAppStore = create((set, get) => ({
     const jobs = [s.loadCosts(force), s.loadBandwidth(force), s.loadCostRows(force)];
     if (s.activeServices.length) jobs.push(s.loadServices(force));
     if (s.rgData) jobs.push(s.loadRgCosts(force));
+    if (s.orphanedData) jobs.push(s.loadOrphaned(force));
+    if (s.pricingData) jobs.push(s.loadPricing(force));
     if (s.dailyData) jobs.push(s.loadDailyCosts(null, force));
     await Promise.allSettled(jobs);
   },

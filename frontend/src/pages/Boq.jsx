@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { uploadBoq } from '../api/client';
 import { formatAmount } from '../utils/currency';
+import { Quantity } from '../components/Common/Amount';
 import { formatBytes } from '../utils/bytes';
 import { compareBoqToUsage } from '../utils/boqCompare';
 import toast from 'react-hot-toast';
@@ -992,7 +993,7 @@ function MeterRow({ meter, fmt, tone = 'text-slate-200' }) {
                 <tr key={p.month}>
                   <td className="py-0.5 pr-4 text-slate-400 whitespace-nowrap w-16">{p.month || '—'}</td>
                   <td className="py-0.5 pr-4 text-slate-500 whitespace-nowrap">
-                    {p.quantity ? `${p.quantity}${p.unit ? ` ${p.unit}` : ''}` : ''}
+                    {p.quantity ? <Quantity value={p.quantity} unit={p.unit} /> : ''}
                   </td>
                   <td className="py-0.5 text-right text-slate-200 whitespace-nowrap">{fmt(p.cost)}</td>
                 </tr>

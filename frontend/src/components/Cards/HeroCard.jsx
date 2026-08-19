@@ -27,6 +27,11 @@ export default function HeroCard({
   loading = false,
   onClick,
   active = false,
+  // The unabbreviated figure behind `value`. A tile showing "₹1.24L" is fine
+  // for scanning and useless for reconciling against an invoice, so the exact
+  // number stays reachable on hover instead of being discarded at render time.
+  exact,
+  amountExact,
 }) {
   const a = ACCENTS[accent] || ACCENTS.blue;
   const clickable = typeof onClick === 'function';
@@ -60,10 +65,13 @@ export default function HeroCard({
         <div className="relative mt-4 h-9 bg-slate-800 rounded-lg animate-pulse" />
       ) : (
         <div className="relative mt-4 flex items-baseline gap-2 flex-wrap">
-          <span className="text-3xl font-bold text-white tracking-tight">{value}</span>
+          <span className="text-3xl font-bold text-white tracking-tight tabular-nums" title={exact}>{value}</span>
           {unit && <span className="text-sm font-semibold text-slate-400">{unit}</span>}
           {amount && (
-            <span className="ml-auto text-sm font-semibold text-slate-200 bg-slate-800/70 px-2 py-0.5 rounded-lg">
+            <span
+              className="ml-auto text-sm font-semibold text-slate-200 bg-slate-800/70 px-2 py-0.5 rounded-lg tabular-nums"
+              title={amountExact}
+            >
               {amount}
             </span>
           )}

@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore';
 import CostTrendChart from '../components/Charts/CostTrendChart';
 import ServiceBreakdownChart from '../components/Charts/ServiceBreakdownChart';
 import { formatAmount } from '../utils/currency';
+import { Amount } from '../components/Common/Amount';
 
 export default function CostTrends() {
   const { costData, costLoading, loadCosts, selectedTenantId, selectedSubscriptionIds, subscriptions, toggleSubscription, setAllSubscriptions, months, dateKey } = useAppStore();
@@ -123,7 +124,7 @@ export default function CostTrends() {
                   return (
                     <tr key={m.month} className="border-b border-slate-800/50 hover:bg-slate-800/30">
                       <td className="py-3 text-slate-200 font-medium">{m.month}</td>
-                      <td className="py-3 text-right text-white font-semibold">{fmt(m.total_cost)}</td>
+                      <td className="py-3 text-right text-white font-semibold"><Amount value={m.total_cost} currency={currency} /></td>
                       <td className="py-3 text-right">
                         {mom == null ? <span className="text-slate-500">—</span> : (
                           <span className={mom > 0 ? 'text-red-400' : 'text-emerald-400'}>

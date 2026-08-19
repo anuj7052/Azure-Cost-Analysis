@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { formatAmount } from '../utils/currency';
+import { Amount } from '../components/Common/Amount';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { FolderOpen, TrendingUp, Calendar } from 'lucide-react';
 
@@ -69,7 +70,7 @@ export default function ResourceGroups() {
           </div>
           {rgData && (
             <span className="text-xs text-slate-400">
-              Total: <span className="text-white font-semibold">{fmt(rgData.total)}</span>
+              Total: <Amount value={rgData.total} currency={currency} className="text-white font-semibold" />
             </span>
           )}
         </div>
@@ -110,7 +111,7 @@ export default function ResourceGroups() {
                           <span className={`font-medium ${isSelected ? 'text-blue-300' : 'text-slate-200'}`}>{rg.rg_name}</span>
                         </div>
                       </td>
-                      <td className="py-3 text-right text-white font-semibold">{fmt(rg.total)}</td>
+                      <td className="py-3 text-right text-white font-semibold"><Amount value={rg.total} currency={currency} /></td>
                       <td className="py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <div className="w-16 bg-slate-700 rounded-full h-1.5">
@@ -190,7 +191,7 @@ export default function ResourceGroups() {
                           <div className="w-24 bg-slate-700 rounded-full h-1.5">
                             <div className="bg-purple-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                           </div>
-                          <span className="text-white font-medium w-20 text-right">{fmt(cost)}</span>
+                          <Amount value={cost} currency={currency} className="text-white font-medium w-20 text-right" />
                           <span className="text-slate-500 w-12 text-right">{pct}%</span>
                         </div>
                       );

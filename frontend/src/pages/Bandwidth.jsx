@@ -12,7 +12,9 @@ import HeroCard from '../components/Cards/HeroCard';
 import DetailPanel, { DetailStat } from '../components/Common/DetailPanel';
 import PortalGuide, { BANDWIDTH_GUIDE } from '../components/Common/PortalGuide';
 import SubscriptionFilter from '../components/Common/SubscriptionFilter';
-import { formatAmount, formatAmountFull } from '../utils/currency';
+import { formatAmount, formatAmountFull, formatRate } from '../utils/currency';
+import { formatQuantity } from '../utils/exact';
+import { Quantity } from '../components/Common/Amount';
 import { GB, formatBytes, formatGB, formatTB, pctOf, splitBytes, toGB } from '../utils/bytes';
 
 const DIRECTION_LABEL = {
@@ -168,7 +170,7 @@ export default function Bandwidth() {
           icon={Gauge}
           accent="slate"
           loading={loading}
-          value={formatAmountFull(bw?.cost_per_gb, currency)}
+          value={formatRate(bw?.cost_per_gb, currency)}
           unit="/ GB"
           amount={`${money((bw?.cost_per_gb || 0) * 1024)} / TB`}
           footnote={`${(toGB(total)).toFixed(1)} GB billed`}
@@ -255,7 +257,7 @@ export default function Bandwidth() {
             <div className="grid grid-cols-2 gap-3">
               {detail === 'rate' ? (
                 <>
-                  <DetailStat label="Cost per GB" value={formatAmountFull(bw?.cost_per_gb, currency)} />
+                  <DetailStat label="Cost per GB" value={formatRate(bw?.cost_per_gb, currency)} />
                   <DetailStat label="Cost per TB" value={formatAmountFull((bw?.cost_per_gb || 0) * 1024, currency)} />
                   <DetailStat label="Billed volume" value={formatBytes(total)} hint={formatGB(total)} />
                   <DetailStat label="Total charged" value={formatAmountFull(bw?.total_cost, currency)} />
@@ -390,7 +392,7 @@ function SubscriptionBandwidthTable({ rows, loading, currency, total, subMap }) 
               </td>
               <td className="py-2.5 text-right text-slate-400">{pctOf(s.bytes, total).toFixed(1)}%</td>
               <td className="py-2.5 text-right text-slate-400 tabular-nums">
-                {formatAmountFull(s.cost_per_gb, currency)}
+                {formatRate(s.cost_per_gb, currency)}
               </td>
               <td className="py-2.5 text-right text-white font-semibold">{formatAmount(s.cost, currency)}</td>
             </tr>
@@ -468,7 +470,7 @@ function MeterTable({ meters, loading, currency, total, compact = false, subMap 
                   <td className="py-2.5 text-right text-white font-medium">
                     {m.bytes
                       ? formatBytes(m.bytes)
-                      : <span className="text-slate-500">{(m.quantity ?? 0).toLocaleString('en-IN')} {m.unit || ''}</span>}
+                      : <Quantity value={m.quantity ?? 0} unit={m.unit} className="text-slate-500" />}
                   </td>
                   <td className="py-2.5 text-right text-slate-400 tabular-nums">
                     {m.bytes ? (m.bytes / GB).toFixed(2) : <span className="text-slate-600">—</span>}
@@ -516,6 +518,15 @@ function MeterDetail({ meter, currency, total, subMap }) {
   // Gateways and firewalls bill by the hour, so they have a cost but no volume.
   const volumeless = !meter.bytes;
 
+  // Cost per GB is only a separate fact when the meter is *not* already billed
+  // per GB. Where it is, the two figures are identical by definition and only
+  // one belongs on screen.
+  const ratesMatch =
+    meter.unit_rate != null &&
+    meter.cost_per_gb != null &&
+    Math.abs(meter.unit_rate - meter.cost_per_gb) < 0.00005;
+  const showCostPerGb = !volumeless && !!meter.cost_per_gb && !ratesMatch;
+
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-slate-300 bg-slate-800/50 border border-slate-700/60 rounded-lg px-3 py-2 leading-relaxed">
@@ -528,16 +539,35 @@ function MeterDetail({ meter, currency, total, subMap }) {
         ) : (
           <>
             {' '}It moved {formatBytes(meter.bytes)} ({gb.toFixed(2)} GB) for {money(meter.cost)}
-            {meter.cost_per_gb ? `, working out at ${formatAmountFull(meter.cost_per_gb, currency)} per GB` : ''}
+            {meter.cost_per_gb ? `, working out at ${formatRate(meter.cost_per_gb, currency)} per GB` : ''}
             {' '}— {pctOf(meter.bytes, total).toFixed(1)}% of all transfer.
           </>
         )}
       </p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <DetailStat label="Billed quantity" value={`${(meter.quantity ?? 0).toLocaleString('en-IN')}`} hint={meter.unit || 'units'} />
-        <DetailStat label="Unit rate" value={meter.unit_rate == null ? '—' : formatAmountFull(meter.unit_rate, currency)} hint={meter.unit ? `per ${meter.unit}` : ''} />
-        <DetailStat label="Cost per GB" value={meter.cost_per_gb ? formatAmountFull(meter.cost_per_gb, currency) : 'n/a'} hint={volumeless ? 'not a volume charge' : ''} />
+        {/* No hint: the unit is already part of the formatted value ("512 GB"),
+            and a period restated here duplicates the date filter in the header.
+            A caption that repeats what is already on screen is noise. */}
+        <DetailStat
+          label="Billed quantity"
+          value={formatQuantity(meter.quantity ?? 0, meter.unit)}
+        />
+        <DetailStat
+          label="Unit rate"
+          value={formatRate(meter.unit_rate, currency)}
+          hint={meter.unit ? `per ${meter.unit}` : 'per billed unit'}
+        />
+        {/* When Azure already bills this meter per GB, the unit rate *is* the
+            cost per GB. Showing both put the same number on screen twice and
+            implied they were two different facts. */}
+        {showCostPerGb && (
+          <DetailStat
+            label="Cost per GB"
+            value={formatRate(meter.cost_per_gb, currency)}
+            hint="derived from transfer volume"
+          />
+        )}
         <DetailStat label="Category" value={meter.category || '—'} hint={meter.regions?.length ? meter.regions.slice(0, 3).join(', ') : ''} />
       </div>
 
@@ -564,7 +594,9 @@ function MeterDetail({ meter, currency, total, subMap }) {
                   <td className="py-1.5 text-right text-slate-400 tabular-nums">
                     {mm.bytes ? (mm.bytes / GB).toFixed(2) : <span className="text-slate-600">—</span>}
                   </td>
-                  <td className="py-1.5 text-right text-slate-400 tabular-nums">{mm.quantity}</td>
+                  <td className="py-1.5 text-right text-slate-400">
+                    <Quantity value={mm.quantity} unit={meter.unit} />
+                  </td>
                   <td className="py-1.5 text-right text-slate-200">{money(mm.cost)}</td>
                 </tr>
               ))}

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { IndianRupee, TrendingUp, TrendingDown, AlertTriangle, PiggyBank, BarChart2, Flame, Network, ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import HeroCard from '../components/Cards/HeroCard';
+import PricingSection from '../components/Cards/PricingSection';
 import DetailPanel, { DetailStat } from '../components/Common/DetailPanel';
 import PortalGuide, { COST_GUIDE } from '../components/Common/PortalGuide';
 import SubscriptionFilter from '../components/Common/SubscriptionFilter';
@@ -10,6 +11,8 @@ import AnomalyCard from '../components/Cards/AnomalyCard';
 import CostTrendChart from '../components/Charts/CostTrendChart';
 import ServicePieChart from '../components/Charts/ServicePieChart';
 import { formatAmount, formatAmountFull } from '../utils/currency';
+import { exactAmount } from '../utils/exact';
+import { Amount } from '../components/Common/Amount';
 import { compareBoqToUsage } from '../utils/boqCompare';
 import { formatBytes, formatGB, formatTB, pctOf, splitBytes, toGB } from '../utils/bytes';
 
@@ -19,6 +22,7 @@ export default function Dashboard() {
     selectedSubscriptionIds, selectedTenantId, months, dateKey, dateMode, fromDate, toDate,
     subscriptions,
     bandwidthData: bw, bandwidthLoading: bwLoading, loadBandwidth,
+    pricingData, pricingLoading, pricingError, loadPricing,
     imported, boqs,
   } = useAppStore();
 
@@ -29,6 +33,7 @@ export default function Dashboard() {
     if (imported || (selectedTenantId && selectedSubscriptionIds.length > 0)) {
       loadCosts();
       loadBandwidth();
+      loadPricing();
     }
   }, [imported, selectedTenantId, selectedSubscriptionIds.join(','), dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -42,6 +47,9 @@ export default function Dashboard() {
   const currency      = costData?.months?.[0]?.currency || 'INR';
   const fmt           = (v) => formatAmount(v, currency);
   const full          = (v) => formatAmountFull(v, currency);
+  // The unabbreviated figure, shown on hover so a tile can be reconciled
+  // against an invoice without leaving the dashboard.
+  const exact         = (v) => exactAmount(v, currency);
   const subMap        = Object.fromEntries((subscriptions || []).map(s => [s.subscription_id, s.display_name]));
 
   const bwCurrency    = bw?.currency || currency;
@@ -60,6 +68,7 @@ export default function Dashboard() {
       subtitle: 'All subscriptions combined',
       icon: IndianRupee, accent: 'blue',
       value: full(costData?.total_6m),
+      exact: exact(costData?.total_6m),
       footnote: `${costData?.months?.length || 0} months of data`,
       panelTitle: 'Total Azure Spend',
       rows: (costData?.months || []).map(m => ({ label: m.month, value: fmt(m.total_cost) })),
@@ -75,6 +84,7 @@ export default function Dashboard() {
       subtitle: mom != null ? (mom > 0 ? 'vs last month ↑' : 'vs last month ↓') : 'vs previous month',
       icon: mom != null && mom > 0 ? TrendingUp : TrendingDown, accent: 'violet',
       value: full(latest?.total_cost),
+      exact: exact(latest?.total_cost),
       momChange: mom,
       panelTitle: 'Current Month Spend',
       rows: Object.entries(latest?.by_service || {})
@@ -92,6 +102,7 @@ export default function Dashboard() {
       subtitle: 'Avg spend per day',
       icon: Flame, accent: 'rose',
       value: full(dailyBurn),
+      exact: exact(dailyBurn),
       footnote: 'Based on current month pace',
       panelTitle: 'Daily Burn Rate',
       rows: (costData?.months || []).map(m => ({ label: m.month, value: `${fmt(m.total_cost / 30)} / day` })),
@@ -107,6 +118,7 @@ export default function Dashboard() {
       subtitle: isCustom ? 'Average per month in range' : `${months}-month average`,
       icon: BarChart2, accent: 'emerald',
       value: full(avgMonthly),
+      exact: exact(avgMonthly),
       panelTitle: 'Monthly Average Spend',
       rows: (costData?.months || []).map(m => ({
         label: m.month,
@@ -140,6 +152,7 @@ export default function Dashboard() {
       subtitle: 'Optimization opportunities',
       icon: PiggyBank, accent: 'emerald',
       value: full(savingsTotal),
+      exact: exact(savingsTotal),
       panelTitle: 'Savings Opportunities',
       rows: (costData?.savings || []).map(s => ({
         label: `${s.service} · ${s.month}`,
@@ -242,6 +255,7 @@ export default function Dashboard() {
             icon={h.icon}
             accent={h.accent}
             value={h.value}
+            exact={h.exact}
             unit={h.unit}
             footnote={h.footnote}
             momChange={h.momChange}
@@ -251,6 +265,25 @@ export default function Dashboard() {
           />
         ))}
       </div>
+
+      {/* ── Reserved vs pay-as-you-go ────────────────────────────────── */}
+      {/* The detail panel must query the same window the totals came from,
+          or the drill-down disagrees with the card above it. */}
+      <PricingSection
+        data={pricingData}
+        loading={pricingLoading}
+        error={pricingError}
+        request={
+          selectedTenantId && selectedSubscriptionIds.length
+            ? {
+                tenant_id: selectedTenantId,
+                subscription_ids: selectedSubscriptionIds,
+                months,
+                ...(isCustom ? { from_date: fromDate, to_date: toDate } : {}),
+              }
+            : null
+        }
+      />
 
       {/* ── Bandwidth hero section ───────────────────────────────────── */}
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-4">
@@ -383,8 +416,8 @@ export default function Dashboard() {
                 <tr key={i} className="border-b border-slate-800/50 hover:bg-slate-800/30">
                   <td className="py-3 text-slate-500 text-xs">{i + 1}</td>
                   <td className="py-3 text-slate-200">{svc.service}</td>
-                  <td className="py-3 text-right text-white font-medium">{fmt(svc.total_cost)}</td>
-                  <td className="py-3 text-right text-slate-300">{fmt(svc.latest_month_cost)}</td>
+                  <td className="py-3 text-right text-white font-medium"><Amount value={svc.total_cost} currency={currency} /></td>
+                  <td className="py-3 text-right text-slate-300"><Amount value={svc.latest_month_cost} currency={currency} /></td>
                   <td className="py-3 text-right">
                     {svc.mom_change_pct == null ? <span className="text-slate-500">—</span> : (
                       <span className={`font-semibold ${svc.mom_change_pct > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
