@@ -16,6 +16,8 @@ const ServiceAnalysis = lazy(() => import('./pages/ServiceAnalysis'));
 const Anomalies      = lazy(() => import('./pages/Anomalies'));
 const Settings       = lazy(() => import('./pages/Settings'));
 const ResourceGroups = lazy(() => import('./pages/ResourceGroups'));
+const Orphaned       = lazy(() => import('./pages/Orphaned'));
+const GlobalSearch   = lazy(() => import('./pages/GlobalSearch'));
 const Bandwidth      = lazy(() => import('./pages/Bandwidth'));
 const Boq            = lazy(() => import('./pages/Boq'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
@@ -32,6 +34,41 @@ const PageLoader = () => (
   </div>
 );
 
+/**
+ * Shown when the account lookup fails.
+ *
+ * The two realistic causes need different actions, so both are offered rather
+ * than guessing: the session may simply need re-establishing (sign in again),
+ * or the backend may have been unreachable for one request (retry).
+ */
+function AccountLoadFailed({ error, onRetry }) {
+  const { instance } = useMsal();
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6">
+      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
+        <h1 className="text-lg font-semibold text-white">Could not load your account</h1>
+        <p className="mt-2 text-sm leading-relaxed text-slate-400">{error}</p>
+
+        <div className="mt-6 flex gap-3">
+          <button
+            onClick={onRetry}
+            className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
+          >
+            Try again
+          </button>
+          <button
+            onClick={() => { instance.clearCache(); instance.logoutRedirect(); }}
+            className="flex-1 rounded-xl border border-slate-700 py-2.5 text-sm font-medium text-slate-300 transition hover:text-white"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppShell() {
   const isAuthenticated = useIsAuthenticated();
   const { accounts } = useMsal();
@@ -39,6 +76,7 @@ function AppShell() {
   const addTenantToList = useAppStore(s => s.addTenantToList);
   const loadMe          = useAppStore(s => s.loadMe);
   const me              = useAppStore(s => s.me);
+  const meError         = useAppStore(s => s.meError);
 
   useEffect(() => {
     if (isAuthenticated) loadMe();
@@ -60,6 +98,11 @@ function AppShell() {
     loadTenants();
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A failed account lookup must not read as "still loading". Spinning forever
+  // gives the user nothing to act on and hides the actual cause, which is
+  // almost always a consent or sign-in problem they can resolve themselves.
+  if (!me && meError) return <AccountLoadFailed error={meError} onRetry={loadMe} />;
+
   // Wait for the account before deciding what to show, otherwise a returning
   // user sees the onboarding screen flash before their dashboard.
   if (!me) return <PageLoader />;
@@ -76,7 +119,7 @@ function AppShell() {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-950">
+    <div className="flex min-h-screen bg-slate-950 text-slate-100">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar />
@@ -89,6 +132,8 @@ function AppShell() {
             <Route path="/services" element={<ServiceAnalysis />} />
             <Route path="/anomalies" element={<Anomalies />} />
             <Route path="/resource-groups" element={<ResourceGroups />} />
+            <Route path="/orphaned" element={<Orphaned />} />
+            <Route path="/search" element={<GlobalSearch />} />
             <Route path="/bandwidth" element={<Bandwidth />} />
             <Route path="/boq" element={<Boq />} />
             <Route path="/deploy" element={<Deploy />} />

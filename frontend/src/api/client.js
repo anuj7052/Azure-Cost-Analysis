@@ -86,16 +86,24 @@ async function getSignInToken() {
   }
 }
 
-// Routes our own server answers without ever calling Azure. They only need
-// proof of sign-in, so they take the ID token — which MSAL serves from cache
-// and therefore keeps working after a reload, when silent renewal of an Azure
-// management token is blocked by the browser's iframe restrictions.
-const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations'];
+// Routes our own server answers without ever calling Azure on the caller's
+// behalf. They only need proof of sign-in, so they take the ID token — which
+// MSAL serves from cache and therefore keeps working after a reload, when
+// silent renewal of an Azure management token is blocked by the browser's
+// iframe restrictions.
+//
+// `/tenants` belongs here: registering a tenant authenticates with the service
+// principal credentials in the request body, never with the caller's own Azure
+// token. Requiring a management token there made first-time registration fail
+// with "Not authenticated", because a brand-new session has no ARM token yet
+// and cannot silently acquire one.
+const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search'];
 
-// A sign-in popup may only open off a real click. These two routes run from a
-// file picker, so recovering the session there is allowed; the rest load in the
-// background and must fail quietly instead of firing a blocked popup.
-const GESTURE_ROUTES = ['/upload', '/boq'];
+// A sign-in popup may only open off a real click. These routes run from a file
+// picker or an explicit form submit, so recovering the session there is
+// allowed; the rest load in the background and must fail quietly instead of
+// firing a blocked popup.
+const GESTURE_ROUTES = ['/upload', '/boq', '/tenants'];
 
 // Attach Bearer token to every request
 api.interceptors.request.use(async (config) => {
@@ -104,7 +112,21 @@ api.interceptors.request.use(async (config) => {
   const userInitiated = GESTURE_ROUTES.some((r) => url.startsWith(r));
   const token = (localRoute ? await getSignInToken() : null)
     || (await getToken(userInitiated));
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+    return config;
+  }
+
+  // Sending the request anyway returns a bare "Not authenticated" from the
+  // server, which tells the user nothing they can act on. Fail here instead,
+  // naming the actual cause: the browser has no usable sign-in to present.
+  if (localRoute) {
+    throw new axios.Cancel(
+      'Your sign-in could not be read. Sign out and sign in again, then retry.',
+    );
+  }
+
   return config;
 });
 
@@ -203,6 +225,30 @@ export const fetchDailyCosts = (body) =>
 
 export const fetchBandwidth = (body) =>
   api.post('/bandwidth', body).then(r => r.data);
+
+/** Spend split by pricing model: reserved, on-demand, spot, savings plan. */
+export const fetchPricing = (body) =>
+  api.post('/costs/pricing', body).then(r => r.data);
+
+/** Which resources a reservation actually paid for: VM, resource group, SKU. */
+export const fetchReservedDetail = (body) =>
+  api.post('/costs/pricing/reserved', body).then(r => r.data);
+
+/** Capture the estate now and store it as a point-in-time snapshot. */
+export const runScan = (body) => api.post('/scans', body).then(r => r.data);
+
+export const fetchScans = (tenantId, limit = 20) =>
+  api.get('/scans', { params: { tenant_id: tenantId, limit } }).then(r => r.data);
+
+/** Search every scan by resource name, including resources since deleted. */
+export const searchResources = (tenantId, q, includeDeleted = true) =>
+  api.get('/search', {
+    params: { tenant_id: tenantId, q, include_deleted: includeDeleted },
+  }).then(r => r.data);
+
+/** Resources that are billed but attached to nothing. */
+export const fetchOrphaned = (body) =>
+  api.post('/orphaned', body).then(r => r.data);
 
 export const fetchServices = (tenantId, subscriptionIds, months = 1, range = {}) =>
   api.get('/services', {
