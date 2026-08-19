@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     AZURE_CLIENT_SECRET: str = ""
     AZURE_TENANT_ID: str = "common"
     APP_SECRET_KEY: str = "change-this-secret"
-    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    CORS_ORIGINS: str = "http://localhost:5174,http://127.0.0.1:5174"
     DB_PATH: str = "./data/azure_cost.db"
 
     # Comma-separated emails that get platform-admin rights. Kept out of the

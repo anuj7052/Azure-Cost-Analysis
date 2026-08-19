@@ -3,9 +3,12 @@ import { PublicClientApplication, LogLevel } from '@azure/msal-browser';
 export const msalConfig = {
   auth: {
     clientId: import.meta.env.VITE_AZURE_CLIENT_ID || '',
-    authority: `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_TENANT_ID || 'common'}`,
-    redirectUri: import.meta.env.VITE_AZURE_REDIRECT_URI || 'http://localhost:5173',
-    postLogoutRedirectUri: import.meta.env.VITE_AZURE_REDIRECT_URI || 'http://localhost:5173',
+    // "organizations" lets a user from ANY Azure AD tenant sign in, which is
+    // required for a multi-tenant SaaS offer. Pinning a single tenant id here
+    // rejects every external customer with AADSTS90072.
+    authority: `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_TENANT_ID || 'organizations'}`,
+    redirectUri: import.meta.env.VITE_AZURE_REDIRECT_URI || 'http://localhost:5174',
+    postLogoutRedirectUri: import.meta.env.VITE_AZURE_REDIRECT_URI || 'http://localhost:5174',
     navigateToLoginRequestUrl: false,
   },
   cache: {

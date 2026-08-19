@@ -9,5 +9,5 @@ if [ ! -f ".env" ]; then
   exit 1
 fi
 
-echo "Starting frontend on http://localhost:5173 ..."
+echo "Starting frontend on http://localhost:5174 ..."
 npm run dev
