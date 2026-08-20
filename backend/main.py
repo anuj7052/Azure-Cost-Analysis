@@ -8,7 +8,7 @@ from auth.dependencies import get_current_user
 from services.user_service import tenant_counts
 from routers import (
     admin, tenants, subscriptions, costs, services, upload, bandwidth, boq,
-    guide, integrations, orphaned, scans,
+    guide, integrations, orphaned, scans, changes,
 )
 
 
@@ -46,6 +46,7 @@ app.include_router(integrations.router)
 app.include_router(orphaned.router)
 app.include_router(scans.router)
 app.include_router(scans.search_router)
+app.include_router(changes.router)
 
 
 @app.get("/api/me")

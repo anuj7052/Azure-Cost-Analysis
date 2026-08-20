@@ -14,9 +14,17 @@ export default function SubscriptionFilter({ onChange }) {
 
   const apply = (fn) => { fn(); onChange?.(); };
   const allSelected = selectedSubscriptionIds.length === subscriptions.length;
+  const noneSelected = selectedSubscriptionIds.length === 0;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 elevated">
+      {/* Nothing is selected by default, so the page is empty until the user
+          chooses. Saying why beats an unexplained blank dashboard. */}
+      {noneSelected && (
+        <p className="text-xs text-amber-300/90 mb-3">
+          Choose one or more subscriptions to load cost data.
+        </p>
+      )}
       <div className="flex items-center gap-3 flex-wrap">
         <span className="text-xs text-slate-400 font-semibold uppercase tracking-wide">
           Subscriptions

@@ -25,18 +25,25 @@ export function Amount({ value, currency, className = '', full = false }) {
 }
 
 /**
- * A metered quantity, with the duration spelled out when it is measured in hours.
+ * A metered quantity, optionally with the duration an hour count represents.
  *
- * "744" is meaningless at a glance and reads like a cost. "744 Hours (31 days)"
- * answers the question the number is actually being consulted for: whether the
- * resource ran for the whole month or only part of it.
+ * `showDuration` is off where the comparison is already about two quantities:
+ * "372.08 Hours (~15.5 days) → 500.5 Hours (~20.9 days)" puts four numbers in
+ * one cell to say what two would. The day count earns its place on a single
+ * figure, not on both sides of an arrow.
  */
-export function Quantity({ value, unit, className = '' }) {
-  const hint = describeHours(value, unit);
+export function Quantity({ value, unit, className = '', showDuration = true }) {
+  const hint = showDuration ? describeHours(value, unit) : null;
+  const text = showDuration
+    ? formatQuantity(value, unit)
+    : formatQuantity(value, unit, { duration: false });
 
   return (
-    <span className={`tabular-nums ${className}`} title={hint || undefined}>
-      {formatQuantity(value, unit)}
+    <span
+      className={`tabular-nums ${hint ? 'cursor-help decoration-dotted decoration-slate-600 underline underline-offset-4' : ''} ${className}`}
+      title={hint || undefined}
+    >
+      {text}
     </span>
   );
 }

@@ -254,3 +254,46 @@ async def test_a_successful_scan_stores_every_resource(db, monkeypatch):
 
     assert result["status"] == STATUS_COMPLETE
     assert result["resource_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_deleted_resources_survive_the_result_limit(db):
+    """
+    Ordering used to put live resources first, so on an estate with more
+    matches than the limit the deleted ones fell off the end — silently
+    removing the only results this feature exists to produce.
+    """
+    from services.search import MAX_RESULTS
+
+    user = await user_service.upsert_user(db, claims("oid-a"))
+
+    # One deleted resource, then more live ones than the limit can return.
+    await completed_scan(db, user["id"], [resource("web-deleted")])
+    await completed_scan(
+        db, user["id"],
+        [resource(f"web-live-{i:04d}") for i in range(MAX_RESULTS + 50)],
+    )
+
+    found = await search_resources(db, user["id"], "t1", "web")
+
+    names = [r["name"] for r in found["results"]]
+    assert "web-deleted" in names
+    assert found["results"][0]["live"] is False
+    assert found["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_excluding_deleted_still_fills_the_page_with_live_results(db):
+    """
+    The filter runs in SQL, before the limit. Applying it afterwards returned
+    a short page whenever deleted resources had used up the row budget.
+    """
+    user = await user_service.upsert_user(db, claims("oid-a"))
+
+    await completed_scan(db, user["id"], [resource(f"web-old-{i}") for i in range(30)])
+    await completed_scan(db, user["id"], [resource(f"web-new-{i}") for i in range(30)])
+
+    found = await search_resources(db, user["id"], "t1", "web", include_deleted=False)
+
+    assert found["total"] == 30
+    assert all(r["live"] for r in found["results"])

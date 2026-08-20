@@ -318,6 +318,77 @@ class SearchResponse(BaseModel):
     truncated: bool = False
 
 
+# ── Change tracking ────────────────────────────────────────────────────────
+
+class TagChange(BaseModel):
+    added: dict = {}
+    removed: dict = {}
+    changed: dict = {}
+
+
+class FieldChange(BaseModel):
+    field: str
+    label: str
+    # Populated for scalar fields; tags carry a per-key breakdown instead,
+    # because a whole-blob before/after is unreadable once there are more than
+    # a couple of tags.
+    from_: Optional[str] = Field(default=None, alias="from")
+    to: Optional[str] = None
+    tags: Optional[TagChange] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class ChangedResource(BaseModel):
+    resource_id: str
+    name: str
+    type: str = ""
+    resource_group: str = ""
+    subscription_id: str = ""
+    location: str = ""
+    sku: str = ""
+    tags: dict = {}
+    changes: List[FieldChange] = []
+
+
+class ScanRef(BaseModel):
+    id: int
+    started_at: Optional[str] = None
+
+
+class ChangeDiffResponse(BaseModel):
+    added: List[ChangedResource] = []
+    removed: List[ChangedResource] = []
+    modified: List[ChangedResource] = []
+    added_count: int = 0
+    removed_count: int = 0
+    modified_count: int = 0
+    total_changes: int = 0
+    before: Optional[ScanRef] = None
+    after: Optional[ScanRef] = None
+    # False when fewer than two completed scans exist. A new user has nothing to
+    # compare yet, which is a state to explain rather than an error.
+    comparable: bool = False
+    # Why a comparison could not be made, or which capture a date resolved to.
+    # A range that silently resolved elsewhere would be impossible to trust.
+    note: Optional[str] = None
+
+
+class HistoryEvent(BaseModel):
+    scan_id: int
+    at: Optional[str] = None
+    kind: str                      # "first_seen" | "modified" | "removed"
+    changes: List[FieldChange] = []
+
+
+class EntityHistoryResponse(BaseModel):
+    resource: Optional[ChangedResource] = None
+    events: List[HistoryEvent] = []
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+    scan_count: int = 0
+
+
 # ── Orphaned resources ─────────────────────────────────────────────────────
 
 class OrphanedRequest(BaseModel):

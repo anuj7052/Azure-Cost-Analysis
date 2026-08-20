@@ -91,12 +91,29 @@ export function hoursToDuration(hours, unit) {
 }
 
 /**
+ * Tidy Azure's unit label for display.
+ *
+ * Azure reports the hour unit as "1 Hour", which renders as "372.08 1 Hour" —
+ * two numbers next to each other, reading like a typo. The quantity already
+ * carries the count, so the unit only needs to name the measure.
+ */
+export function displayUnit(unit) {
+  if (!unit) return '';
+  const cleaned = String(unit).trim();
+  // "1 Hour", "10 Hours" -> "Hours"; "1 GB" -> "GB".
+  const match = cleaned.match(/^\d+(?:\.\d+)?\s+(.*)$/);
+  const label = match ? match[1] : cleaned;
+  if (/^hours?$/i.test(label)) return 'Hours';
+  return label;
+}
+
+/**
  * A metered quantity with its unit, and the duration when that unit is hours.
  *
- * e.g. 744 hours -> "744 Hours (31 days)"
- *      512 GB    -> "512 GB"
+ * e.g. 744 "1 Hour" -> "744 Hours (31 days)"
+ *      512 GB       -> "512 GB"
  */
-export function formatQuantity(quantity, unit) {
+export function formatQuantity(quantity, unit, { duration = true } = {}) {
   if (quantity == null) return '—';
 
   const value = Number(quantity);
@@ -104,36 +121,50 @@ export function formatQuantity(quantity, unit) {
     ? value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
     : String(quantity);
 
-  const label = unit ? `${shown} ${unit}` : shown;
-  const duration = hoursToDuration(quantity, unit);
+  const label = displayUnit(unit);
+  const text = label ? `${shown} ${label}` : shown;
+  if (!duration) return text;
 
-  return duration ? `${label} (${duration})` : label;
+  const spelled = hoursToDuration(quantity, unit);
+  return spelled ? `${text} (${spelled})` : text;
 }
 
 /**
- * Explain a full-month hour count in a sentence, for tooltips.
+ * Show the arithmetic behind a duration, not just its result.
  *
- * Month lengths differ, so "730 hours" is a full month in a 30-day month and
- * 20 hours short of one in a 31-day month. Stating the day count lets the
- * reader make that judgement instead of guessing.
+ * "~20.9 days" invites the obvious question — 20.9 from what? A derived figure
+ * with no working shown cannot be checked, and an unverifiable number is worth
+ * very little on a page people use to argue about invoices. So the division is
+ * printed in full.
  */
 export function describeHours(hours, unit) {
   const duration = hoursToDuration(hours, unit);
   if (!duration) return null;
 
   const value = Number(hours);
+  const exactDays = value / HOURS_PER_DAY;
+
+  const working = [
+    `${value.toLocaleString('en-IN', { maximumFractionDigits: 3 })} hours ÷ ${HOURS_PER_DAY} hours per day`,
+    `= ${exactDays.toFixed(4)} days`,
+    `→ shown as ${duration}`,
+  ];
 
   if (value === AZURE_MONTH_HOURS) {
-    return `${hours} hours = Azure's standard month (730 h = 365 × 24 ÷ 12), about 30.4 days`;
+    return [
+      "730 hours is Azure's standard billing month.",
+      '730 = 365 days × 24 hours ÷ 12 months',
+      `730 ÷ 24 = ${exactDays.toFixed(4)} days`,
+      'Shown as "1 month" because that is the convention it represents,',
+      'not a measurement of elapsed time.',
+    ].join('\n');
   }
-
-  const days = value / HOURS_PER_DAY;
 
   // A whole month of wall-clock time is the fact people are checking for:
   // did this resource run continuously, or only part of the period?
-  if (Number.isInteger(days) && days >= 28 && days <= 31) {
-    return `${hours} hours = ${duration} — ran for the full month`;
+  if (Number.isInteger(exactDays) && exactDays >= 28 && exactDays <= 31) {
+    working.push(`A ${exactDays}-day month, so this ran for the full period.`);
   }
 
-  return `${hours} hours = ${duration}`;
+  return working.join('\n');
 }

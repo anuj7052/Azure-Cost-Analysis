@@ -7,7 +7,13 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { exactAmount, formatQuantity, hoursToDuration } from '../src/utils/exact';
+import {
+  describeHours,
+  displayUnit,
+  exactAmount,
+  formatQuantity,
+  hoursToDuration,
+} from '../src/utils/exact';
 
 describe('exactAmount', () => {
   it('keeps the precision the compact form throws away', () => {
@@ -96,6 +102,17 @@ describe('formatQuantity', () => {
     expect(formatQuantity(730, 'Hours')).toBe('730 Hours (1 month)');
   });
 
+  it('can omit the duration where two quantities are already compared', () => {
+    // "372.08 Hours (~15.5 days) -> 500.5 Hours (~20.9 days)" puts four numbers
+    // in one cell to say what two would.
+    expect(formatQuantity(372.084, '1 Hour', { duration: false })).toBe('372.08 Hours');
+  });
+
+  it("tidies Azure's \"1 Hour\" unit so two numbers do not collide", () => {
+    // Raw, this renders as "372.08 1 Hour", which reads like a typo.
+    expect(formatQuantity(372.084, '1 Hour')).toBe('372.08 Hours (~15.5 days)');
+  });
+
   it('leaves non-time units exactly as billed', () => {
     expect(formatQuantity(512, 'GB')).toBe('512 GB');
   });
@@ -108,5 +125,46 @@ describe('formatQuantity', () => {
 
   it('marks a missing quantity rather than printing zero', () => {
     expect(formatQuantity(null, 'Hours')).toBe('—');
+  });
+});
+
+
+describe('describeHours', () => {
+  it('shows the division, not just its result', () => {
+    // "~20.9 days" invites the question "from what?". A derived figure with no
+    // working shown cannot be checked.
+    const text = describeHours(500.5, '1 Hour');
+
+    expect(text).toContain('500.5 hours ÷ 24 hours per day');
+    expect(text).toContain('= 20.8542 days');
+    expect(text).toContain('shown as ~20.9 days');
+  });
+
+  it("explains where Azure's 730-hour month comes from", () => {
+    const text = describeHours(730, 'Hours');
+
+    expect(text).toContain('365 days × 24 hours ÷ 12 months');
+    expect(text).toContain('30.4167 days');
+  });
+
+  it('says outright when a resource ran the whole month', () => {
+    expect(describeHours(744, 'Hours')).toContain('ran for the full period');
+  });
+
+  it('has nothing to explain for a non-time unit', () => {
+    expect(describeHours(512, 'GB')).toBeNull();
+  });
+});
+
+describe('displayUnit', () => {
+  it('strips the leading count Azure puts in the unit', () => {
+    expect(displayUnit('1 Hour')).toBe('Hours');
+    expect(displayUnit('10 Hours')).toBe('Hours');
+    expect(displayUnit('1 GB')).toBe('GB');
+  });
+
+  it('leaves a plain unit alone', () => {
+    expect(displayUnit('GB')).toBe('GB');
+    expect(displayUnit('')).toBe('');
   });
 });

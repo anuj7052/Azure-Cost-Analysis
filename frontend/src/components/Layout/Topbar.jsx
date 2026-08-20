@@ -3,7 +3,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useTheme } from '../../store/useTheme';
 import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Hash } from 'lucide-react';
 import { useState } from 'react';
-import { evictAll } from '../../utils/persistCache';
+import { evictAll, evictApiCache } from '../../utils/persistCache';
 import { COMPACT, EXACT, getAmountMode, setAmountMode } from '../../utils/currency';
 
 const ROLLING_OPTIONS = [1, 3, 6, 12];
@@ -18,7 +18,7 @@ export default function Topbar() {
     costLoading, months, setMonths,
     dateMode, fromDate, toDate, setCustomDateRange,
     selectedTenantId, tenants, setSelectedTenant,
-    imported, clearImported, refreshAll,
+    imported, clearImported,
   } = useAppStore();
   const theme       = useTheme(s => s.theme);
   const toggleTheme = useTheme(s => s.toggleTheme);
@@ -29,6 +29,7 @@ export default function Topbar() {
   const [customTo, setCustomTo]         = useState('');
   // For month picker — stores "YYYY-M" strings e.g. "2026-3"
   const [pickedYear]                    = useState(new Date().getFullYear());
+  const [refreshing, setRefreshing]     = useState(false);
 
   // Amount formatting lives outside React (chart axis formatters are plain
   // functions), so flipping it needs a local state bump to force a re-render.
@@ -40,14 +41,23 @@ export default function Topbar() {
   // Refresh must empty the local cache, not just bypass it for the two datasets
   // this bar happens to know about: anything left behind is re-served the moment
   // the user navigates, which reads as "refresh did nothing".
-  const [refreshing, setRefreshing] = useState(false);
-  const hardRefresh = async () => {
+  /**
+   * Refresh has to be unconditional.
+   *
+   * Re-running the loaders in place could sit for over a minute: a throttled
+   * Cost Management call is retried with backoff, and a request that never
+   * settles left the button disabled with no way back. Clearing the cached
+   * answers and reloading the document cannot hang, and guarantees every page
+   * comes back from Azure rather than from localStorage.
+   *
+   * The sign-in, an uploaded usage file and the BOQ list are deliberately kept:
+   * re-fetching cannot bring those back, so wiping them would turn a refresh
+   * into data loss and a forced logout.
+   */
+  const hardRefresh = () => {
     setRefreshing(true);
-    try {
-      await refreshAll();
-    } finally {
-      setRefreshing(false);
-    }
+    evictApiCache();
+    window.location.reload();
   };
   const busy = refreshing || costLoading;
 

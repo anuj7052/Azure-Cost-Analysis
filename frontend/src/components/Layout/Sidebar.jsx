@@ -12,6 +12,7 @@ const NAV = [
   { to: '/boq', label: 'BOQ vs Actual', icon: ClipboardList },
   { to: '/deploy', label: 'BOQ to Code', icon: FileCode },
   { to: '/anomalies', label: 'Anomalies', icon: AlertTriangle },
+  { to: '/changes', label: 'Change Tracking', icon: GitCompareArrows },
   { to: '/orphaned', label: 'Orphaned Resources', icon: Trash2 },
   { to: '/resource-groups', label: 'Resource Groups', icon: FolderOpen },
   { to: '/settings', label: 'Settings', icon: Settings },

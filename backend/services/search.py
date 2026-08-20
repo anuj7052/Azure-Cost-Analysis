@@ -72,8 +72,15 @@ async def search_resources(
     # Collapse a resource's rows across scans into one result: the estate has
     # one api-prod-03, not one per scan it survived. The window it was observed
     # in is what turns the row into an answer about time.
+    #
+    # Ordering and filtering both happen in SQL, before the limit. Sorting by
+    # scan id put live resources first, so on any estate with more matches than
+    # the limit the deleted ones fell off the end — silently removing the only
+    # results this feature exists to produce.
+    having = "" if include_deleted else "HAVING MAX(r.scan_id) = :current_scan"
+
     async with db.execute(
-        """
+        f"""
         SELECT r.resource_id,
                MAX(r.name)            AS name,
                MAX(r.type)            AS type,
@@ -87,33 +94,35 @@ async def search_resources(
                MAX(r.scan_id)         AS last_scan_id
           FROM scan_resources r
           JOIN scans s ON s.id = r.scan_id
-         WHERE s.user_id = ?
-           AND s.tenant_id = ?
+         WHERE s.user_id = :user_id
+           AND s.tenant_id = :tenant_id
            AND s.status = 'complete'
-           AND r.name_lower LIKE ?
+           AND r.name_lower LIKE :term
          GROUP BY r.resource_id
-         ORDER BY last_scan_id DESC, name ASC
-         LIMIT ?
+         {having}
+         ORDER BY CASE WHEN MAX(r.scan_id) = :current_scan THEN 1 ELSE 0 END ASC,
+                  name ASC
+         LIMIT :limit
         """,
-        (user_id, tenant_id, f"%{term}%", MAX_RESULTS + 1),
-        # One extra row is fetched purely to detect truncation, so the UI can say
-        # "narrow your search" instead of quietly hiding matches.
+        {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "term": f"%{term}%",
+            "current_scan": current_scan,
+            # One extra row is fetched purely to detect truncation, so the UI
+            # can say "narrow your search" instead of quietly hiding matches.
+            "limit": MAX_RESULTS + 1,
+        },
     ) as cursor:
         rows = await cursor.fetchall()
 
     truncated = len(rows) > MAX_RESULTS
     rows = rows[:MAX_RESULTS]
 
-    results = []
-    for row in rows:
-        live = row["last_scan_id"] == current_scan
-        if not live and not include_deleted:
-            continue
-        results.append(_row_to_resource(row, live))
-
-    # Deleted resources lead: a live resource can be found in the portal, so the
-    # ones only this tool can surface are the ones worth showing first.
-    results.sort(key=lambda r: (r["live"], r["name"].lower()))
+    results = [
+        _row_to_resource(row, row["last_scan_id"] == current_scan)
+        for row in rows
+    ]
 
     return {
         "results": results,

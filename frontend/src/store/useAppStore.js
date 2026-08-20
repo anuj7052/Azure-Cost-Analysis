@@ -115,8 +115,11 @@ function dateKeyOf(dateMode, months, fromDate, toDate) {
 
 /** Remember what the user picked so a refresh restores the same view. */
 function savePrefs(get) {
-  const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate } = get();
-  writePrefs({ selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate });
+  const { selectedTenantId, months, dateMode, fromDate, toDate } = get();
+  // The subscription selection is not persisted: restoring it re-triggers a
+  // cost query per subscription on the next load, which is exactly what
+  // choosing them by hand is meant to prevent.
+  writePrefs({ selectedTenantId, months, dateMode, fromDate, toDate });
 }
 
 export const useAppStore = create((set, get) => ({
@@ -179,7 +182,12 @@ export const useAppStore = create((set, get) => ({
 
   // ── Subscriptions ──
   subscriptions: [],
-  selectedSubscriptionIds: prefs.selectedSubscriptionIds ?? [],
+  // Deliberately not restored from preferences. A saved selection meant every
+  // reload re-selected the subscriptions from last time and immediately fired a
+  // Cost Management query per subscription — the auto-loading this was supposed
+  // to stop, just delayed by one page load. The tenant and date range are still
+  // remembered, because neither costs anything until a subscription is picked.
+  selectedSubscriptionIds: [],
   subscriptionsLoading: false,
   subscriptionsError: null,
 
@@ -195,10 +203,13 @@ export const useAppStore = create((set, get) => ({
       );
       set({ subscriptionsLoading: false });
 
-      // Keep the saved selection when it still matches; otherwise select all active.
+      // Keep the saved selection when those subscriptions still exist, but do
+      // not select everything by default. Auto-selecting every subscription
+      // fires a Cost Management query per subscription the moment a tenant
+      // loads — slow, and throttled on any sizeable estate — to answer a
+      // question the user has not asked yet. They choose, then data loads.
       const activeIds = subs.filter(s => s.state === 'Enabled').map(s => s.subscription_id);
-      const saved = get().selectedSubscriptionIds.filter(id => activeIds.includes(id));
-      set({ selectedSubscriptionIds: saved.length ? saved : activeIds });
+      set({ selectedSubscriptionIds: get().selectedSubscriptionIds.filter(id => activeIds.includes(id)) });
       savePrefs(get);
     } catch (err) {
       set({ subscriptionsLoading: false, subscriptionsError: err.message });

@@ -97,7 +97,7 @@ async function getSignInToken() {
 // token. Requiring a management token there made first-time registration fail
 // with "Not authenticated", because a brand-new session has no ARM token yet
 // and cannot silently acquire one.
-const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search'];
+const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search', '/changes'];
 
 // A sign-in popup may only open off a real click. These routes run from a file
 // picker or an explicit form submit, so recovering the session there is
@@ -233,6 +233,28 @@ export const fetchPricing = (body) =>
 /** Which resources a reservation actually paid for: VM, resource group, SKU. */
 export const fetchReservedDetail = (body) =>
   api.post('/costs/pricing/reserved', body).then(r => r.data);
+
+/**
+ * What changed between two points in time.
+ *
+ * Accepts a date range (how people actually ask) or an explicit scan pair.
+ */
+export const fetchChanges = (tenantId, { before, after, from_date, to_date } = {}) =>
+  api.get('/changes', {
+    params: {
+      tenant_id: tenantId,
+      ...(from_date ? { from_date } : {}),
+      ...(to_date ? { to_date } : {}),
+      ...(before ? { before } : {}),
+      ...(after ? { after } : {}),
+    },
+  }).then(r => r.data);
+
+/** Every recorded change for one resource, newest first. */
+export const fetchEntityHistory = (tenantId, resourceId) =>
+  api.get('/changes/history', {
+    params: { tenant_id: tenantId, resource_id: resourceId },
+  }).then(r => r.data);
 
 /** Capture the estate now and store it as a point-in-time snapshot. */
 export const runScan = (body) => api.post('/scans', body).then(r => r.data);

@@ -1,10 +1,52 @@
 import { useEffect, useMemo, useState, Fragment } from 'react';
-import { ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight, Upload, Minus } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight, Upload, Minus, Sigma } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
 import { filterRows } from '../utils/importAnalytics';
 import { buildVariance, buildTrend, monthsIn, explainGroup, explainItem, explainStep, explainTotal, explainTrend, explainTrendGroup, GROUP_OPTIONS, REASONS } from '../utils/costVariance';
-import { formatAmount } from '../utils/currency';
+import { formatAmount, formatRate } from '../utils/currency';
+import { Quantity } from '../components/Common/Amount';
+import ExplainPanel from '../components/Common/ExplainPanel';
+import { exactAmount } from '../utils/exact';
+
+/**
+ * Where a unit rate came from, and what moved it.
+ *
+ * A rate shown with no derivation invites the assumption that Azure published
+ * it. It did not: this is the effective rate, cost divided by billed quantity,
+ * so it moves with tier changes, regional pricing, reservation coverage and
+ * partial-month proration alike. Saying so stops the number being read as a
+ * price list.
+ */
+function rateExplanation(item, currency) {
+  if (item.prev_rate == null || item.curr_rate == null) {
+    return 'No unit rate: this line item has no billed quantity to divide the cost by.';
+  }
+
+  const unit = item.unit || 'unit';
+  const lines = [
+    `Effective unit rate = cost ÷ billed quantity (per ${unit}).`,
+    `Derived from the billing data, not a published Azure price.`,
+    `Was ${exactAmount(item.prev_rate, currency)}, now ${exactAmount(item.curr_rate, currency)}.`,
+  ];
+
+  const delta = item.curr_rate - item.prev_rate;
+  if (Math.abs(delta) < 1e-9) {
+    lines.push('The rate did not change; the cost moved because usage did.');
+  } else {
+    const pct = item.prev_rate ? (delta / item.prev_rate) * 100 : null;
+    lines.push(
+      `${delta > 0 ? 'Up' : 'Down'} ${exactAmount(Math.abs(delta), currency)}` +
+      (pct == null ? '' : ` (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`) + '.',
+    );
+    lines.push(
+      'A moved rate usually means a tier or region change, reservation coverage ' +
+      'starting or ending, or a partial month being prorated.',
+    );
+  }
+
+  return lines.join('\n');
+}
 
 const REASON_STYLE = {
   new: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
@@ -52,7 +94,7 @@ function DriverCard({ label, hint, value, currency }) {
   );
 }
 
-function GroupRow({ group, currency, expanded, onToggle, ctx }) {
+function GroupRow({ group, currency, expanded, onToggle, ctx, onExplain }) {
   const Icon = expanded ? ChevronDown : ChevronRight;
   return (
     <>
@@ -88,7 +130,16 @@ function GroupRow({ group, currency, expanded, onToggle, ctx }) {
                 <tr className="text-slate-500 border-b border-slate-800">
                   <th className="text-left font-medium pb-1.5">Line item</th>
                   <th className="text-right font-medium pb-1.5">Quantity</th>
-                  <th className="text-right font-medium pb-1.5">Unit rate</th>
+                  <th
+                    className="text-right font-medium pb-1.5 cursor-help underline decoration-dotted decoration-slate-600 underline-offset-4"
+                    title={
+                      'Effective unit rate = cost ÷ billed quantity.\n' +
+                      'Derived from your billing data, not a published Azure price.\n' +
+                      'Hover any rate to see what moved it.'
+                    }
+                  >
+                    Unit rate
+                  </th>
                   <th className="text-right font-medium pb-1.5">From usage</th>
                   <th className="text-right font-medium pb-1.5">From rate</th>
                   <th className="text-right font-medium pb-1.5">Change</th>
@@ -99,19 +150,41 @@ function GroupRow({ group, currency, expanded, onToggle, ctx }) {
                   <Fragment key={item.key}>
                     <tr>
                       <td className="py-1.5 pr-2">
-                        <p className="text-slate-200 truncate max-w-[22rem]" title={item.label}>{item.label}</p>
-                        <p className="text-slate-500 truncate max-w-[22rem]">
-                          {item.meter}{item.resource_group ? ` · ${item.resource_group}` : ''}
-                        </p>
+                        <button
+                          type="button"
+                          onClick={() => onExplain?.(item)}
+                          className="text-left group"
+                          title="Show how this figure was calculated and how to verify it"
+                        >
+                          <p className="text-slate-200 truncate max-w-[22rem] group-hover:text-blue-300 transition-colors" title={item.label}>
+                            {item.label}
+                          </p>
+                          <p className="text-slate-500 truncate max-w-[22rem]">
+                            {item.meter}{item.resource_group ? ` · ${item.resource_group}` : ''}
+                          </p>
+                        </button>
                       </td>
                       <td className="py-1.5 text-right text-slate-400 tabular-nums whitespace-nowrap">
-                        {item.prev_qty} → {item.curr_qty}
-                        {item.unit ? <span className="text-slate-600"> {item.unit}</span> : null}
+                        {/* No day conversion here: this cell already compares
+                            two quantities, and spelling both out puts four
+                            numbers where two say the same thing. */}
+                        <Quantity value={item.prev_qty} unit={item.unit} showDuration={false} />
+                        <span className="text-slate-600"> → </span>
+                        <Quantity value={item.curr_qty} unit={item.unit} showDuration={false} />
                       </td>
-                      <td className="py-1.5 text-right text-slate-400 tabular-nums whitespace-nowrap">
+                      <td
+                        className="py-1.5 text-right text-slate-400 tabular-nums whitespace-nowrap"
+                        title={rateExplanation(item, currency)}
+                      >
                         {item.prev_rate == null || item.curr_rate == null
                           ? '—'
-                          : `${item.prev_rate} → ${item.curr_rate}`}
+                          : (
+                            <>
+                              {formatRate(item.prev_rate, currency)}
+                              <span className="text-slate-600"> → </span>
+                              {formatRate(item.curr_rate, currency)}
+                            </>
+                          )}
                       </td>
                       <td className="py-1.5 text-right tabular-nums">
                         <Delta value={item.usage} currency={currency} />
@@ -128,6 +201,17 @@ function GroupRow({ group, currency, expanded, onToggle, ctx }) {
                         <p className="text-[11px] text-slate-400 leading-relaxed">
                           {explainItem(item, ctx)}
                         </p>
+                        {/* The explanation sentence is where people stop and
+                            ask "says who?", so the way to check it belongs
+                            here rather than only on the line item name. */}
+                        <button
+                          type="button"
+                          onClick={() => onExplain?.(item)}
+                          className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-medium text-blue-400 hover:text-blue-300 transition"
+                        >
+                          <Sigma className="w-3 h-3" />
+                          Show calculation, KQL and portal steps
+                        </button>
                       </td>
                     </tr>
                   </Fragment>
@@ -257,6 +341,9 @@ export default function Compare() {
   const [expanded, setExpanded] = useState(() => new Set());
   const [pair, setPair] = useState(null); // [prevMonth, currMonth] once the user picks
   const [view, setView] = useState(null); // 'all' | 'pair', defaults from month count
+  // The line item whose derivation is being shown, or null.
+  const [explain, setExplain] = useState(null);
+  const tenants = useAppStore(s => s.tenants);
 
   // Without an uploaded file, pull the same per-meter rows straight from Azure
   // so this page works on a plain login too.
@@ -575,6 +662,7 @@ export default function Compare() {
                     group={g}
                     currency={currency}
                     ctx={ctx}
+                    onExplain={setExplain}
                     expanded={expanded.has(g.key)}
                     onToggle={() => toggle(g.key)}
                   />
@@ -587,11 +675,33 @@ export default function Compare() {
               </p>
             )}
             <p className="text-[11px] text-slate-600 mt-3">
-              Click any row to see the individual resources and meters behind it.
+              Click any row to see the individual resources and meters behind it,
+              or click a line item name to see how its figures were calculated.
             </p>
           </div>
         </>
       )}
+
+      {/* Every figure here is derived. The panel shows the working and how to
+          reproduce it in whichever source the data actually came from. */}
+      <ExplainPanel
+        open={!!explain}
+        item={explain}
+        currency={currency}
+        onClose={() => setExplain(null)}
+        source={
+          imported
+            ? 'import'
+            : (tenants.find(t => t.tenant_id === selectedTenantId)?.source || 'delegated')
+        }
+        fileName={imported?.file_name}
+        // Only pass a subscription when one is selected: a deep link scoped to
+        // the wrong subscription is worse than an unscoped one, because it
+        // looks authoritative and shows the wrong numbers.
+        subscriptionId={selectedSubscriptionIds.length === 1 ? selectedSubscriptionIds[0] : null}
+        fromDate={pair?.[0] ? `${pair[0]}-01` : null}
+        toDate={pair?.[1] ? `${pair[1]}-01` : null}
+      />
     </div>
   );
 }

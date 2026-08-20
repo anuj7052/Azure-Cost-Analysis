@@ -18,6 +18,7 @@ const Settings       = lazy(() => import('./pages/Settings'));
 const ResourceGroups = lazy(() => import('./pages/ResourceGroups'));
 const Orphaned       = lazy(() => import('./pages/Orphaned'));
 const GlobalSearch   = lazy(() => import('./pages/GlobalSearch'));
+const Changes        = lazy(() => import('./pages/Changes'));
 const Bandwidth      = lazy(() => import('./pages/Bandwidth'));
 const Boq            = lazy(() => import('./pages/Boq'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
@@ -134,6 +135,7 @@ function AppShell() {
             <Route path="/resource-groups" element={<ResourceGroups />} />
             <Route path="/orphaned" element={<Orphaned />} />
             <Route path="/search" element={<GlobalSearch />} />
+            <Route path="/changes" element={<Changes />} />
             <Route path="/bandwidth" element={<Bandwidth />} />
             <Route path="/boq" element={<Boq />} />
             <Route path="/deploy" element={<Deploy />} />
