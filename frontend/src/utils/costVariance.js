@@ -198,8 +198,13 @@ export function buildVariance(rows, prevMonth, currMonth, { groupBy = 'service' 
           label: i.resource_name || i.meter || i.service,
           meter: i.meter,
           service: i.service,
+          resource_name: i.resource_name,
           resource_group: i.resource_group,
           subscription_id: i.subscription_id,
+          // Region travels with the line because a published Azure price is
+          // region-specific: quoting one region's list price against another
+          // region's bill is a wrong comparison stated confidently.
+          region: i.region,
           unit: i.unit,
           prev_cost: round(i.prev.cost),
           curr_cost: round(i.curr.cost),

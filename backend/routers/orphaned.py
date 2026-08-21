@@ -13,6 +13,7 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 
 from auth.dependencies import get_current_user
+from services.azure_errors import azure_error
 from core.db import get_db
 from models.schemas import OrphanedRequest, OrphanedResponse
 from services.analysis import resource_cost_index
@@ -63,6 +64,6 @@ async def get_orphaned_resources(
     try:
         result = await find_orphaned_resources(token, body.subscription_ids, cost_index)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Resource Graph query failed: {exc}")
+        raise azure_error(exc, "your resources")
 
     return OrphanedResponse(currency=currency, **result)

@@ -7,6 +7,8 @@ import { buildVariance, buildTrend, monthsIn, explainGroup, explainItem, explain
 import { formatAmount, formatRate } from '../utils/currency';
 import { Quantity } from '../components/Common/Amount';
 import ExplainPanel from '../components/Common/ExplainPanel';
+import UnitRatePanel from '../components/Common/UnitRatePanel';
+import QuantityPanel from '../components/Common/QuantityPanel';
 import { exactAmount } from '../utils/exact';
 
 /**
@@ -94,7 +96,7 @@ function DriverCard({ label, hint, value, currency }) {
   );
 }
 
-function GroupRow({ group, currency, expanded, onToggle, ctx, onExplain }) {
+function GroupRow({ group, currency, expanded, onToggle, ctx, onExplain, onRate, onQty }) {
   const Icon = expanded ? ChevronDown : ChevronRight;
   return (
     <>
@@ -129,13 +131,22 @@ function GroupRow({ group, currency, expanded, onToggle, ctx, onExplain }) {
               <thead>
                 <tr className="text-slate-500 border-b border-slate-800">
                   <th className="text-left font-medium pb-1.5">Line item</th>
-                  <th className="text-right font-medium pb-1.5">Quantity</th>
+                  <th
+                    className="text-right font-medium pb-1.5 cursor-help underline decoration-dotted decoration-slate-600 underline-offset-4"
+                    title={
+                      'Quantity billed in each month, in this meter\'s own unit.\n' +
+                      'Click any quantity to see it broken down day by day, with the\n' +
+                      'start and stop operations behind the shape.'
+                    }
+                  >
+                    Quantity
+                  </th>
                   <th
                     className="text-right font-medium pb-1.5 cursor-help underline decoration-dotted decoration-slate-600 underline-offset-4"
                     title={
                       'Effective unit rate = cost ÷ billed quantity.\n' +
                       'Derived from your billing data, not a published Azure price.\n' +
-                      'Hover any rate to see what moved it.'
+                      'Click any rate to see it against Microsoft\'s published price.'
                     }
                   >
                     Unit rate
@@ -168,9 +179,20 @@ function GroupRow({ group, currency, expanded, onToggle, ctx, onExplain }) {
                         {/* No day conversion here: this cell already compares
                             two quantities, and spelling both out puts four
                             numbers where two say the same thing. */}
-                        <Quantity value={item.prev_qty} unit={item.unit} showDuration={false} />
-                        <span className="text-slate-600"> → </span>
-                        <Quantity value={item.curr_qty} unit={item.unit} showDuration={false} />
+                        {/* A monthly quantity hides its own shape — the same
+                            total covers "ran all month" and "ran three weeks
+                            plus a weekend nobody meant to leave on". The button
+                            opens the days that tell them apart. */}
+                        <button
+                          type="button"
+                          onClick={() => onQty?.(item)}
+                          title="See this quantity day by day, with start and stop events"
+                          className="hover:text-blue-300 underline decoration-dotted decoration-slate-700 underline-offset-4 transition-colors"
+                        >
+                          <Quantity value={item.prev_qty} unit={item.unit} showDuration={false} />
+                          <span className="text-slate-600"> → </span>
+                          <Quantity value={item.curr_qty} unit={item.unit} showDuration={false} />
+                        </button>
                       </td>
                       <td
                         className="py-1.5 text-right text-slate-400 tabular-nums whitespace-nowrap"
@@ -179,11 +201,20 @@ function GroupRow({ group, currency, expanded, onToggle, ctx, onExplain }) {
                         {item.prev_rate == null || item.curr_rate == null
                           ? '—'
                           : (
-                            <>
+                            /* Opens the side panel that puts this rate next to
+                               Microsoft's published one and accounts for the
+                               gap. A rate is the figure people dispute, so it
+                               is the figure that has to be openable. */
+                            <button
+                              type="button"
+                              onClick={() => onRate?.(item)}
+                              title="Compare against Microsoft's published price"
+                              className="hover:text-blue-300 underline decoration-dotted decoration-slate-700 underline-offset-4 transition-colors"
+                            >
                               {formatRate(item.prev_rate, currency)}
                               <span className="text-slate-600"> → </span>
                               {formatRate(item.curr_rate, currency)}
-                            </>
+                            </button>
                           )}
                       </td>
                       <td className="py-1.5 text-right tabular-nums">
@@ -328,6 +359,28 @@ function TrendTable({ trend, currency, groupLabel, stepGroupsFor, expanded, onTo
   );
 }
 
+/**
+ * The last `count` complete calendar months, newest first.
+ *
+ * The month dropdowns have to be usable *before* anything is fetched, otherwise
+ * the page can never honour "pick two months, then load" — the options would
+ * come from data that only exists once the query has already run. The calendar
+ * is the one list of months that needs no billing data behind it.
+ *
+ * The month in progress is excluded: a partial month compared against a
+ * complete one always looks like spend collapsed, and that reading is wrong
+ * every time.
+ */
+function calendarMonths(count = 12) {
+  const out = [];
+  const now = new Date();
+  for (let i = 1; i <= count; i += 1) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
 export default function Compare() {
   const imported = useAppStore(s => s.imported);
   const rowsData = useAppStore(s => s.rowsData);
@@ -343,13 +396,12 @@ export default function Compare() {
   const [view, setView] = useState(null); // 'all' | 'pair', defaults from month count
   // The line item whose derivation is being shown, or null.
   const [explain, setExplain] = useState(null);
+  // The line item whose unit rate is being taken apart against Microsoft's
+  // published price, or null.
+  const [rateItem, setRateItem] = useState(null);
+  const [qtyItem, setQtyItem] = useState(null);
+  const [loadRequested, setLoadRequested] = useState(false);
   const tenants = useAppStore(s => s.tenants);
-
-  // Without an uploaded file, pull the same per-meter rows straight from Azure
-  // so this page works on a plain login too.
-  useEffect(() => {
-    if (!imported) loadCostRows();
-  }, [imported, loadCostRows, selectedTenantId, selectedSubscriptionIds]);
 
   const source = imported || rowsData;
   const live = !imported && !!rowsData;
@@ -362,10 +414,52 @@ export default function Compare() {
   );
   const months = useMemo(() => monthsIn(rows), [rows]);
 
-  const [prevMonth, currMonth] = pair
-    && months.includes(pair[0]) && months.includes(pair[1])
-    ? pair
-    : [months.at(-2), months.at(-1)];
+  // `pair` holds what the user has picked so far and may be half-filled, so the
+  // dropdowns can show a first choice while waiting for the second. Read as two
+  // scalars rather than destructured: a fresh array literal here reads to the
+  // React compiler as a value that could be mutated, and it bails out of
+  // optimising the whole component rather than risk it.
+  const draftPrev = pair?.[0] || null;
+  const draftCurr = pair?.[1] || null;
+
+  // Two different months are chosen. This is about the *user's* intent and says
+  // nothing about whether data exists for them — it is what the fetch waits on.
+  const chosen = !!draftPrev && !!draftCurr && draftPrev !== draftCurr;
+
+  // Nothing is compared until both months are chosen *and* both actually
+  // billed. Defaulting to the last two produced a comparison nobody asked for,
+  // which was easy to mistake for the period selected elsewhere in the app.
+  const complete = chosen && months.includes(draftPrev) && months.includes(draftCurr);
+  const prevMonth = complete ? draftPrev : null;
+  const currMonth = complete ? draftCurr : null;
+
+  // With three or more months the trend is the more useful default; with
+  // exactly two — or none yet — there is nothing a trend can show that the pair
+  // view does not.
+  const mode = view || (months.length > 2 ? 'all' : 'pair');
+
+  // Reading per-meter rows is a cost query per subscription, and Azure throttles
+  // those hard. So the query is tied to a question actually being asked:
+  //
+  //   * "All months" needs the whole history, and there is no smaller version of
+  //     that question — it loads on an explicit request.
+  //   * "Compare two" can compute nothing until both months are picked, so it
+  //     waits for the second dropdown. Fetching on arrival spent a rate limit
+  //     to answer a question the user had not asked yet.
+  //
+  // An uploaded file is already in memory and costs nothing to read, so it
+  // bypasses all of this.
+  const shouldLoad = !imported && (mode === 'all' ? loadRequested : chosen);
+  const subsKey = selectedSubscriptionIds.join(',');
+
+  useEffect(() => {
+    if (shouldLoad) loadCostRows();
+  }, [shouldLoad, loadCostRows, selectedTenantId, subsKey]);
+
+  // Before anything is fetched there are no billing months to offer, so the
+  // dropdowns fall back to the calendar — which is what makes picking first and
+  // fetching second possible at all.
+  const monthOptions = months.length ? months : calendarMonths(12);
 
   const variance = useMemo(() => {
     if (!prevMonth || !currMonth || prevMonth === currMonth) return null;
@@ -390,10 +484,6 @@ export default function Compare() {
     });
   }, [stepVariances, trend]);
 
-  // With three or more months the trend is the more useful default; with
-  // exactly two there is nothing a trend can show that the pair view does not.
-  const mode = view || (months.length > 2 ? 'all' : 'pair');
-
   const currency = source?.currency || 'INR';
 
   // Explanations need to render money the same way the rest of the page does.
@@ -409,12 +499,6 @@ export default function Compare() {
   });
 
   if (!source) {
-    if (rowsLoading) {
-      return <Empty title="Reading your billing months…" body="Pulling per-meter costs from Azure. This can take a moment the first time." />;
-    }
-    if (rowsError) {
-      return <Empty title="Could not load cost detail" body={rowsError} />;
-    }
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) {
       return (
         <Empty
@@ -423,11 +507,56 @@ export default function Compare() {
         />
       );
     }
+    if (rowsLoading) {
+      return <Empty title="Reading your billing months…" body="Pulling per-meter costs from Azure. This can take a moment the first time." />;
+    }
+    if (rowsError) {
+      return <Empty title="Could not load cost detail" body={rowsError} />;
+    }
+    // Nothing loaded and no months picked. Offering the pickers here rather
+    // than a "load everything" button is the whole point: the two months the
+    // user chooses are what the query is for.
     return (
-      <Empty
-        title="Import your monthly cost files first"
-        body="This page compares two billing months and explains the difference. Upload at least two Azure cost exports — one per month — to get started."
-      />
+      <div className="p-6 space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Month comparison</h1>
+          <p className="text-slate-400 text-sm mt-1">
+            Pick two months and this page reads them meter by meter. Nothing is fetched until
+            you do — the detail behind a comparison is a cost query per subscription, and Azure
+            throttles those hard.
+          </p>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div className="flex flex-wrap items-end gap-2">
+            <MonthPicker
+              label="Baseline"
+              value={draftPrev}
+              placeholder="Select month"
+              options={monthOptions.filter(m => m !== draftCurr)}
+              onChange={(m) => setPair([m, draftCurr])}
+            />
+            <span className="text-slate-600 pb-2">→</span>
+            <MonthPicker
+              label="Compared to"
+              value={draftCurr}
+              placeholder="Select month"
+              options={monthOptions.filter(m => m !== draftPrev)}
+              onChange={(m) => setPair([draftPrev, m])}
+            />
+          </div>
+          <p className="text-[11px] text-slate-500 mt-3 leading-relaxed">
+            Months come from the calendar until your billing months are known. Pick a month
+            with no charges and the page will say so rather than showing an empty comparison.
+          </p>
+          <button
+            onClick={() => { setView('all'); setLoadRequested(true); }}
+            className="mt-4 text-xs font-medium text-blue-400 hover:text-blue-300 transition"
+          >
+            Or load every billing month at once →
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -474,16 +603,18 @@ export default function Compare() {
             <>
               <MonthPicker
                 label="Baseline"
-                value={prevMonth}
-                options={months.filter(m => m !== currMonth)}
-                onChange={(m) => setPair([m, currMonth])}
+                value={draftPrev}
+                placeholder="Select month"
+                options={monthOptions.filter(m => m !== draftCurr)}
+                onChange={(m) => setPair([m, draftCurr])}
               />
               <span className="text-slate-600 pb-2">→</span>
               <MonthPicker
                 label="Compared to"
-                value={currMonth}
-                options={months.filter(m => m !== prevMonth)}
-                onChange={(m) => setPair([prevMonth, m])}
+                value={draftCurr}
+                placeholder="Select month"
+                options={monthOptions.filter(m => m !== draftPrev)}
+                onChange={(m) => setPair([draftPrev, m])}
               />
             </>
           )}
@@ -583,7 +714,22 @@ export default function Compare() {
           </div>
         </>
       ) : !variance ? (
-        <Empty title="Pick two different months" body="Choose a baseline and a comparison month above." />
+        /* Two cases that look identical but are not: nothing picked yet, versus
+           a month picked that never billed. Saying "pick two months" to someone
+           who just picked two is how a working page reads as broken. */
+        chosen ? (
+          <Empty
+            title={rowsLoading ? 'Reading those two months…' : 'No charges in those months'}
+            body={rowsLoading
+              ? `Pulling per-meter costs for ${draftPrev} and ${draftCurr}.`
+              : `${[draftPrev, draftCurr].filter(m => !months.includes(m)).join(' and ')} has no billing in this data. `
+                + (months.length
+                  ? `Months with charges: ${months.join(', ')}.`
+                  : 'No month returned any charges for these subscriptions.')}
+          />
+        ) : (
+          <Empty title="Pick two different months" body="Choose a baseline and a comparison month above. Nothing is fetched until both are chosen." />
+        )
       ) : (
         <>
           {/* Headline */}
@@ -663,6 +809,8 @@ export default function Compare() {
                     currency={currency}
                     ctx={ctx}
                     onExplain={setExplain}
+                    onRate={setRateItem}
+                    onQty={setQtyItem}
                     expanded={expanded.has(g.key)}
                     onToggle={() => toggle(g.key)}
                   />
@@ -702,11 +850,41 @@ export default function Compare() {
         fromDate={pair?.[0] ? `${pair[0]}-01` : null}
         toDate={pair?.[1] ? `${pair[1]}-01` : null}
       />
+
+      {/* A unit rate is the figure people dispute, and "cost ÷ quantity" is not
+          an answer to "but Microsoft's calculator says something else". This
+          puts both rates side by side and accounts for the gap. */}
+      {rateItem && (
+        <UnitRatePanel
+          // Remount per line so a region picked for one meter never silently
+          // carries over to the next one opened.
+          key={rateItem.key}
+          item={rateItem}
+          currency={currency}
+          prevMonth={prevMonth}
+          currMonth={currMonth}
+          onClose={() => setRateItem(null)}
+        />
+      )}
+
+      {/* A monthly quantity is a total, and a total cannot say whether the
+          extra hours came from a machine left on for a weekend or a second
+          instance appearing for a day. The daily breakdown can. */}
+      {qtyItem && (
+        <QuantityPanel
+          key={qtyItem.key}
+          item={qtyItem}
+          currency={currency}
+          prevMonth={prevMonth}
+          currMonth={currMonth}
+          onClose={() => setQtyItem(null)}
+        />
+      )}
     </div>
   );
 }
 
-function MonthPicker({ label, value, options, labels, onChange }) {
+function MonthPicker({ label, value, options, labels, onChange, placeholder }) {
   return (
     <label className="flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">{label}</span>
@@ -715,25 +893,28 @@ function MonthPicker({ label, value, options, labels, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
       >
+        {placeholder && <option value="">{placeholder}</option>}
         {options.map(o => <option key={o} value={o}>{labels?.[o] || o}</option>)}
       </select>
     </label>
   );
 }
 
-function Empty({ title, body }) {
+function Empty({ title, body, action }) {
   return (
     <div className="p-6">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center max-w-xl mx-auto">
         <Upload className="w-8 h-8 text-slate-600 mx-auto mb-3" />
         <h2 className="text-sm font-semibold text-white">{title}</h2>
         <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">{body}</p>
-        <Link
-          to="/settings"
-          className="inline-block mt-4 bg-blue-600 hover:bg-blue-500 text-[#fff] text-sm font-medium px-4 py-2 rounded-xl transition"
-        >
-          Go to import
-        </Link>
+        {action || (
+          <Link
+            to="/settings"
+            className="inline-block mt-4 bg-blue-600 hover:bg-blue-500 text-[#fff] text-sm font-medium px-4 py-2 rounded-xl transition"
+          >
+            Go to import
+          </Link>
+        )}
       </div>
     </div>
   );

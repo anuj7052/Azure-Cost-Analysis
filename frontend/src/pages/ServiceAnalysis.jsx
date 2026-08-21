@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore';
 import { formatAmount } from '../utils/currency';
 import ServiceBreakdownChart from '../components/Charts/ServiceBreakdownChart';
 import { Search } from 'lucide-react';
+import BoqGenerator from '../components/Boq/BoqGenerator';
 
 const RESOURCE_TYPE_SHORT = (type) => type.split('/').slice(1).join('/') || type;
 
@@ -43,6 +44,11 @@ export default function ServiceAnalysis() {
         <h1 className="text-2xl font-bold text-white">Service Analysis</h1>
         <p className="text-slate-400 text-sm mt-1">Cost breakdown by service + all active Azure resources</p>
       </div>
+
+      {/* The services running in a subscription are exactly what a BOQ is
+          written from, so the generator belongs on the page that lists them
+          as well as on the BOQ page. */}
+      <BoqGenerator />
 
       {servicesError && (
         <div className="bg-red-950/30 border border-red-500/30 rounded-xl p-4">

@@ -5,6 +5,7 @@ import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Hash 
 import { useState } from 'react';
 import { evictAll, evictApiCache } from '../../utils/persistCache';
 import { COMPACT, EXACT, getAmountMode, setAmountMode } from '../../utils/currency';
+import SubscriptionPicker from './SubscriptionPicker';
 
 const ROLLING_OPTIONS = [1, 3, 6, 12];
 const ALL_MONTHS = [
@@ -147,6 +148,11 @@ export default function Topbar() {
           </div>
         )}
       </div>
+
+      {/* Subscription scope. Sits beside the tenant because the two together
+          are what every figure on every page is a sum of, and a reader should
+          not have to scroll to find out what they are looking at. */}
+      <SubscriptionPicker />
 
       {/* ── Date filter pill ── */}
       <div className="relative">

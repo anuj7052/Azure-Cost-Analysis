@@ -27,16 +27,29 @@ def get_jwks_client() -> PyJWKClient:
 
 
 def allowed_audiences() -> set[str]:
-    """Audiences this API accepts: its own app registration, and Azure ARM."""
+    """
+    Audiences this API accepts.
+
+    In production only this application's own audience is accepted. Accepting
+    ARM-scoped tokens is convenient — the frontend already holds one — but it
+    means a token minted for *any* Azure application the user has consented to
+    can be replayed against this API. That is an authentication bypass, so the
+    wider set is confined to development where the frontend still sends the ARM
+    token it acquires for Azure calls.
+    """
     client_id = settings.AZURE_CLIENT_ID
-    auds = {
+    own = {client_id, f"api://{client_id}"} if client_id else set()
+
+    if settings.is_production:
+        # An empty set would mean "accept anything", so a production deployment
+        # without a configured client id must fail closed instead.
+        return own
+
+    return own | {
         "https://management.azure.com/",
         "https://management.azure.com",
         "https://management.core.windows.net/",
     }
-    if client_id:
-        auds |= {client_id, f"api://{client_id}"}
-    return auds
 
 
 def validate_azure_token(token: str) -> dict:
@@ -55,6 +68,16 @@ def validate_azure_token(token: str) -> dict:
         unverified = jwt.decode(token, options={"verify_signature": False})
         audience = unverified.get("aud", "")
         expected = allowed_audiences()
+
+        if settings.is_production and not expected:
+            # Fail closed. An empty allow-list previously meant "accept every
+            # audience", which is the opposite of what an unconfigured
+            # deployment should do.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This API is not configured to validate tokens.",
+            )
+
         if expected and audience not in expected:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

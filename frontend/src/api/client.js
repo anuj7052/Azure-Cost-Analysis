@@ -1,9 +1,10 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { msalInstance, managementRequest, loginRequest } from '../auth/msalConfig';
+import { errorDetail, errorMessage } from '../utils/apiError';
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: '/api/v1',
   timeout: 60000,
 });
 
@@ -97,19 +98,38 @@ async function getSignInToken() {
 // token. Requiring a management token there made first-time registration fail
 // with "Not authenticated", because a brand-new session has no ARM token yet
 // and cannot silently acquire one.
-const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search', '/changes'];
+// `/prices` belongs here too: it reads Microsoft's public, unauthenticated
+// price list and our own stored history, never the caller's Azure tenant. Given
+// an ARM token it would fail after a reload, when silent renewal is blocked,
+// for a route that never needed one.
+const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search', '/changes', '/prices'];
+
+/**
+ * Routes that live under a local prefix but do call Azure.
+ *
+ * `/boq` parses uploaded files on our own server, so it takes the sign-in
+ * token. `/boq/from-subscription` reads live resources and needs an Azure
+ * management token — matching on the prefix alone sent it the wrong one and
+ * Azure answered 401, which read as an expired session rather than a routing
+ * mistake.
+ */
+const AZURE_ROUTES = ['/boq/from-subscription'];
 
 // A sign-in popup may only open off a real click. These routes run from a file
 // picker or an explicit form submit, so recovering the session there is
 // allowed; the rest load in the background and must fail quietly instead of
 // firing a blocked popup.
-const GESTURE_ROUTES = ['/upload', '/boq', '/tenants'];
+//
+// `/prices` qualifies: the rate explanation panel only ever opens because
+// someone clicked a unit rate.
+const GESTURE_ROUTES = ['/upload', '/boq', '/tenants', '/prices'];
 
 // Attach Bearer token to every request
 api.interceptors.request.use(async (config) => {
   const url = config.url || '';
-  const localRoute = LOCAL_ROUTES.some((r) => url.startsWith(r));
-  const userInitiated = GESTURE_ROUTES.some((r) => url.startsWith(r));
+  const needsAzure = AZURE_ROUTES.some((r) => url.startsWith(r));
+  const localRoute = !needsAzure && LOCAL_ROUTES.some((r) => url.startsWith(r));
+  const userInitiated = needsAzure || GESTURE_ROUTES.some((r) => url.startsWith(r));
   const token = (localRoute ? await getSignInToken() : null)
     || (await getToken(userInitiated));
 
@@ -154,7 +174,31 @@ function alertSessionExpired(detail) {
     { id: 'session-expired', duration: 8000 },
   );
 }
+/**
+ * Tell the user they are being rate limited, rather than letting the page look
+ * empty. An empty cost page is indistinguishable from "you spent nothing", so
+ * the reason has to be said out loud.
+ */
+let lastLimitAlert = 0;
 
+function alertRateLimited(err) {
+  const now = Date.now();
+  if (now - lastLimitAlert < 15000) return;
+  lastLimitAlert = now;
+
+  const retryAfter = Number(
+    err.response?.headers?.['retry-after']
+    || errorDetail(err).retry_after_seconds
+    || 0,
+  );
+
+  toast.error(
+    retryAfter
+      ? `Too many requests. Retry in about ${retryAfter}s.`
+      : 'Too many requests. Please slow down and retry shortly.',
+    { id: 'rate-limited', duration: 8000 },
+  );
+}
 api.interceptors.response.use(
   (res) => res,
   (err) => {
@@ -163,8 +207,23 @@ api.interceptors.response.use(
       // tries to renew instead of replaying the dead one.
       _cachedToken = null;
       _tokenExpiry = 0;
-      alertSessionExpired(err.response?.data?.detail);
+      alertSessionExpired(errorMessage(err));
     }
+
+    if (err.response?.status === 429) alertRateLimited(err);
+
+    // Carry the server's explanation onto `err.message`.
+    //
+    // Every failure is now wrapped in `{ error: { message } }`, but call sites
+    // written against the older shape read `data.detail` and fall back to
+    // `err.message` — which axios sets to "Request failed with status code 502".
+    // That tells the user nothing and hides a message that says exactly what
+    // went wrong, so the useful text replaces it here, once, rather than in
+    // every component.
+    if (err.response) {
+      err.message = errorMessage(err);
+    }
+
     return Promise.reject(err);
   },
 );
@@ -223,6 +282,21 @@ export const fetchRgCosts = (body) =>
 export const fetchDailyCosts = (body) =>
   api.post('/costs/daily', body).then(r => r.data);
 
+/**
+ * One meter, day by day, with the start/stop operations behind the shape.
+ *
+ * A monthly quantity cannot distinguish "ran all month" from "ran three weeks
+ * and was left on over one weekend", and those need different answers.
+ *
+ * Given a longer ceiling than the default: this reads daily cost for two months
+ * across every selected subscription and then the Activity Log on top, and on a
+ * large estate Azure's own query API takes most of a minute to answer. Failing
+ * at sixty seconds would mean the feature simply never works for the accounts
+ * that need it most.
+ */
+export const fetchUsageDetail = (body) =>
+  api.post('/costs/usage-detail', body, { timeout: 150000 }).then(r => r.data);
+
 export const fetchBandwidth = (body) =>
   api.post('/bandwidth', body).then(r => r.data);
 
@@ -255,6 +329,56 @@ export const fetchEntityHistory = (tenantId, resourceId) =>
   api.get('/changes/history', {
     params: { tenant_id: tenantId, resource_id: resourceId },
   }).then(r => r.data);
+
+/**
+ * Who changed what, from the Azure Activity Log.
+ *
+ * The only source that records the actor behind a change — snapshot diffs see
+ * results, this sees the operations that produced them.
+ */
+export const fetchActivity = (tenantId, subscriptionIds, { days = 7, resourceId, writesOnly = true } = {}) =>
+  api.get('/activity', {
+    params: {
+      tenant_id: tenantId,
+      subscription_ids: subscriptionIds,
+      days,
+      writes_only: writesOnly,
+      ...(resourceId ? { resource_id: resourceId } : {}),
+    },
+    paramsSerializer: { indexes: null },
+  }).then(r => r.data);
+
+/** Build a Bill of Quantities from what is actually running in a subscription. */
+export const generateBoqFromSubscription = (body) =>
+  api.post('/boq/from-subscription', body).then(r => r.data);
+
+/**
+ * Download a BOQ as an .xlsx laid out like the pricing calculator's own export.
+ *
+ * The BOQ on screen is posted back rather than rebuilt server-side: rebuilding
+ * would re-run the throttled resource and cost queries, and the download would
+ * then be free to disagree with the figures the user is looking at.
+ */
+export const downloadBoqEstimate = (boq, title = 'Your Estimate') =>
+  api.post('/boq/export/estimate.xlsx', { ...boq, title }, { responseType: 'blob' })
+    .then(r => r.data);
+
+/**
+ * Why a billed unit rate differs from Microsoft's published one.
+ *
+ * Answers with both rates, the exchange rate that applied, the meter's recorded
+ * price history and links back to Microsoft for each claim.
+ */
+export const explainUnitRate = (body) =>
+  api.post('/prices/explain', body).then(r => r.data);
+
+/** Recorded price movements — for one meter, or everything observed. */
+export const fetchPriceHistory = (params = {}) =>
+  api.get('/prices/history', { params }).then(r => r.data);
+
+/** The dollar's daily rate against a currency, for one month. */
+export const fetchFxRates = (quote, month) =>
+  api.get('/prices/fx', { params: { quote, month } }).then(r => r.data);
 
 /** Capture the estate now and store it as a point-in-time snapshot. */
 export const runScan = (body) => api.post('/scans', body).then(r => r.data);

@@ -44,12 +44,30 @@ def _row_to_resource(row: aiosqlite.Row, live: bool) -> Dict[str, Any]:
     }
 
 
+def _empty(limit: int, offset: int) -> Dict[str, Any]:
+    return {
+        "results": [],
+        "total": 0,
+        "latest_scan_id": None,
+        "truncated": False,
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": None,
+            "has_more": False,
+            "next_offset": None,
+        },
+    }
+
+
 async def search_resources(
     db: aiosqlite.Connection,
     user_id: int,
     tenant_id: str,
     query: str,
     include_deleted: bool = True,
+    limit: int = MAX_RESULTS,
+    offset: int = 0,
 ) -> Dict[str, Any]:
     """
     Find resources by name across every scan this account owns.
@@ -57,17 +75,24 @@ async def search_resources(
     Scoping is by `user_id` in the SQL itself rather than by filtering after the
     fact, so one customer's search can never reach another's estate even if a
     tenant id were guessed.
+
+    Paging is applied in SQL after the ordering, so the deleted-first ordering
+    that this feature exists for survives across pages. `truncated` is kept for
+    the existing caller and now means "there is a page after this one".
     """
+    limit = max(1, min(limit, MAX_RESULTS))
+    offset = max(0, offset)
+
     term = (query or "").strip().lower()
     if not term:
-        return {"results": [], "total": 0, "latest_scan_id": None, "truncated": False}
+        return _empty(limit, offset)
 
     current_scan = await latest_scan_id(db, user_id, tenant_id)
     if current_scan is None:
         # No completed scan means there is nothing to search yet. That is a
         # different answer to "nothing matched", and the caller needs to be able
         # to tell them apart to prompt for a first scan.
-        return {"results": [], "total": 0, "latest_scan_id": None, "truncated": False}
+        return _empty(limit, offset)
 
     # Collapse a resource's rows across scans into one result: the estate has
     # one api-prod-03, not one per scan it survived. The window it was observed
@@ -102,22 +127,24 @@ async def search_resources(
          {having}
          ORDER BY CASE WHEN MAX(r.scan_id) = :current_scan THEN 1 ELSE 0 END ASC,
                   name ASC
-         LIMIT :limit
+         LIMIT :limit OFFSET :offset
         """,
         {
             "user_id": user_id,
             "tenant_id": tenant_id,
             "term": f"%{term}%",
             "current_scan": current_scan,
-            # One extra row is fetched purely to detect truncation, so the UI
-            # can say "narrow your search" instead of quietly hiding matches.
-            "limit": MAX_RESULTS + 1,
+            # One extra row is fetched purely to detect a further page, so the
+            # UI can offer "load more" instead of quietly hiding matches. It
+            # costs one row rather than a second COUNT over the same predicate.
+            "limit": limit + 1,
+            "offset": offset,
         },
     ) as cursor:
         rows = await cursor.fetchall()
 
-    truncated = len(rows) > MAX_RESULTS
-    rows = rows[:MAX_RESULTS]
+    has_more = len(rows) > limit
+    rows = rows[:limit]
 
     results = [
         _row_to_resource(row, row["last_scan_id"] == current_scan)
@@ -128,5 +155,15 @@ async def search_resources(
         "results": results,
         "total": len(results),
         "latest_scan_id": current_scan,
-        "truncated": truncated,
+        "truncated": has_more,
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            # Deliberately unknown rather than 0: counting every match means a
+            # second full scan of the snapshot table, and a wrong total is worse
+            # than an absent one.
+            "total": None,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        },
     }

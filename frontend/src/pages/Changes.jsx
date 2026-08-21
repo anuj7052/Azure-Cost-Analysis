@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
+import { Link } from 'react-router-dom';
 import {
   GitCompareArrows, PlusCircle, MinusCircle, PencilLine, Loader2, History,
   Clock, AlertTriangle, RadioTower, HelpCircle,
@@ -335,24 +336,20 @@ export default function Changes() {
             </div>
           </div>
 
-          {/* The honest limit. Anyone comparing this to Azure's own change
-              tracking will expect an actor, and finding out later that it was
-              never available is worse than being told now. */}
           <div className="border border-slate-700 bg-slate-950/50 rounded-xl p-3.5">
             <p className="text-xs font-semibold text-slate-200 mb-1.5">
-              What this cannot tell you: who made the change
+              To find out who made a change
             </p>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              This compares snapshots, so it sees the <em>result</em> of a change, never
-              the actor. Two scans a day apart show a VM was resized; they cannot show who
-              resized it, or that it was resized twice and put back. The identity lives in
-              the Azure Activity Log, which is a separate source this page does not read
-              yet.
+              This compares snapshots, so it sees the <em>result</em> of a change, never the
+              actor. Two scans a day apart show a VM was resized; they cannot show who
+              resized it, or that it was resized twice and put back.
             </p>
-            <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
-              Until then, use the timestamps here to narrow the window, then open{' '}
-              <span className="text-slate-300">Azure Portal → Monitor → Activity log</span>{' '}
-              and filter to that resource and period. Azure retains 90 days of activity.
+            <p className="text-[11px] text-slate-400 leading-relaxed mt-2">
+              Open <Link to="/activity" className="text-blue-400 hover:text-blue-300">
+              Activity Explorer</Link> and filter to the resource and time window shown
+              here. That reads the Azure Activity Log, which does record who performed
+              each operation — for roughly the last 90 days.
             </p>
           </div>
 

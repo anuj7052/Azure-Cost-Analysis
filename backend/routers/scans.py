@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth.dependencies import get_current_user
 from core.db import get_db
+from core.pagination import PageParams, page_params
 from models.schemas import ScanRequest, ScanSummary, SearchResponse
 from services.scanner import run_scan
 from services.search import search_resources
@@ -97,6 +98,7 @@ async def search(
     tenant_id: str = Query(...),
     q: str = Query("", description="Resource name, or part of one"),
     include_deleted: bool = Query(True),
+    paging: PageParams = Depends(page_params),
     current_user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
@@ -120,4 +122,6 @@ async def search(
         tenant_id=tenant_id,
         query=q,
         include_deleted=include_deleted,
+        limit=paging.limit,
+        offset=paging.offset,
     )

@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore';
 import { uploadBoq } from '../api/client';
 import { formatAmount } from '../utils/currency';
 import { Quantity } from '../components/Common/Amount';
+import BoqGenerator from '../components/Boq/BoqGenerator';
 import { formatBytes } from '../utils/bytes';
 import { compareBoqToUsage } from '../utils/boqCompare';
 import toast from 'react-hot-toast';
@@ -121,6 +122,10 @@ export default function Boq() {
           charged over and above the budget.
         </p>
       </div>
+
+      {/* Generate a BOQ from what is actually deployed. Sits above upload
+          because most people arrive without an estimate to upload. */}
+      <BoqGenerator />
 
       {/* Upload */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">

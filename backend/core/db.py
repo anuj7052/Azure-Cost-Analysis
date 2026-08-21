@@ -95,6 +95,83 @@ _SCHEMAS = {
             tags            TEXT    NOT NULL DEFAULT '{}'
         )
     """,
+    # Every published price this app has ever read from Microsoft, kept verbatim.
+    #
+    # The Retail Prices API only ever reports *today's* price. It has no history
+    # endpoint, so the question "did Microsoft put this meter up?" is
+    # unanswerable unless we wrote down what it said last time. Once the reading
+    # is lost it cannot be recovered from Microsoft at any later date, which is
+    # why the whole response body is retained rather than the fields we happen to
+    # display today.
+    #
+    # Not scoped to a user: a list price is public and identical for everyone, so
+    # partitioning it per account would multiply identical rows and, worse, leave
+    # each account with a history that only starts when they first looked.
+    "price_snapshots": """
+        CREATE TABLE IF NOT EXISTS price_snapshots (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            meter_id        TEXT    NOT NULL DEFAULT '',
+            sku_id          TEXT    NOT NULL DEFAULT '',
+            product_id      TEXT    NOT NULL DEFAULT '',
+            service_name    TEXT    NOT NULL DEFAULT '',
+            product_name    TEXT    NOT NULL DEFAULT '',
+            sku_name        TEXT    NOT NULL DEFAULT '',
+            arm_sku_name    TEXT    NOT NULL DEFAULT '',
+            meter_name      TEXT    NOT NULL DEFAULT '',
+            arm_region      TEXT    NOT NULL DEFAULT '',
+            currency        TEXT    NOT NULL DEFAULT 'USD',
+            price_type      TEXT    NOT NULL DEFAULT '',
+            unit_of_measure TEXT    NOT NULL DEFAULT '',
+            retail_price    REAL,
+            unit_price      REAL,
+            effective_from  TEXT    NOT NULL DEFAULT '',
+            observed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            raw             TEXT    NOT NULL DEFAULT '{}'
+        )
+    """,
+    # A price that moved, and by how much.
+    #
+    # Derivable from price_snapshots, but only by scanning every reading of a
+    # meter and diffing them. Changes are rare and reads are frequent, so the
+    # rare event is materialised once at write time instead of recomputed on
+    # every view.
+    "price_changes": """
+        CREATE TABLE IF NOT EXISTS price_changes (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            meter_id       TEXT    NOT NULL DEFAULT '',
+            currency       TEXT    NOT NULL DEFAULT 'USD',
+            price_type     TEXT    NOT NULL DEFAULT '',
+            service_name   TEXT    NOT NULL DEFAULT '',
+            meter_name     TEXT    NOT NULL DEFAULT '',
+            arm_region     TEXT    NOT NULL DEFAULT '',
+            old_price      REAL,
+            new_price      REAL,
+            direction      TEXT    NOT NULL DEFAULT 'flat',
+            percent        REAL,
+            previous_at    TEXT    NOT NULL DEFAULT '',
+            changed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            effective_from TEXT    NOT NULL DEFAULT ''
+        )
+    """,
+    # Daily exchange rates.
+    #
+    # Microsoft publishes every Azure price in USD and converts for display only.
+    # So when a rupee unit rate moves and the dollar rate did not, the exchange
+    # rate is the explanation — and proving that needs the rate on the specific
+    # days either side, not a monthly average, because a bill is converted at
+    # rates that move daily.
+    "fx_rates": """
+        CREATE TABLE IF NOT EXISTS fx_rates (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            base     TEXT NOT NULL DEFAULT 'USD',
+            quote    TEXT NOT NULL,
+            rate_day TEXT NOT NULL,
+            rate     REAL NOT NULL,
+            source   TEXT NOT NULL DEFAULT '',
+            fetched_at TEXT DEFAULT (datetime('now')),
+            UNIQUE (base, quote, rate_day)
+        )
+    """,
 }
 
 # Search runs against name_lower across every scan the user owns, so without
@@ -104,6 +181,16 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_scan_resources_scan ON scan_resources (scan_id)",
     "CREATE INDEX IF NOT EXISTS idx_scan_resources_name ON scan_resources (name_lower)",
     "CREATE INDEX IF NOT EXISTS idx_scan_resources_rid ON scan_resources (resource_id)",
+    # Price lookups are always "this meter, this currency, most recent first":
+    # either the latest reading to diff against, or the series to chart.
+    "CREATE INDEX IF NOT EXISTS idx_price_snapshots_meter "
+    "ON price_snapshots (meter_id, currency, price_type, observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_price_snapshots_sku "
+    "ON price_snapshots (arm_sku_name, arm_region, currency)",
+    "CREATE INDEX IF NOT EXISTS idx_price_changes_meter "
+    "ON price_changes (meter_id, currency, changed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_price_changes_recent ON price_changes (changed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_fx_rates_day ON fx_rates (base, quote, rate_day)",
 ]
 
 
@@ -166,6 +253,9 @@ async def init_db():
         await db.execute(_SCHEMAS["user_integrations"])
         await db.execute(_SCHEMAS["scans"])
         await db.execute(_SCHEMAS["scan_resources"])
+        await db.execute(_SCHEMAS["price_snapshots"])
+        await db.execute(_SCHEMAS["price_changes"])
+        await db.execute(_SCHEMAS["fx_rates"])
         for statement in _INDEXES:
             await db.execute(statement)
         await db.commit()

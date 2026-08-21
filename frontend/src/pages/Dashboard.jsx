@@ -6,7 +6,6 @@ import HeroCard from '../components/Cards/HeroCard';
 import PricingSection from '../components/Cards/PricingSection';
 import DetailPanel, { DetailStat } from '../components/Common/DetailPanel';
 import PortalGuide, { COST_GUIDE } from '../components/Common/PortalGuide';
-import SubscriptionFilter from '../components/Common/SubscriptionFilter';
 import AnomalyCard from '../components/Cards/AnomalyCard';
 import CostTrendChart from '../components/Charts/CostTrendChart';
 import ServicePieChart from '../components/Charts/ServicePieChart';
@@ -241,8 +240,6 @@ export default function Dashboard() {
           <p className="text-slate-400 text-sm mt-1">Add a tenant from Settings to get started, or import a cost file.</p>
         </div>
       )}
-
-      <SubscriptionFilter onChange={() => { loadCosts(); loadBandwidth(); }} />
 
       {boqReport && <BoqVarianceBanner report={boqReport} onOpen={() => navigate('/boq')} />}
 

@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, TrendingUp, Settings, AlertTriangle, Server, FolderOpen, Network, ClipboardList, FileCode, GitCompareArrows, ShieldCheck, Trash2, Search } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, Settings, AlertTriangle, Server, FolderOpen, Network, ClipboardList, FileCode, GitCompareArrows, ShieldCheck, Trash2, Search, Activity } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 
 const NAV = [
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/deploy', label: 'BOQ to Code', icon: FileCode },
   { to: '/anomalies', label: 'Anomalies', icon: AlertTriangle },
   { to: '/changes', label: 'Change Tracking', icon: GitCompareArrows },
+  { to: '/activity', label: 'Activity Explorer', icon: Activity },
   { to: '/orphaned', label: 'Orphaned Resources', icon: Trash2 },
   { to: '/resource-groups', label: 'Resource Groups', icon: FolderOpen },
   { to: '/settings', label: 'Settings', icon: Settings },

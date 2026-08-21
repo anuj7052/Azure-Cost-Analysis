@@ -3,6 +3,8 @@ from typing import Optional, List
 import json
 import re
 
+from core.pagination import PageInfo
+
 
 # ── Accounts / admin ───────────────────────────────────────────────────────
 
@@ -316,6 +318,122 @@ class SearchResponse(BaseModel):
     # "nothing matched" and needs a different prompt in the UI.
     latest_scan_id: Optional[int] = None
     truncated: bool = False
+    # Additive: existing callers ignore it, paging callers use it. Optional so
+    # the field can appear without breaking any current consumer.
+    page: Optional[PageInfo] = None
+
+
+# ── Microsoft published (retail) prices ────────────────────────────────────
+
+class SavingsPlanPrice(BaseModel):
+    term: Optional[str] = None
+    unit_price: Optional[float] = None
+
+
+class RetailPrice(BaseModel):
+    # Microsoft's stable identity for a meter. Names get reworded and regions
+    # renamed, so price history keys on this rather than on anything readable.
+    meter_id: str = ""
+    sku_id: str = ""
+    product_id: str = ""
+    meter_name: str = ""
+    sku_name: str = ""
+    arm_sku_name: str = ""
+    product_name: str = ""
+    service_name: str = ""
+    service_family: str = ""
+    region: str = ""
+    location: str = ""
+    unit_of_measure: str = ""
+    retail_price: Optional[float] = None
+    unit_price: Optional[float] = None
+    currency: str = "USD"
+    price_type: str = ""
+    reservation_term: Optional[str] = None
+    savings_plans: List[SavingsPlanPrice] = []
+    effective_from: Optional[str] = None
+
+
+class RetailPriceResponse(BaseModel):
+    prices: List[RetailPrice] = []
+    count: int = 0
+    # Azure lists several meters per size (Windows/Linux, spot/standard), so the
+    # cheapest is surfaced with its meter name rather than presented as "the"
+    # price for that size.
+    cheapest: Optional[RetailPrice] = None
+    currency: str = "USD"
+    # Echoed so the caller can reproduce the query against Microsoft's docs.
+    odata_filter: str = ""
+    # True for any non-USD currency: Microsoft prices in USD and converts for
+    # reference only, so those figures are estimates.
+    is_reference_currency: bool = False
+
+
+# ── BOQ generated from a live subscription ─────────────────────────────────
+
+class GeneratedBoqItem(BaseModel):
+    service: str
+    spec: str
+    region: str
+    quantity: int
+    # None when Cost Management reported nothing for any resource in the group.
+    # Not the same as free — the query may simply have been throttled.
+    unit_monthly_cost: Optional[float] = None
+    monthly_cost: float = 0.0
+    resource_groups: List[str] = []
+    examples: List[str] = []
+    priced_quantity: int = 0
+
+
+class GeneratedBoqResponse(BaseModel):
+    items: List[GeneratedBoqItem] = []
+    currency: str = "USD"
+    total_monthly: float = 0.0
+    # A projection of current spend, not a commitment.
+    total_yearly: float = 0.0
+    resource_count: int = 0
+    line_count: int = 0
+    # How many resources carried no billed cost, so the total can be read
+    # honestly rather than as complete.
+    unpriced_count: int = 0
+
+
+# ── Activity log (who changed what) ────────────────────────────────────────
+
+class ActivityEvent(BaseModel):
+    id: str = ""
+    at: str = ""
+    # A user principal name for a person, a GUID for a service principal.
+    # "an application did this" is a different answer to "we do not know".
+    caller: str = "Unknown"
+    operation: str = ""
+    summary: str = ""
+    status: str = ""
+    succeeded: bool = True
+    resource_id: str = ""
+    resource_group: str = ""
+    subscription_id: str = ""
+    level: str = ""
+    is_write: bool = False
+
+
+class ActivityCount(BaseModel):
+    caller: Optional[str] = None
+    operation: Optional[str] = None
+    count: int = 0
+
+
+class ActivityResponse(BaseModel):
+    events: List[ActivityEvent] = []
+    total: int = 0
+    failed: int = 0
+    callers: List[ActivityCount] = []
+    operations: List[ActivityCount] = []
+    # Azure keeps roughly 90 days. Older changes have an actor that no longer
+    # exists anywhere, which the UI has to say rather than show an empty list.
+    retention_days: int = 90
+    window_days: int = 7
+    errors: List[dict] = []
 
 
 # ── Change tracking ────────────────────────────────────────────────────────

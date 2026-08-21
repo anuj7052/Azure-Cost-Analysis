@@ -450,6 +450,75 @@ async def query_usage(
     return all_records
 
 
+async def query_daily_usage(
+    token: str,
+    subscription_id: str,
+    from_date: str,
+    to_date: str,
+    filters: Dict[str, str] | None = None,
+    group_by: List[str] | None = None,
+    timeout: int = 90,
+) -> List[Dict[str, Any]]:
+    """
+    One row per day for a narrowly filtered slice of usage.
+
+    The monthly rows elsewhere answer "what did this cost"; only a daily series
+    answers "when was it running". A month of 738 hours against a month of 720
+    is a number nobody can act on — the same total spread as 24 hours every day,
+    or 24 hours on twenty days and nothing on the rest, are completely different
+    situations with completely different fixes.
+
+    Filtered server-side rather than fetched and narrowed here. A daily,
+    unfiltered query over a large subscription returns tens of thousands of rows
+    to answer a question about one meter, and Cost Management throttles hard
+    enough that the waste is felt.
+    """
+    scope = f"/subscriptions/{subscription_id}"
+    url = f"{MGMT_BASE}{scope}/providers/Microsoft.CostManagement/query?api-version={COST_API_VERSION}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    clauses = [
+        {"dimensions": {"name": name, "operator": "In", "values": [value]}}
+        for name, value in (filters or {}).items()
+        if value
+    ]
+
+    dataset: Dict[str, Any] = {
+        "granularity": "Daily",
+        "aggregation": {
+            "totalCost": {"name": "PreTaxCost", "function": "Sum"},
+            "usageQuantity": {"name": "UsageQuantity", "function": "Sum"},
+        },
+        "grouping": [
+            {"type": "Dimension", "name": dim}
+            for dim in (group_by or ["ServiceName", "Meter"])
+        ],
+    }
+    if clauses:
+        # Cost Management rejects a one-element "and", so a single filter is
+        # passed on its own.
+        dataset["filter"] = clauses[0] if len(clauses) == 1 else {"and": clauses}
+
+    api_from, api_to = _explicit_date_range(from_date, to_date)
+    body = {
+        "type": "ActualCost",
+        "timeframe": "Custom",
+        "timePeriod": {"from": api_from, "to": api_to},
+        "dataset": dataset,
+    }
+
+    records: List[Dict[str, Any]] = []
+    for page in await _run_paged_query(url, headers, body, timeout=timeout):
+        for rec in _columnar_to_records(page):
+            rec["SubscriptionId"] = rec.get("SubscriptionId") or subscription_id
+            records.append(rec)
+
+    return records
+
+
 async def query_active_resources(
     token: str,
     subscription_ids: List[str],

@@ -11,7 +11,6 @@ import { useChartTheme } from '../store/useTheme';
 import HeroCard from '../components/Cards/HeroCard';
 import DetailPanel, { DetailStat } from '../components/Common/DetailPanel';
 import PortalGuide, { BANDWIDTH_GUIDE } from '../components/Common/PortalGuide';
-import SubscriptionFilter from '../components/Common/SubscriptionFilter';
 import { formatAmount, formatAmountFull, formatRate } from '../utils/currency';
 import { formatQuantity } from '../utils/exact';
 import { Quantity } from '../components/Common/Amount';
@@ -105,8 +104,6 @@ export default function Bandwidth() {
           </p>
         </div>
       )}
-
-      <SubscriptionFilter onChange={loadBandwidth} />
 
       {!loading && bw && total === 0 && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center">

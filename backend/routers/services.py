@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 import logging
 import aiosqlite
 from auth.dependencies import get_current_user
+from services.azure_errors import azure_error
 from services.token_resolver import resolve_tenant_token
 from services.cost_client import query_active_resources, query_costs
 from services.analysis import resource_cost_index
@@ -62,7 +63,7 @@ async def get_active_services(
     try:
         resources = await query_active_resources(token, subscription_ids)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Resource Graph query failed: {exc}")
+        raise azure_error(exc, "your resources")
 
     cost_records: List[Dict[str, Any]] = []
     for sub_id in subscription_ids:
