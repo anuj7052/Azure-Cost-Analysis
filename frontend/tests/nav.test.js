@@ -65,19 +65,27 @@ describe('admin', () => {
 });
 
 describe('sectionForPath', () => {
-  it('puts the dashboard in Cost', () => {
-    expect(sectionForPath('/').key).toBe('cost');
+  it('puts the dashboard in Command', () => {
+    expect(sectionForPath('/').key).toBe('command');
   });
 
-  it('does not sweep every page into Cost because "/" is a prefix', () => {
+  it('gives Cost its own overview, separate from the dashboard', () => {
+    // Cost lost "/" to Command in the section split, so it needs a hub of its
+    // own — otherwise the section has no landing page and the sidebar group
+    // cannot be opened without picking a specific report.
+    expect(sectionForPath('/cost').key).toBe('cost');
+    expect(sectionForPath('/trends').key).toBe('cost');
+  });
+
+  it('does not sweep every page into Command because "/" is a prefix', () => {
     // The bug this guards against: a naive startsWith test matches "/" against
-    // every path, so the Cost section would open on every page in the app.
+    // every path, so the Command section would open on every page in the app.
     expect(sectionForPath('/defender').key).toBe('security');
     expect(sectionForPath('/orphaned').key).toBe('estate');
     expect(sectionForPath('/settings').key).toBe('account');
   });
 
-  it('resolves each security page to Access & Security', () => {
+  it('resolves each security page to Security', () => {
     for (const path of ['/access-optimization', '/role-assignments', '/advisor', '/defender', '/policy']) {
       expect(sectionForPath(path).key).toBe('security');
     }
@@ -91,6 +99,13 @@ describe('sectionForPath', () => {
     // "/security" and "/security-overview" style clashes must not resolve to
     // whichever happened to be declared first.
     expect(sectionForPath('/security').key).toBe('security');
+  });
+
+  it('does not let /cost swallow /compute or /compare', () => {
+    // Prefix-matching hazard introduced by adding "/cost": these three share a
+    // leading "/co" and only a segment-aware match keeps them apart.
+    expect(sectionForPath('/compute').key).toBe('estate');
+    expect(sectionForPath('/compare').key).toBe('cost');
   });
 
   it('returns nothing for a path the app does not serve', () => {
