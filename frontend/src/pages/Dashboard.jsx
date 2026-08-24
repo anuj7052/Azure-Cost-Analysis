@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { IndianRupee, TrendingUp, TrendingDown, AlertTriangle, PiggyBank, BarChart2, Flame, Network, ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
+import { IndianRupee, TrendingUp, TrendingDown, AlertTriangle, PiggyBank, BarChart2, Flame, Network, ArrowUpFromLine, ArrowDownToLine, CalendarDays } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import HeroCard from '../components/Cards/HeroCard';
 import PricingSection from '../components/Cards/PricingSection';
@@ -37,9 +37,16 @@ export default function Dashboard() {
   }, [imported, selectedTenantId, selectedSubscriptionIds.join(','), dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const latest        = costData?.months?.at(-1);
+  const previous      = costData?.months?.at(-2);
   const mom           = costData?.mom_change_pct;
-  const anomalyCount  = costData?.anomalies?.length || 0;
-  const savingsTotal  = costData?.savings?.reduce((acc, s) => acc + s.saved_amount, 0) || 0;
+  // Counts stay null until something has actually been loaded. "We have not
+  // looked" and "we looked and found none" are different answers, and a
+  // dashboard that renders both as 0 is quietly telling you the estate is
+  // clean when it has never been examined.
+  const anomalyCount  = costData ? (costData.anomalies?.length || 0) : null;
+  const savingsTotal  = costData
+    ? (costData.savings?.reduce((acc, s) => acc + s.saved_amount, 0) || 0)
+    : null;
   const avgMonthly    = costData?.months?.length
     ? costData.months.reduce((s, m) => s + m.total_cost, 0) / costData.months.length : null;
   const dailyBurn     = latest?.total_cost ? latest.total_cost / 30 : null;
@@ -60,6 +67,13 @@ export default function Dashboard() {
   const periodShort   = isCustom ? 'period' : `${months}M`;
   const periodLong    = isCustom ? `${fromDate} → ${toDate}` : `last ${months} months`;
 
+  // Whether the newest month in the data is the one we are currently living
+  // through. If it is, it is only partially billed, so it will always look
+  // cheap beside a completed month and the month-over-month figure is
+  // comparing a part-month to a whole one.
+  const currentMonthKey = new Date().toISOString().slice(0, 7);
+  const latestIsPartial = Boolean(latest) && latest.month.startsWith(currentMonthKey);
+
   /** Every hero tile declares how its drill-down renders. */
   const HEROES = useMemo(() => ({
     total: {
@@ -79,21 +93,35 @@ export default function Dashboard() {
       ],
     },
     month: {
-      title: 'This Month',
-      subtitle: mom != null ? (mom > 0 ? 'vs last month ↑' : 'vs last month ↓') : 'vs previous month',
-      icon: mom != null && mom > 0 ? TrendingUp : TrendingDown, accent: 'violet',
+      // Named for what it is. `months.at(-1)` is the newest month in the
+      // selected range, which is only "this month" when the range happens to
+      // run to today and Cost Management has already reported it.
+      title: 'Latest Month',
+      subtitle: !latest
+        ? 'Not loaded yet'
+        : previous
+          ? `${latest.month} vs ${previous.month}`
+          : `${latest.month} · nothing earlier to compare`,
+      // A neutral icon when there is no comparison. Falling back to
+      // TrendingDown made an empty dashboard show a downward arrow, which
+      // reads as "your costs went down" when nothing has been measured at all.
+      icon: mom == null ? CalendarDays : (mom > 0 ? TrendingUp : TrendingDown),
+      accent: 'violet',
       value: full(latest?.total_cost),
       exact: exact(latest?.total_cost),
       momChange: mom,
-      panelTitle: 'Current Month Spend',
+      footnote: latestIsPartial
+        ? 'Still being billed — a partial month always looks low beside a full one'
+        : undefined,
+      panelTitle: 'Latest Month Spend',
       rows: Object.entries(latest?.by_service || {})
         .sort((a, b) => b[1] - a[1])
         .map(([k, v]) => ({ label: k, value: fmt(v) })),
       stats: [
         { label: 'Month', value: latest?.month ?? '—' },
         { label: 'Total', value: full(latest?.total_cost) },
-        { label: 'MoM change', value: mom == null ? '—' : `${mom.toFixed(1)}%` },
-        { label: 'Daily burn', value: full(dailyBurn) },
+        { label: 'vs previous month', value: mom == null ? '—' : `${mom > 0 ? '+' : ''}${mom.toFixed(1)}%` },
+        { label: 'Compared against', value: previous?.month ?? '—' },
       ],
     },
     burn: {
@@ -134,15 +162,17 @@ export default function Dashboard() {
       title: 'Cost Spikes',
       subtitle: 'Services with >20% increase',
       icon: AlertTriangle, accent: 'amber',
-      value: anomalyCount,
-      footnote: 'Click to inspect each spike',
+      value: anomalyCount ?? '—',
+      footnote: anomalyCount == null
+        ? 'Nothing loaded yet'
+        : 'Click to inspect each spike',
       panelTitle: 'Detected Cost Spikes',
       rows: (costData?.anomalies || []).map(a => ({
         label: `${a.service} · ${a.month}`,
         value: `${a.pct_change > 0 ? '▲' : '▼'} ${Math.abs(a.pct_change).toFixed(1)}%`,
       })),
       stats: [
-        { label: 'Spikes found', value: anomalyCount },
+        { label: 'Spikes found', value: anomalyCount ?? '—' },
         { label: 'Threshold', value: '> 20% MoM' },
       ],
     },
@@ -162,7 +192,7 @@ export default function Dashboard() {
         { label: 'Opportunities', value: costData?.savings?.length ?? 0 },
       ],
     },
-  }), [costData, latest, mom, avgMonthly, dailyBurn, anomalyCount, savingsTotal, months, currency, periodShort, isCustom]);
+  }), [costData, latest, previous, latestIsPartial, mom, avgMonthly, dailyBurn, anomalyCount, savingsTotal, months, currency, periodShort, isCustom]);
 
   /** Drill-downs for the bandwidth tiles (rendered in their own section). */
   const BW_HEROES = useMemo(() => {
