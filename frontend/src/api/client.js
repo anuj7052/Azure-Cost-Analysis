@@ -8,6 +8,25 @@ const api = axios.create({
   timeout: 60000,
 });
 
+/**
+ * Routes that fan out across every selected subscription and therefore wait on
+ * Azure, not on us.
+ *
+ * The server caps those reads at its own budget (DEFAULT_GATHER_BUDGET, 100s)
+ * and answers with partial data plus a named gap once it expires. The client
+ * must therefore wait *longer* than the server, or it aborts a request that was
+ * about to return a perfectly good answer — which is exactly what produced
+ * "timeout of 60000ms exceeded" on accounts with a dozen subscriptions.
+ *
+ * 60s is kept for everything else: those routes only touch our own database, so
+ * a minute of silence really is a fault.
+ */
+const SLOW_ROUTES = [
+  '/costs', '/bandwidth', '/orphaned', '/scans', '/changes',
+  '/services', '/activity', '/subscriptions', '/security',
+];
+const SLOW_TIMEOUT = 120000;
+
 // Token cache — reuse until 2 minutes before expiry
 let _cachedToken = null;
 let _tokenExpiry = 0;
@@ -127,6 +146,13 @@ const GESTURE_ROUTES = ['/upload', '/boq', '/tenants', '/prices'];
 // Attach Bearer token to every request
 api.interceptors.request.use(async (config) => {
   const url = config.url || '';
+
+  // Give Azure-backed fan-out routes the longer budget, unless the call site
+  // already asked for something specific.
+  if (config.timeout === 60000 && SLOW_ROUTES.some((r) => url.startsWith(r))) {
+    config.timeout = SLOW_TIMEOUT;
+  }
+
   const needsAzure = AZURE_ROUTES.some((r) => url.startsWith(r));
   const localRoute = !needsAzure && LOCAL_ROUTES.some((r) => url.startsWith(r));
   const userInitiated = needsAzure || GESTURE_ROUTES.some((r) => url.startsWith(r));
@@ -212,6 +238,18 @@ api.interceptors.response.use(
 
     if (err.response?.status === 429) alertRateLimited(err);
 
+    // Axios reports an aborted request as "timeout of 60000ms exceeded", which
+    // names a number the user never chose and gives them nothing to do about
+    // it. Say what was being read and what actually shortens it.
+    if (!err.response && (err.code === 'ECONNABORTED' || /timeout/i.test(err.message || ''))) {
+      const seconds = Math.round((err.config?.timeout || 0) / 1000) || null;
+      err.isTimeout = true;
+      err.message = seconds
+        ? `Azure did not respond within ${seconds}s. This usually means too many subscriptions or too wide a date range — narrow either one and retry.`
+        : 'Azure did not respond in time. Narrow the date range or select fewer subscriptions, then retry.';
+      return Promise.reject(err);
+    }
+
     // Carry the server's explanation onto `err.message`.
     //
     // Every failure is now wrapped in `{ error: { message } }`, but call sites
@@ -278,6 +316,70 @@ export const fetchCostRows = (body) =>
 
 export const fetchRgCosts = (body) =>
   api.post('/costs/rg', body).then(r => r.data);
+
+/**
+ * Reserved Instance / Savings Plan coverage, and what moved between months.
+ *
+ * Asked separately from the main rows query because Cost Management accepts at
+ * most three grouping dimensions and that query already spends all three.
+ */
+export const fetchPricingModel = (body) =>
+  api.post('/costs/pricing-model', body).then(r => r.data);
+
+/**
+ * Which public IPs and resource groups produced the data-transfer charge.
+ *
+ * Joins the Resource Manager address inventory to Cost Management charges. The
+ * join is only exact where a charged resource group holds one public IP, so
+ * every row carries its own confidence rather than being presented flat.
+ */
+export const fetchBandwidthTraffic = (body) =>
+  api.post('/bandwidth/traffic', body).then(r => r.data);
+
+/**
+ * One resource's transfer cost, day by day.
+ *
+ * Asked per resource rather than for everything at once: a daily, unfiltered
+ * query over a large subscription returns tens of thousands of rows to answer a
+ * question about one machine, and Cost Management throttles hard enough that
+ * the waste is felt by the next request.
+ */
+export const fetchResourceDaily = (body) =>
+  api.post('/bandwidth/resource-daily', body).then(r => r.data);
+
+/*
+ * Access & Security.
+ *
+ * All four POST endpoints fan out across every selected subscription and read a
+ * different Azure provider, so they are slow by nature and are listed in
+ * SLOW_ROUTES. Each also captures a snapshot as it reads — Advisor, Defender and
+ * Policy report only the present tense, so the previous reading is the only
+ * record that a comparison can ever be made against.
+ */
+
+/** Every principal, and everything it can reach. */
+export const fetchRoleAssignments = (body) =>
+  api.post('/security/role-assignments', body).then(r => r.data);
+
+/** Grants that look unused, stale, over-privileged, over-scoped, sprawling or redundant. */
+export const fetchAccessReview = (body) =>
+  api.post('/security/access-review', body).then(r => r.data);
+
+/** Advisor recommendations across the estate, and what changed since last time. */
+export const fetchAdvisor = (body) =>
+  api.post('/security/advisor', body).then(r => r.data);
+
+/** Defender assessments, alerts and secure score. */
+export const fetchDefender = (body) =>
+  api.post('/security/defender', body).then(r => r.data);
+
+/** Policy compliance, assignments and exemptions. */
+export const fetchPolicy = (body) =>
+  api.post('/security/policy', body).then(r => r.data);
+
+/** Every stored reading of one source, for the trend line. */
+export const fetchPostureSnapshots = (params) =>
+  api.get('/security/snapshots', { params }).then(r => r.data);
 
 export const fetchDailyCosts = (body) =>
   api.post('/costs/daily', body).then(r => r.data);
@@ -395,6 +497,16 @@ export const searchResources = (tenantId, q, includeDeleted = true) =>
 /** Resources that are billed but attached to nothing. */
 export const fetchOrphaned = (body) =>
   api.post('/orphaned', body).then(r => r.data);
+
+/**
+ * The VM fleet with a right-sizing verdict per machine.
+ *
+ * Joins Resource Graph, Cost Management, Azure Monitor and Retail Prices, so
+ * it is slower than most calls and the response carries a `sources` block
+ * saying which of the four actually answered.
+ */
+export const fetchCompute = (body) =>
+  api.post('/compute', body).then(r => r.data);
 
 export const fetchServices = (tenantId, subscriptionIds, months = 1, range = {}) =>
   api.get('/services', {

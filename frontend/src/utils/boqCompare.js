@@ -252,6 +252,13 @@ function compareLines(budgetLines, usageRows, span) {
   const matchable = lines.filter(l => l.hasSku);
   const unmatched = new Map();
 
+  // One record per usage row saying which estimate line claimed it. The
+  // category table can only ever be read by category; this keeps the same
+  // verdict attached to the row itself so the identical numbers can be
+  // regrouped by resource group, service or region without re-running — and
+  // therefore without any risk of a second grouping disagreeing with the first.
+  const attributions = [];
+
   for (const row of usageRows) {
     const keys = skuKeys(`${row.meter || ''} ${row.meter_subcategory || ''} ${row.service || ''}`);
     let best = null;
@@ -264,14 +271,16 @@ function compareLines(budgetLines, usageRows, span) {
     const cost = row.cost / span;
     const bytes = rowBytes(row) / span;
     const id = meterKey(row);
-    if (best && bestScore >= 100) {
-      best.actual += cost;
-      const existing = best.matches.find(m => m.id === id);
+    const claimedBy = best && bestScore >= 100 ? best : null;
+
+    if (claimedBy) {
+      claimedBy.actual += cost;
+      const existing = claimedBy.matches.find(m => m.id === id);
       if (existing) { existing.cost += cost; existing.bytes += bytes; addPart(existing, row); }
       else {
         const entry = { id, ...meterIdentity(row), cost, bytes, parts: [] };
         addPart(entry, row);
-        best.matches.push(entry);
+        claimedBy.matches.push(entry);
       }
     } else if (cost > 0) {
       // Charged, but no estimate line claims this SKU.
@@ -282,9 +291,22 @@ function compareLines(budgetLines, usageRows, span) {
       addPart(entry, row);
       unmatched.set(id, entry);
     }
+
+    attributions.push({
+      row,
+      monthlyCost: cost,
+      bytes,
+      matched: Boolean(claimedBy),
+      boqLine: claimedBy ? (claimedBy.custom_name || claimedBy.service_type || '') : '',
+      boqName: claimedBy ? (claimedBy.boq || '') : '',
+    });
   }
 
-  const shape = ({ keys, ...line }) => {
+  // `keys` is the internal SKU match set; it is dropped rather than shipped to
+  // the UI, which has no use for it.
+  const shape = (source) => {
+    const line = { ...source };
+    delete line.keys;
     const variance = line.actual - line.monthly_cost;
     const billedCount = line.matches.length;
     return {
@@ -320,6 +342,7 @@ function compareLines(budgetLines, usageRows, span) {
     pooledVariance: round(unmatchedTotal - pooledBudget),
     unmatched: unmatchedList,
     unmatchedTotal,
+    attributions,
   };
 }
 
@@ -406,9 +429,16 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR') {
     const spent = round((a?.amount || 0) / span);
     const variance = round(spent - budgeted);
     const detail = compareLines(b?.lines || [], a?.rows || [], span);
+    const label = b?.label || a?.label || OTHER.label;
+    // Where a category budgets things that cannot be split per resource
+    // (a backup policy, a support retainer), leftover charges are covered by
+    // that pooled budget rather than being unbudgeted. The row-level verdict
+    // has to agree with that, or the breakdown totals would contradict the
+    // headline "Not in your BOQ" figure sitting directly above them.
+    const pooled = detail.pooledLines.length > 0;
     return {
       key,
-      label: b?.label || a?.label || OTHER.label,
+      label,
       budgeted,
       actual: spent,
       variance,
@@ -429,6 +459,18 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR') {
       // simply can't be split per resource, the leftover is covered by that
       // pooled budget instead, so it isn't counted as "not in the BOQ".
       notInBoqTotal: detail.pooledLines.length ? 0 : detail.unmatchedTotal,
+      // Every usage row in this category, carrying the verdict the category
+      // table reached, so the same money can be regrouped by any dimension.
+      attributions: detail.attributions.map(item => ({
+        ...item.row,
+        categoryKey: key,
+        category: label,
+        monthlyCost: item.monthlyCost,
+        bytes: item.bytes,
+        boqLine: item.boqLine,
+        boqName: item.boqName,
+        coverage: item.matched ? 'line' : pooled ? 'pooled' : 'none',
+      })),
       traffic: trafficSummary(a?.rows || [], span),
       actualServices: [...(a?.services || new Map())]
         .map(([name, cost]) => ({ name, cost: round(cost / span) }))
@@ -450,6 +492,8 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR') {
     currency,
     months: span,
     categories,
+    // Flat, row-level view of exactly the same money the categories describe.
+    attributions: categories.flatMap(c => c.attributions),
     budgetTotal: round(budgetTotal),
     actualTotal: monthlyActual,
     variance: round(monthlyActual - budgetTotal),

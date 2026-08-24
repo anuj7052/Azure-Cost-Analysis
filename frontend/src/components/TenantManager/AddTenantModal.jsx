@@ -27,8 +27,8 @@ export default function AddTenantModal({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl animate-scale-in">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-semibold text-white">Add Service Principal Tenant</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition">

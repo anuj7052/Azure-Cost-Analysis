@@ -4,6 +4,7 @@ import { uploadBoq } from '../api/client';
 import { formatAmount } from '../utils/currency';
 import { Quantity } from '../components/Common/Amount';
 import BoqGenerator from '../components/Boq/BoqGenerator';
+import BoqBreakdown from '../components/Boq/BoqBreakdown';
 import { formatBytes } from '../utils/bytes';
 import { compareBoqToUsage } from '../utils/boqCompare';
 import toast from 'react-hot-toast';
@@ -482,6 +483,9 @@ export default function Boq() {
               {' '}Click any row to see the underlying lines.
             </p>
           </div>
+
+          {/* Same money, any slice: resource group, service, resource, region. */}
+          <BoqBreakdown report={report} currency={currency} />
         </>
       )}
     </div>

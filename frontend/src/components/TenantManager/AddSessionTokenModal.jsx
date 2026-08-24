@@ -38,8 +38,8 @@ export default function AddSessionTokenModal({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-lg shadow-2xl animate-scale-in">
         <div className="flex items-center justify-between mb-5">
           <div>
             <h2 className="text-lg font-semibold text-white">Sign in with a session token</h2>

@@ -58,7 +58,7 @@ async def test_findings_are_joined_to_real_billed_cost(monkeypatch):
             }]
         return []
 
-    monkeypatch.setattr(orphaned_module, "_run_graph_query", fake_query)
+    monkeypatch.setattr(orphaned_module, "run_graph_query", fake_query)
 
     # Cost Management lower-cases resource ids inconsistently against Resource
     # Graph, so the join must be case-insensitive or every price is lost.
@@ -96,7 +96,7 @@ async def test_one_failing_rule_does_not_lose_the_other_findings(monkeypatch):
             }]
         return []
 
-    monkeypatch.setattr(orphaned_module, "_run_graph_query", flaky)
+    monkeypatch.setattr(orphaned_module, "run_graph_query", flaky)
 
     result = await find_orphaned_resources("tok", ["s1"], {})
 
@@ -124,7 +124,7 @@ async def test_missing_price_is_not_reported_as_zero(monkeypatch):
             }]
         return []
 
-    monkeypatch.setattr(orphaned_module, "_run_graph_query", one_disk)
+    monkeypatch.setattr(orphaned_module, "run_graph_query", one_disk)
 
     result = await find_orphaned_resources("tok", ["s1"], {})
     disks = next(c for c in result["categories"] if c["key"] == "unattached_disks")
@@ -144,7 +144,7 @@ async def test_expensive_findings_are_listed_first(monkeypatch):
             ]
         return []
 
-    monkeypatch.setattr(orphaned_module, "_run_graph_query", many)
+    monkeypatch.setattr(orphaned_module, "run_graph_query", many)
 
     result = await find_orphaned_resources(
         "tok", ["s1"], {"/s/cheap": {"cost": 5.0}, "/s/pricey": {"cost": 900.0}}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, Fragment } from 'react';
 import {
   ArrowDownToLine, ArrowUpFromLine, Gauge, Network, Repeat, Layers,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, Info,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -11,8 +11,13 @@ import { useChartTheme } from '../store/useTheme';
 import HeroCard from '../components/Cards/HeroCard';
 import DetailPanel, { DetailStat } from '../components/Common/DetailPanel';
 import PortalGuide, { BANDWIDTH_GUIDE } from '../components/Common/PortalGuide';
+import UnitRatePanel from '../components/Common/UnitRatePanel';
+import BandwidthTrackPanel from '../components/Common/BandwidthTrackPanel';
+import ResourceCostTable from '../components/Common/ResourceCostTable';
+import { useBandwidthTraffic, resourcesForMeter } from '../hooks/useBandwidthTraffic';
 import { formatAmount, formatAmountFull, formatRate } from '../utils/currency';
 import { formatQuantity } from '../utils/exact';
+import { subscriptionLabel, subscriptionNameMap } from '../utils/identity';
 import { Quantity } from '../components/Common/Amount';
 import { GB, formatBytes, formatGB, formatTB, pctOf, splitBytes, toGB } from '../utils/bytes';
 
@@ -35,6 +40,8 @@ export default function Bandwidth() {
     : `last ${months} months`;
 
   const [detail, setDetail] = useState(null); // 'total' | 'egress' | 'ingress' | 'intra' | 'cost' | 'rate'
+  // The meter whose unit rate is being explained, shaped for UnitRatePanel.
+  const [rateItem, setRateItem] = useState(null);
   const t = useChartTheme();
 
   useEffect(() => {
@@ -44,7 +51,7 @@ export default function Bandwidth() {
   const currency = bw?.currency || 'INR';
   const money    = (v) => formatAmount(v, currency);
   const total    = bw?.total_bytes || 0;
-  const subMap   = Object.fromEntries((subscriptions || []).map(s => [s.subscription_id, s.display_name]));
+  const subMap   = subscriptionNameMap(subscriptions || []);
 
   const chartData = useMemo(() => (bw?.months || []).map(m => ({
     month: m.month,
@@ -57,6 +64,42 @@ export default function Bandwidth() {
 
   const metersFor = (direction) =>
     (bw?.meters || []).filter(m => direction === 'total' || m.direction === direction);
+
+  /**
+   * Reshape a bandwidth meter into what UnitRatePanel asks for.
+   *
+   * The panel was written against cost-comparison rows, but the question it
+   * answers — is this rate what Microsoft publishes? — is the same one a
+   * bandwidth meter raises, so it is reused rather than reimplemented.
+   *
+   * Two fields need care. `region` comes from the meter's own locations and is
+   * only sent when there is exactly one: a meter spanning several regions has no
+   * single published price, and guessing one would produce a confident
+   * comparison against the wrong number. `prev_rate` is taken from the previous
+   * month only when this meter actually has two months of history.
+   */
+  const openRate = (meter) => {
+    const history = meter.months || [];
+    const previous = history.length >= 2 ? history[history.length - 2] : null;
+    const previousRate = previous?.quantity ? previous.cost / previous.quantity : null;
+    const onlyRegion = meter.regions?.length === 1 ? meter.regions[0] : '';
+
+    setRateItem({
+      key: meter.meter,
+      label: meter.meter,
+      service: meter.category || 'Bandwidth',
+      meter: meter.meter,
+      sku: '',
+      region: onlyRegion,
+      unit: meter.unit || '',
+      curr_rate: meter.unit_rate ?? null,
+      prev_rate: previousRate,
+    });
+  };
+
+  const rateMonths = bw?.months || [];
+  const ratePrevMonth = rateMonths.length >= 2 ? rateMonths[rateMonths.length - 2].month : '';
+  const rateCurrMonth = rateMonths.length ? rateMonths[rateMonths.length - 1].month : '';
 
   const hero = (key, extra) => {
     const bytes = key === 'total' ? total : bw?.[`${key}_bytes`];
@@ -232,8 +275,11 @@ export default function Bandwidth() {
         <p className="text-xs text-slate-500 mb-4">
           Exact size and amount per Azure meter — click any row for the full breakdown
         </p>
-        <MeterTable meters={bw?.meters} loading={loading} currency={currency} total={total} subMap={subMap} />
+        <MeterTable meters={bw?.meters} loading={loading} currency={currency} total={total} subMap={subMap} onRate={openRate} />
       </div>
+
+      {/* ── Where the charge came from ───────────────────────────────── */}
+      <BandwidthTrackPanel currency={currency} />
 
       <PortalGuide {...BANDWIDTH_GUIDE} />
 
@@ -319,6 +365,7 @@ export default function Bandwidth() {
                 currency={currency}
                 total={total}
                 subMap={subMap}
+                onRate={openRate}
                 compact
               />
             </section>
@@ -329,7 +376,7 @@ export default function Bandwidth() {
                 <div className="space-y-2">
                   {bw.by_subscription.map(s => (
                     <div key={s.subscription_id} className="flex items-center justify-between gap-3 bg-slate-800/40 rounded-xl px-4 py-3">
-                      <span className="text-sm text-slate-300 truncate">{subMap[s.subscription_id] || s.subscription_id}</span>
+                      <span className="text-sm text-slate-300 truncate" title={s.subscription_id}>{subscriptionLabel(s.subscription_id, subMap)}</span>
                       <span className="text-sm text-white font-medium shrink-0">
                         {formatBytes(s.bytes)} · {money(s.cost)}
                       </span>
@@ -341,6 +388,16 @@ export default function Bandwidth() {
           </>
         )}
       </DetailPanel>
+
+      {/* The same rate explanation the cost comparison uses — a bandwidth rate
+          raises the identical question, so it gets the identical answer. */}
+      <UnitRatePanel
+        item={rateItem}
+        currency={currency}
+        prevMonth={ratePrevMonth}
+        currMonth={rateCurrMonth}
+        onClose={() => setRateItem(null)}
+      />
     </div>
   );
 }
@@ -370,7 +427,7 @@ function SubscriptionBandwidthTable({ rows, loading, currency, total, subMap }) 
           {rows.map(s => (
             <tr key={s.subscription_id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
               <td className="py-2.5 text-slate-200 max-w-[240px]">
-                <span className="block truncate">{subMap[s.subscription_id] || s.subscription_id}</span>
+                <span className="block truncate" title={s.subscription_id}>{subscriptionLabel(s.subscription_id, subMap)}</span>
                 {s.top_meter && (
                   <span className="block text-[11px] text-slate-500 truncate">
                     top meter: {s.top_meter}
@@ -410,7 +467,7 @@ function SubscriptionBandwidthTable({ rows, loading, currency, total, subMap }) 
   );
 }
 
-function MeterTable({ meters, loading, currency, total, compact = false, subMap = {} }) {
+function MeterTable({ meters, loading, currency, total, compact = false, subMap = {}, onRate }) {
   const [open, setOpen] = useState(() => new Set());
   const toggle = (key) => setOpen(prev => {
     const next = new Set(prev);
@@ -488,7 +545,7 @@ function MeterTable({ meters, loading, currency, total, compact = false, subMap 
                 {expanded && (
                   <tr className="border-b border-slate-800 bg-slate-950/40">
                     <td colSpan={span} className="px-3 py-4">
-                      <MeterDetail meter={m} currency={currency} total={total} subMap={subMap} />
+                      <MeterDetail meter={m} currency={currency} total={total} subMap={subMap} onRate={onRate} />
                     </td>
                   </tr>
                 )}
@@ -509,19 +566,74 @@ const DIRECTION_HINT = {
 };
 
 /** Everything known about one meter: what it is, and where the charge came from. */
-function MeterDetail({ meter, currency, total, subMap }) {
+function MeterResourceTrack({ meter, currency }) {
+  const { ready, data, error, loading } = useBandwidthTraffic();
+  const rows = resourcesForMeter(data, meter.meter);
+  const tracked = rows.reduce((sum, r) => sum + r.cost, 0);
+
+  return (
+    <section>
+      <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        Track data — which service was charged
+      </h4>
+
+      {!ready && (
+        <p className="text-[11px] leading-relaxed text-slate-500">
+          Select a tenant and subscription to trace this meter to the resources
+          that produced it. Imported files carry no resource identity, so this
+          detail can only come from a live Azure connection.
+        </p>
+      )}
+
+      {loading && <div className="h-16 animate-pulse rounded-lg bg-slate-800/40" />}
+
+      {error && <p className="text-[11px] leading-relaxed text-amber-400/80">{error}</p>}
+
+      {data && (
+        <>
+          <ResourceCostTable
+            rows={rows}
+            currency={currency}
+            dense
+            emptyNote={
+              data.level === 'group'
+                ? 'Azure would not break this meter down past the resource group for this account, so no individual service can be named.'
+                : 'Azure reported no per-resource split for this meter — it is billed at subscription level.'
+            }
+          />
+          {rows.length > 0 && (
+            <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+              {rows.length} {rows.length === 1 ? 'resource' : 'resources'} account for{' '}
+              {formatAmountFull(tracked, currency)} of this meter. Costs shown are
+              this meter&apos;s share only, not each resource&apos;s total spend.
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function MeterDetail({ meter, currency, total, subMap, onRate }) {
   const money = (v) => formatAmount(v, currency);
   const gb = meter.bytes / GB;
   // Gateways and firewalls bill by the hour, so they have a cost but no volume.
   const volumeless = !meter.bytes;
 
+  // The rate is cost divided by billed quantity. If both are on screen there is
+  // always a rate, so falling back to "none could be derived" was simply wrong —
+  // it hid a number the user could do on a calculator. `rateDerived` tracks
+  // whether we did the division ourselves so the caption can say so.
+  const rateDerived = meter.unit_rate == null && !!meter.quantity && meter.cost != null;
+  const unitRate = meter.unit_rate ?? (rateDerived ? meter.cost / meter.quantity : null);
+
   // Cost per GB is only a separate fact when the meter is *not* already billed
   // per GB. Where it is, the two figures are identical by definition and only
   // one belongs on screen.
   const ratesMatch =
-    meter.unit_rate != null &&
+    unitRate != null &&
     meter.cost_per_gb != null &&
-    Math.abs(meter.unit_rate - meter.cost_per_gb) < 0.00005;
+    Math.abs(unitRate - meter.cost_per_gb) < 0.00005;
   const showCostPerGb = !volumeless && !!meter.cost_per_gb && !ratesMatch;
 
   return (
@@ -550,11 +662,35 @@ function MeterDetail({ meter, currency, total, subMap }) {
           label="Billed quantity"
           value={formatQuantity(meter.quantity ?? 0, meter.unit)}
         />
-        <DetailStat
-          label="Unit rate"
-          value={formatRate(meter.unit_rate, currency)}
-          hint={meter.unit ? `per ${meter.unit}` : 'per billed unit'}
-        />
+        {/* The unit rate opens the same explanation panel the cost comparison
+            uses: billed rate against Microsoft's published price, in both
+            currencies, with links to verify it.
+
+            It also has to account for itself when there is no rate to show.
+            A bare "—" is indistinguishable from a bug, and a meter billed per
+            hour with no volume, or one carrying no quantity at all, has a real
+            and explainable reason for being blank. */}
+        <button
+          type="button"
+          onClick={() => onRate?.({ ...meter, unit_rate: unitRate })}
+          disabled={!onRate}
+          className="text-left bg-slate-800/40 border border-slate-700/50 rounded-lg px-3 py-2 enabled:hover:border-blue-500/50 enabled:hover:bg-slate-800/70 transition-colors disabled:cursor-default"
+        >
+          <span className="text-[10px] uppercase tracking-wide text-slate-500 flex items-center gap-1">
+            Unit rate
+            {onRate && <Info size={10} className="text-slate-600" />}
+          </span>
+          <span className="block text-sm font-semibold text-white mt-0.5">
+            {unitRate != null
+              ? formatRate(unitRate, currency)
+              : <span className="text-slate-500">not billed per unit</span>}
+          </span>
+          <span className="block text-[10px] text-slate-500 mt-0.5">
+            {unitRate != null
+              ? `${money(meter.cost)} ÷ ${formatQuantity(meter.quantity ?? 0, meter.unit)}${onRate ? ' · click to explain' : ''}`
+              : 'Azure reported no billed quantity for this meter, so there is nothing to divide the cost by'}
+          </span>
+        </button>
         {/* When Azure already bills this meter per GB, the unit rate *is* the
             cost per GB. Showing both put the same number on screen twice and
             implied they were two different facts. */}
@@ -567,6 +703,10 @@ function MeterDetail({ meter, currency, total, subMap }) {
         )}
         <DetailStat label="Category" value={meter.category || '—'} hint={meter.regions?.length ? meter.regions.slice(0, 3).join(', ') : ''} />
       </div>
+
+      {/* Which service actually spent this. The stats above say how much and at
+          what rate; without a name attached, none of it is actionable. */}
+      <MeterResourceTrack meter={meter} currency={currency} />
 
       {!!meter.months?.length && (
         <section>
@@ -609,7 +749,7 @@ function MeterDetail({ meter, currency, total, subMap }) {
             <div className="space-y-1.5">
               {meter.subscriptions.map(s => (
                 <div key={s.subscription_id} className="flex items-center justify-between gap-3 bg-slate-800/40 rounded-lg px-3 py-2">
-                  <span className="text-[11px] text-slate-300 truncate">{subMap[s.subscription_id] || s.subscription_id}</span>
+                  <span className="text-[11px] text-slate-300 truncate" title={s.subscription_id}>{subscriptionLabel(s.subscription_id, subMap)}</span>
                   <span className="text-[11px] text-white shrink-0">
                     {s.bytes ? `${formatBytes(s.bytes)} · ` : ''}{money(s.cost)}
                   </span>

@@ -190,7 +190,7 @@ RULES: List[OrphanRule] = [
 RULES_BY_KEY = {rule.key: rule for rule in RULES}
 
 
-async def _run_graph_query(
+async def run_graph_query(
     token: str,
     subscription_ids: List[str],
     query: str,
@@ -265,7 +265,7 @@ async def find_orphaned_resources(
 
     for rule in RULES:
         try:
-            rows = await _run_graph_query(token, subscription_ids, rule.query)
+            rows = await run_graph_query(token, subscription_ids, rule.query)
         except Exception as exc:
             errors.append({"rule": rule.key, "error": str(exc)[:200]})
             continue

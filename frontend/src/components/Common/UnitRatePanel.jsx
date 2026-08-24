@@ -8,6 +8,7 @@ import {
   Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import DetailPanel from './DetailPanel';
+import CurrencyApiBar from './CurrencyApiBar';
 import { explainUnitRate } from '../../api/client';
 import { formatRate } from '../../utils/currency';
 import { exactAmount } from '../../utils/exact';
@@ -926,31 +927,13 @@ gap      ${exactAmount(gap.difference, shown)}  (${gap.percent > 0 ? '+' : ''}${
       )}
 
       {/* ── Verify it at the source ── */}
-      {data?.verify?.length > 0 && (
+      {(data?.verify?.length > 0 || data?.odata_filter) && (
         <Section
           title="Check this against Microsoft"
-          subtitle="Every figure above comes from one of these. Open them and you get the same numbers."
+          subtitle="Every figure above comes from one of these. Pick the currency your invoice is in and every link below follows it."
         >
-          <ul className="space-y-2">
-            {data.verify.map(link => (
-              <li key={link.url}>
-                <a
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-start gap-2 text-xs text-blue-400 hover:text-blue-300 transition"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>
-                    {link.label}
-                    <span className="block text-[10px] text-slate-500 leading-relaxed">{link.note}</span>
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
           {data.odata_filter && (
-            <div className="pt-2 border-t border-slate-800/70">
+            <div>
               <p className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold flex items-center gap-1.5">
                 <Sigma className="w-3 h-3" /> The filter that was queried
               </p>
@@ -959,6 +942,18 @@ gap      ${exactAmount(gap.difference, shown)}  (${gap.percent > 0 ? '+' : ''}${
               </pre>
             </div>
           )}
+
+          {/* Same query, any currency. Microsoft publishes a separate price per
+              currency rather than converting, so the only way to reconcile a
+              non-USD invoice is to ask for that currency directly. The panel's
+              other sources are handed over too, so one selection re-points the
+              whole set of evidence instead of just this one link. */}
+          <CurrencyApiBar
+            filter={data.odata_filter || ''}
+            billingCurrency={currency}
+            links={data.verify || []}
+            historical={Boolean(data?.billed?.previous_month)}
+          />
         </Section>
       )}
     </DetailPanel>

@@ -172,6 +172,33 @@ _SCHEMAS = {
             UNIQUE (base, quote, rate_day)
         )
     """,
+    # A point-in-time capture of one posture source: Advisor recommendations,
+    # Defender findings, policy compliance, or role assignments.
+    #
+    # None of those APIs has a history endpoint. Ask Defender what changed last
+    # month and there is no answer to give, because Azure does not keep one. The
+    # only way to ever answer "are we improving" is to have written down what it
+    # said the previous time, and a reading not taken cannot be recovered later.
+    #
+    # The findings are stored as one JSON document rather than a row per finding
+    # because they are only ever read whole, to be diffed against another whole
+    # snapshot. A normalised table would buy query flexibility nothing here uses
+    # and cost a five-figure insert on every scan of a large estate.
+    "posture_snapshots": """
+        CREATE TABLE IF NOT EXISTS posture_snapshots (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id     TEXT    NOT NULL,
+            kind          TEXT    NOT NULL,
+            captured_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+            subscriptions TEXT    NOT NULL DEFAULT '[]',
+            finding_count INTEGER NOT NULL DEFAULT 0,
+            high_count    INTEGER NOT NULL DEFAULT 0,
+            summary       TEXT    NOT NULL DEFAULT '{}',
+            findings      TEXT    NOT NULL DEFAULT '[]',
+            errors        TEXT    NOT NULL DEFAULT '[]'
+        )
+    """,
 }
 
 # Search runs against name_lower across every scan the user owns, so without
@@ -191,6 +218,10 @@ _INDEXES = [
     "ON price_changes (meter_id, currency, changed_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_price_changes_recent ON price_changes (changed_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_fx_rates_day ON fx_rates (base, quote, rate_day)",
+    # Posture reads are always "the latest two snapshots of this kind, for this
+    # tenant, that I own" — the pair a diff needs.
+    "CREATE INDEX IF NOT EXISTS idx_posture_owner "
+    "ON posture_snapshots (user_id, tenant_id, kind, id DESC)",
 ]
 
 
@@ -256,6 +287,7 @@ async def init_db():
         await db.execute(_SCHEMAS["price_snapshots"])
         await db.execute(_SCHEMAS["price_changes"])
         await db.execute(_SCHEMAS["fx_rates"])
+        await db.execute(_SCHEMAS["posture_snapshots"])
         for statement in _INDEXES:
             await db.execute(statement)
         await db.commit()

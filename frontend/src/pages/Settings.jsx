@@ -7,6 +7,7 @@ import AddTenantModal from '../components/TenantManager/AddTenantModal';
 import IntegrationsPanel from '../components/Settings/IntegrationsPanel';
 import AddSessionTokenModal from '../components/TenantManager/AddSessionTokenModal';
 import PortalGuide, { EXPORT_GUIDE } from '../components/Common/PortalGuide';
+import CurrencyApiBar from '../components/Common/CurrencyApiBar';
 import { formatAmount } from '../utils/currency';
 import toast from 'react-hot-toast';
 
@@ -330,6 +331,12 @@ export default function Settings() {
                 Partner usage reports often omit the currency — set it here if the amounts look wrong.
               </span>
             </label>
+
+            {/* The currency chosen above decides which Microsoft price list this
+                app must be checked against. Keyed on it so changing the select
+                re-seeds the bar's own selection instead of stranding it on the
+                previous currency. */}
+            <CurrencyApiBar key={imported.currency} billingCurrency={imported.currency} />
 
             {imported.dated === false && (
               <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">

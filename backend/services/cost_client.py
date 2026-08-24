@@ -288,32 +288,70 @@ def _columnar_to_records(response_data: dict) -> List[Dict[str, Any]]:
 
 MAX_THROTTLE_WAIT = 45.0
 
+# How long a whole multi-subscription read may take before we stop waiting and
+# answer with what we have.
+#
+# This number exists to stay *under* the browser's own timeout. The client used
+# to give up at 60s while this function could still be working, so the user saw
+# "timeout of 60000ms exceeded" — an error with no subject, no cause and no
+# suggested action, on a request that was often about to succeed. A server that
+# always answers in time, even if the answer is "3 of 12 subscriptions were too
+# slow", is strictly more useful than one that sometimes answers perfectly and
+# sometimes not at all.
+DEFAULT_GATHER_BUDGET = 100.0
 
-async def gather_by_subscription(subscription_ids, fetch):
+
+async def gather_by_subscription(subscription_ids, fetch, budget: float = DEFAULT_GATHER_BUDGET):
     """
     Run `fetch(sub_id)` for every subscription, returning (records, errors).
 
+    Subscriptions are read concurrently. They used to be read one after another,
+    which is what made large accounts time out: a dozen subscriptions at four or
+    five seconds each exceeded the browser's limit before Azure had done
+    anything wrong. The HTTP layer already caps real parallelism at
+    MAX_CONCURRENT_QUERIES, so fanning out here costs no extra rate-limit
+    pressure — it just stops the slowest subscription from being charged for
+    every subscription queued behind it.
+
+    `budget` is a wall-clock ceiling for the whole operation. Whatever has not
+    finished by then is reported as an error for that subscription rather than
+    holding up the response. Partial data with a named gap beats no data.
+
     Subscriptions that fail only because Azure was throttling get a second
-    chance once the cooldown expires. Silently dropping them would understate
-    every total on the page, which is far worse than a slower response.
+    chance once the cooldown expires, but only if the remaining budget actually
+    covers the wait. Silently dropping them would understate every total on the
+    page, which is far worse than a slower response.
     """
+    deadline = time.monotonic() + budget
     records: List[Any] = []
     pending = list(subscription_ids)
     failed: List[tuple] = []
 
+    async def read(sub_id):
+        """Bound each subscription so one slow tenant cannot spend the whole budget."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("ran out of time before this subscription was read")
+        return await asyncio.wait_for(fetch(sub_id), timeout=remaining)
+
     for attempt in range(2):
         failed = []
-        for sub_id in pending:
-            try:
-                records.extend(await fetch(sub_id))
-            except Exception as exc:
-                failed.append((sub_id, exc))
+        results = await asyncio.gather(
+            *(read(sub_id) for sub_id in pending), return_exceptions=True
+        )
+        for sub_id, result in zip(pending, results):
+            if isinstance(result, BaseException):
+                failed.append((sub_id, result))
+            else:
+                records.extend(result)
 
         if not failed or attempt == 1:
             break
 
         wait = _cooldown_remaining()
-        if not 0 < wait <= MAX_THROTTLE_WAIT:
+        # Only wait out a cooldown we can actually afford. Sleeping past the
+        # deadline guarantees the timeout we are trying to avoid.
+        if not 0 < wait <= MAX_THROTTLE_WAIT or time.monotonic() + wait >= deadline:
             break
         logger.info("Retrying %s throttled subscription(s) in %.0fs", len(failed), wait)
         await asyncio.sleep(wait + 1)
@@ -329,6 +367,15 @@ def friendly_error(exc: Exception) -> str:
         return (
             "Azure is rate limiting cost queries for this account. "
             f"Wait about {exc.retry_in}s and hit Refresh — or select fewer subscriptions."
+        )
+    # asyncio.TimeoutError is an alias of TimeoutError on 3.11+, and both carry
+    # an empty str(), which used to surface as a blank reason next to the
+    # subscription name — the least useful message possible.
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, httpx.ReadTimeout, httpx.ConnectTimeout)):
+        return (
+            "Azure did not answer in time for this subscription. The other "
+            "subscriptions below are complete. Narrow the date range or select "
+            "fewer subscriptions, then refresh."
         )
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status == 429:

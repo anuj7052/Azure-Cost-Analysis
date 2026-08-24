@@ -65,6 +65,30 @@ html[data-theme="light"] {
   --scrollbar-thumb-hover: rgb(148 163 184);
 }
 
+/* ----------------------------------------------------------------------------
+   Text on saturated accents, in light mode.
+
+   The light theme remaps `text-white` to ink so that headings authored as
+   white stay readable on a white page. That remap is wrong in exactly one
+   place: text sitting *on* a saturated accent (a blue button, an active filter
+   chip), which needs to stay white in both themes. Custom properties resolve
+   per element, so restoring the tokens on the accent classes themselves fixes
+   every such button in the app at once — including ones written later — with
+   no component changes.
+   ------------------------------------------------------------------------- */
+html[data-theme="light"] :is(
+  .bg-blue-600, .bg-blue-500, .bg-blue-700,
+  .bg-emerald-600, .bg-emerald-500,
+  .bg-red-600, .bg-red-500, .bg-rose-600, .bg-rose-500,
+  .bg-violet-600, .bg-violet-500, .bg-indigo-600,
+  .bg-amber-600, .bg-cyan-600
+) {
+  --color-white: #ffffff;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+}
+
 @layer base {
   * { box-sizing: border-box; }
 
@@ -85,6 +109,11 @@ html[data-theme="light"] {
 
   h1, h2, h3 { font-family: "Space Grotesk", "DM Sans", sans-serif; letter-spacing: -0.025em; }
 
+  ::selection {
+    background: color-mix(in srgb, var(--color-blue-500) 30%, transparent);
+    color: inherit;
+  }
+
   :focus-visible {
     outline: 2px solid var(--color-blue-500);
     outline-offset: 2px;
@@ -98,7 +127,53 @@ html[data-theme="light"] {
   .border-slate-800 { border-color: rgb(51 65 85 / 0.72); }
   .rounded-2xl { border-radius: 1rem; }
   button, a, input, select { transition-duration: 180ms; }
+
+  /* Cards respond to the pointer: a slightly stronger hairline and a shadow.
+     Scoped to bordered cards so tables and plain boxes are left alone. */
+  .rounded-2xl.border {
+    transition: border-color 180ms ease, box-shadow 220ms ease;
+  }
+  .rounded-2xl.border:hover {
+    box-shadow: var(--shadow-card);
+  }
 }
+
+/* ============================================================================
+   Motion
+   ----------------------------------------------------------------------------
+   One entrance, used everywhere: content rises 8px and fades in. Pages get it
+   on every route change; anything else can opt in with the same utilities so
+   the app has a single motion vocabulary instead of a collection of effects.
+   The `prefers-reduced-motion` block at the bottom of this file collapses all
+   of it to ~0ms, so none of these need their own escape hatch.
+   ========================================================================== */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+@utility animate-fade-up { animation: fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@utility animate-fade-in { animation: fade-in 0.3s ease both; }
+@utility animate-scale-in { animation: scale-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* A short stagger for grids of cards: each direct child arrives a beat after
+   the one before it. Capped at eight so a long list does not feel slow. */
+.stagger-children > * { animation: fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.stagger-children > *:nth-child(2) { animation-delay: 40ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 80ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 160ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 200ms; }
+.stagger-children > *:nth-child(7) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(n+8) { animation-delay: 280ms; }
 
 @utility elevated { box-shadow: var(--shadow-card); }
 @utility elevated-lg { box-shadow: var(--shadow-raised); }

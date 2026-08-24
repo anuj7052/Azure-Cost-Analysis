@@ -32,7 +32,8 @@ from auth.dependencies import get_current_user
 from services.user_service import tenant_counts
 from routers import (
     admin, tenants, subscriptions, costs, services, upload, bandwidth, boq,
-    guide, integrations, orphaned, scans, changes, activity, prices,
+    guide, integrations, orphaned, scans, changes, activity, prices, security,
+    compute,
 )
 
 log = logging.getLogger("app")
@@ -54,6 +55,8 @@ API_ROUTERS = [
     changes.router,
     activity.router,
     prices.router,
+    security.router,
+    compute.router,
 ]
 
 

@@ -1,5 +1,5 @@
 import { useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, RequireAuth } from './auth/AuthProvider';
 import Sidebar from './components/Layout/Sidebar';
@@ -17,6 +17,7 @@ const Anomalies      = lazy(() => import('./pages/Anomalies'));
 const Settings       = lazy(() => import('./pages/Settings'));
 const ResourceGroups = lazy(() => import('./pages/ResourceGroups'));
 const Orphaned       = lazy(() => import('./pages/Orphaned'));
+const Compute        = lazy(() => import('./pages/Compute'));
 const GlobalSearch   = lazy(() => import('./pages/GlobalSearch'));
 const Changes        = lazy(() => import('./pages/Changes'));
 const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
@@ -25,6 +26,15 @@ const Boq            = lazy(() => import('./pages/Boq'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
 const Admin          = lazy(() => import('./pages/Admin'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
+const AccessOptimization = lazy(() => import('./pages/AccessOptimization'));
+const RoleAssignments    = lazy(() => import('./pages/RoleAssignments'));
+const Advisor            = lazy(() => import('./pages/Advisor'));
+const Defender           = lazy(() => import('./pages/Defender'));
+const PolicyGovernance   = lazy(() => import('./pages/PolicyGovernance'));
+const Estate             = lazy(() => import('./pages/Estate'));
+const SecurityHome       = lazy(() => import('./pages/SecurityHome'));
+const AccountHome        = lazy(() => import('./pages/AccountHome'));
+const ApiCatalog         = lazy(() => import('./pages/ApiCatalog'));
 
 const PageLoader = () => (
   <div className="flex h-[60vh] items-center justify-center">
@@ -74,6 +84,10 @@ function AccountLoadFailed({ error, onRetry }) {
 function AppShell() {
   const isAuthenticated = useIsAuthenticated();
   const { accounts } = useMsal();
+  // Keying the page wrapper on the path re-mounts it on navigation, which is
+  // what lets a plain CSS entrance play on every route change — no animation
+  // library, and `prefers-reduced-motion` still switches it off globally.
+  const location = useLocation();
   const loadTenants     = useAppStore(s => s.loadTenants);
   const addTenantToList = useAppStore(s => s.addTenantToList);
   const loadMe          = useAppStore(s => s.loadMe);
@@ -126,6 +140,7 @@ function AppShell() {
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar />
         <main className="flex-1 overflow-y-auto">
+          <div key={location.pathname} className="animate-fade-up">
           <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
@@ -135,18 +150,27 @@ function AppShell() {
             <Route path="/anomalies" element={<Anomalies />} />
             <Route path="/resource-groups" element={<ResourceGroups />} />
             <Route path="/orphaned" element={<Orphaned />} />
+            <Route path="/compute" element={<Compute />} />
             <Route path="/search" element={<GlobalSearch />} />
             <Route path="/changes" element={<Changes />} />
             <Route path="/activity" element={<ActivityLog />} />
             <Route path="/bandwidth" element={<Bandwidth />} />
             <Route path="/boq" element={<Boq />} />
-            <Route path="/deploy" element={<Deploy />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/deploy" element={<Deploy />} />              <Route path="/estate" element={<Estate />} />
+              <Route path="/security" element={<SecurityHome />} />
+              <Route path="/account" element={<AccountHome />} />
+              <Route path="/apis" element={<ApiCatalog />} />
+              <Route path="/access-optimization" element={<AccessOptimization />} />
+              <Route path="/role-assignments" element={<RoleAssignments />} />
+              <Route path="/advisor" element={<Advisor />} />
+              <Route path="/defender" element={<Defender />} />
+              <Route path="/policy" element={<PolicyGovernance />} />            <Route path="/settings" element={<Settings />} />
             {/* Rendered only for admins. The backend enforces this too, so
                 hiding the route is convenience, not the security boundary. */}
             {me?.is_admin && <Route path="/admin" element={<Admin />} />}
           </Routes>
           </Suspense>
+          </div>
         </main>
       </div>
     </div>

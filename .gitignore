@@ -35,3 +35,6 @@ backend/data/
 # Logs
 *.log
 npm-debug.log*
+
+# Editor-local tooling config (MCP server pointers, machine-specific)
+.vscode/

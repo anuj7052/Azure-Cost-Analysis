@@ -19,6 +19,7 @@ from services.activity import (
     normalise as normalise_activity,
 )
 from services import usage_detail
+from services import reservations
 from services.analysis import (
     aggregate_by_month,
     build_summary,
@@ -126,6 +127,92 @@ async def get_cost_rows(
     months = sorted({r.month for r in rows})
     currency = next((r.get("Currency") for r in records if r.get("Currency")), "USD")
     return CostRowsResponse(rows=rows, months=months, currency=currency, errors=errors)
+
+
+class PricingModelRequest(BaseModel):
+    """How the selected subscriptions are paying: on-demand, reserved or spot."""
+    tenant_id: str
+    subscription_ids: list[str]
+    months: int = 6
+    from_date: str | None = None
+    to_date: str | None = None
+
+
+@router.post("/pricing-model")
+async def get_pricing_model(
+    body: PricingModelRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Reserved Instance / Savings Plan / Spot coverage, and what moved.
+
+    This needs its own query because the Cost Management API accepts at most
+    three grouping dimensions and the main rows query already spends all three
+    on service, resource group and meter. Asking separately, with a narrower
+    grouping, is cheaper than widening every other query.
+
+    `PricingModel` is not offered on every agreement type — some subscriptions
+    answer 400 for it. Rather than failing the page, we retry without it and let
+    `reservations.classify` fall back to the shape of the data. The response says
+    which of the two happened, because a fallback answer cannot distinguish a
+    reservation from a savings plan and the user should not be told otherwise.
+    """
+    token = await _get_token(body.tenant_id, current_user, db)
+    precise = True
+
+    async def read_sub(sub_id: str):
+        try:
+            return await query_usage(
+                token=token,
+                subscription_id=sub_id,
+                months=body.months,
+                group_by=["ServiceName", "Meter", "PricingModel"],
+                granularity="Monthly",
+                from_date=body.from_date,
+                to_date=body.to_date,
+            )
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status != 400:
+                raise
+            # The agreement does not expose PricingModel. Fall back to the
+            # grouping every subscription supports.
+            nonlocal precise
+            precise = False
+            log.info("PricingModel unavailable for %s; using fallback grouping", sub_id)
+            return await query_usage(
+                token=token,
+                subscription_id=sub_id,
+                months=body.months,
+                group_by=["ServiceName", "Meter"],
+                granularity="Monthly",
+                from_date=body.from_date,
+                to_date=body.to_date,
+            )
+
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+
+    if not records and errors:
+        raise HTTPException(status_code=502, detail=summarise_errors(errors, "pricing model data"))
+
+    summary = reservations.summarise(records)
+    currency = next((r.get("Currency") for r in records if r.get("Currency")), "USD")
+
+    return {
+        **summary,
+        "transitions": reservations.transitions(summary),
+        "currency": currency,
+        "precise": precise,
+        "basis": (
+            "Azure's PricingModel dimension"
+            if precise else
+            "inferred from usage billed at zero cost, because this agreement "
+            "does not expose the PricingModel dimension — reservations and "
+            "savings plans cannot be told apart here"
+        ),
+        "errors": errors,
+    }
 
 
 class UsageDetailRequest(BaseModel):

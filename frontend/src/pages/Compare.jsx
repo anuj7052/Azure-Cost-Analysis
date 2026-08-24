@@ -9,6 +9,7 @@ import { Quantity } from '../components/Common/Amount';
 import ExplainPanel from '../components/Common/ExplainPanel';
 import UnitRatePanel from '../components/Common/UnitRatePanel';
 import QuantityPanel from '../components/Common/QuantityPanel';
+import PricingModelPanel from '../components/Common/PricingModelPanel';
 import { exactAmount } from '../utils/exact';
 
 /**
@@ -827,6 +828,12 @@ export default function Compare() {
               or click a line item name to see how its figures were calculated.
             </p>
           </div>
+
+          {/* Before blaming usage or price for a change, rule out the third
+              cause: the same usage being paid for differently. A reservation
+              starting or expiring moves cost sharply with no usage change at
+              all, and it is the explanation people reach for last. */}
+          <PricingModelPanel currency={currency} />
         </>
       )}
 
