@@ -1,0 +1,9 @@
+# Test-only dependencies. Kept separate from requirements.txt so they are not
+# installed onto the App Service instance, which only needs to run the app.
+#
+# Pinned to the versions the suite is actually green against locally; an
+# unpinned test runner turns an unrelated upstream release into a failed deploy.
+-r requirements.txt
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
