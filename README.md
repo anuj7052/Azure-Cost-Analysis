@@ -179,3 +179,18 @@ azure-cost-analysis/
             ├── Anomalies.jsx
             └── Settings.jsx
 ```
+
+## Deployment
+
+`https://azure-cost-analysis-anuj.azurewebsites.net`
+
+Every push to `main` builds the SPA, runs both test suites, and deploys to Azure
+App Service via `.github/workflows/deploy-azure.yml`. A failing test stops the
+deploy, and the run only passes once `/api/health` answers on the live site.
+
+GitHub authenticates to Azure with OIDC federated credentials on the
+`id-github-deploy` managed identity, which is scoped to the single web app. No
+Azure password or publish profile is stored in this repository.
+
+The frontend build is served by FastAPI from `backend/static`, which is
+generated during the deploy and is not committed.
