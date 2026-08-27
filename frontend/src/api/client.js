@@ -404,6 +404,22 @@ export const updateIntegration = (id, body) =>
   api.patch(`/integrations/${id}`, body).then(r => r.data);
 export const deleteIntegration = (id) => api.delete(`/integrations/${id}`);
 
+// Building resources.
+//
+// `/provision` is deliberately absent from LOCAL_ROUTES: the deploy route
+// calls Azure with the caller's own management token, which is what makes
+// Azure's RBAC — rather than a check of ours — decide who may create what.
+export const fetchProvisionCatalog = () =>
+  api.get('/provision/catalog').then(r => r.data);
+export const sendProvisionChat = (body) =>
+  api.post('/provision/chat', body).then(r => r.data);
+export const startProvisionDeploy = (body) =>
+  api.post('/provision/deploy', body).then(r => r.data);
+export const fetchProvisionDeployments = () =>
+  api.get('/provision/deployments').then(r => r.data);
+export const fetchProvisionDeployment = (id) =>
+  api.get(`/provision/deployments/${id}`).then(r => r.data);
+
 export const fetchTenants = () => api.get('/tenants').then(r => r.data);
 export const addTenant = (body) => api.post('/tenants', body).then(r => r.data);
 export const addSessionToken = (body) => api.post('/tenants/token', body).then(r => r.data);

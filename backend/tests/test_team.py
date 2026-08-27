@@ -372,6 +372,9 @@ async def test_every_state_changing_route_that_touches_azure_is_gated():
         ("POST", "/api/v1/team/invitations"),
         ("DELETE", "/api/v1/team/invitations/{invitation_id}"),
         ("DELETE", "/api/v1/team/members/{member_id}"),
+        # Creates resources and starts a recurring charge — the single most
+        # consequential write in the product.
+        ("POST", "/api/v1/provision/deploy"),
     }
 
     gated = set()

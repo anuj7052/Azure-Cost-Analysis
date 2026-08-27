@@ -82,8 +82,49 @@ _SCHEMAS = {
             model      TEXT    NOT NULL DEFAULT '',
             api_key    TEXT    NOT NULL DEFAULT '',
             enabled    INTEGER NOT NULL DEFAULT 1,
+            -- The ceiling the customer sets when they register the endpoint,
+            -- in requests per day. It exists because the key is theirs and so
+            -- is the bill: a runaway loop against an unmetered endpoint is a
+            -- charge they only discover afterwards. 0 means "not set yet",
+            -- which the API refuses to create.
+            rate_limit_per_day INTEGER NOT NULL DEFAULT 0,
             created_at TEXT    DEFAULT (datetime('now')),
             UNIQUE (user_id, label)
+        )
+    """,
+    # One row per endpoint per day, incremented before the call goes out.
+    # Counting before rather than after means a request that fails upstream
+    # still costs a unit of the allowance, which is the safe direction: the
+    # provider may well have billed for it.
+    "integration_usage": """
+        CREATE TABLE IF NOT EXISTS integration_usage (
+            integration_id INTEGER NOT NULL REFERENCES user_integrations(id) ON DELETE CASCADE,
+            day            TEXT    NOT NULL,
+            calls          INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (integration_id, day)
+        )
+    """,
+    # What the assistant was asked to build, and what Azure did about it.
+    # Kept because a deployment is a spend: the person who authorised it, what
+    # they authorised and how it ended have to survive a browser refresh.
+    "provision_deployments": """
+        CREATE TABLE IF NOT EXISTS provision_deployments (
+            id              TEXT    PRIMARY KEY,
+            account_id      INTEGER NOT NULL,
+            actor_id        INTEGER,
+            tenant_id       TEXT    NOT NULL DEFAULT '',
+            subscription_id TEXT    NOT NULL DEFAULT '',
+            resource_group  TEXT    NOT NULL DEFAULT '',
+            location        TEXT    NOT NULL DEFAULT '',
+            deployment_name TEXT    NOT NULL DEFAULT '',
+            spec_json       TEXT    NOT NULL DEFAULT '[]',
+            state           TEXT    NOT NULL DEFAULT 'VALIDATING',
+            message         TEXT    NOT NULL DEFAULT '',
+            resources_json  TEXT    NOT NULL DEFAULT '[]',
+            estimated_monthly REAL,
+            currency        TEXT    NOT NULL DEFAULT '',
+            created_at      TEXT    DEFAULT (datetime('now')),
+            finished_at     TEXT
         )
     """,
     # A point-in-time capture of one tenant's estate. Every visibility feature
@@ -383,6 +424,7 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_invitations_email "
     "ON team_invitations (email, status)",
     "CREATE INDEX IF NOT EXISTS idx_users_owner ON users (owner_id)",
+    "CREATE INDEX IF NOT EXISTS idx_provision_account ON provision_deployments (account_id, created_at DESC)",
 ]
 
 
@@ -465,7 +507,14 @@ async def init_db():
 
         await db.execute(_SCHEMAS["service_principals"])
         await db.execute(_SCHEMAS["session_tokens"])
+        await _add_missing_columns(
+            db,
+            "user_integrations",
+            {"rate_limit_per_day": "INTEGER NOT NULL DEFAULT 0"},
+        )
         await db.execute(_SCHEMAS["user_integrations"])
+        await db.execute(_SCHEMAS["integration_usage"])
+        await db.execute(_SCHEMAS["provision_deployments"])
         await db.execute(_SCHEMAS["scans"])
         await db.execute(_SCHEMAS["scan_resources"])
         await db.execute(_SCHEMAS["price_snapshots"])

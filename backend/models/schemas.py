@@ -21,6 +21,10 @@ class Integration(BaseModel):
     enabled: bool = True
     has_key: bool = False
     key_hint: str = ""
+    # The ceiling the customer set, and how much of today is already spent.
+    rate_limit_per_day: int = 0
+    used_today: int = 0
+    remaining_today: int = 0
     created_at: Optional[str] = None
 
 
@@ -31,6 +35,10 @@ class CreateIntegrationRequest(BaseModel):
     model: str = ""
     api_key: str = ""
     enabled: bool = True
+    # Deliberately has no default. The service refuses a missing value rather
+    # than choosing a number that would be spending the customer's money on
+    # their behalf.
+    rate_limit_per_day: Optional[int] = None
 
     @field_validator("kind")
     @classmethod
@@ -57,6 +65,7 @@ class UpdateIntegrationRequest(BaseModel):
     model: Optional[str] = None
     api_key: Optional[str] = None      # omit to keep the stored key
     enabled: Optional[bool] = None
+    rate_limit_per_day: Optional[int] = None
 
     @field_validator("kind")
     @classmethod
@@ -129,6 +138,64 @@ class TeamOverview(BaseModel):
 
 class InviteRequest(BaseModel):
     email: str
+
+
+# ── Provisioning ───────────────────────────────────────────────────────────
+
+
+class ProvisionChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    history: List[dict] = []
+    location: str = Field(default="centralindia", max_length=40)
+    currency: str = Field(default="INR", max_length=8)
+
+
+class ProvisionChatResponse(BaseModel):
+    # "model_source" names the LLM endpoint, not a pydantic model, so the
+    # protected-namespace warning is not telling us anything here.
+    model_config = {"protected_namespaces": ()}
+
+    answer: str
+    used_tools: List[str] = []
+    # Server-built specifications, not text the model wrote. The Create button
+    # is rendered against these and nothing else.
+    drafts: List[dict] = []
+    model_source: str = ""
+
+
+class ProvisionResourceSpec(BaseModel):
+    kind: str
+    fields: dict = {}
+
+
+class ProvisionDeployRequest(BaseModel):
+    tenant_id: str
+    subscription_id: str = Field(min_length=1, max_length=64)
+    resource_group: str = Field(min_length=1, max_length=90)
+    location: str = Field(min_length=2, max_length=40)
+    currency: str = Field(default="INR", max_length=8)
+    resources: List[ProvisionResourceSpec] = []
+    # A public key, not a secret, and it never travels through the chat.
+    ssh_public_key: str = Field(default="", max_length=4096)
+    # No default. Creating resources is a spend, and a request that forgot to
+    # say so is a bug we would rather refuse than guess at.
+    confirm: bool = False
+
+
+class ProvisionDeployment(BaseModel):
+    id: str
+    subscription_id: str = ""
+    resource_group: str = ""
+    location: str = ""
+    state: str
+    state_label: str = ""
+    message: str = ""
+    spec: List[dict] = []
+    resources: List[dict] = []
+    estimated_monthly: Optional[float] = None
+    currency: str = ""
+    created_at: Optional[str] = None
+    finished_at: Optional[str] = None
 
 
 class ProfileUpdate(BaseModel):

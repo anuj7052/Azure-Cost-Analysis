@@ -41,7 +41,17 @@ const KINDS = [
 
 const kindOf = (key) => KINDS.find(k => k.key === key) || KINDS[0];
 
-const EMPTY = { label: '', kind: 'openai', base_url: '', model: '', api_key: '' };
+const EMPTY = {
+  label: '', kind: 'openai', base_url: '', model: '', api_key: '',
+  // Intentionally blank rather than pre-filled. This is a question about how
+  // much of the customer's money the assistant may spend, and a number we
+  // chose for them is not an answer they gave.
+  rate_limit_per_day: '',
+};
+
+// Offered as starting points, not as a default. Picking one still counts as
+// the person choosing it.
+const LIMIT_PRESETS = [25, 100, 500, 2000];
 
 function Field({ label, icon: Icon, hint, ...props }) {
   return (
@@ -73,8 +83,12 @@ function IntegrationModal({ existing, onClose, onSaved }) {
   const kind = kindOf(form.kind);
 
   // A new integration is useless without a key; an edit may legitimately leave
-  // the stored one alone.
-  const valid = form.label.trim() && (editing || form.kind === 'webhook' || form.api_key);
+  // the stored one alone. The daily limit is required either way, because an
+  // endpoint without one can bill without bound.
+  const limit = Number(form.rate_limit_per_day);
+  const limitOk = Number.isInteger(limit) && limit >= 1 && limit <= 100000;
+  const valid = form.label.trim() && limitOk
+    && (editing || form.kind === 'webhook' || form.api_key);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -86,6 +100,7 @@ function IntegrationModal({ existing, onClose, onSaved }) {
         kind: form.kind,
         base_url: form.base_url.trim(),
         model: form.model.trim(),
+        rate_limit_per_day: limit,
       };
       // Sending an empty key on an edit would be read as "no change", which is
       // exactly what we want, so only include it when the user typed one.
@@ -137,6 +152,53 @@ function IntegrationModal({ existing, onClose, onSaved }) {
       }
     >
       <form id="integration-form" onSubmit={submit} className="space-y-4">
+        {/*
+          Asked first, and deliberately so. The key is the customer's and the
+          invoice follows it, so the ceiling is settled before the endpoint
+          exists rather than discovered at the end of the month.
+        */}
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+          <label className="block text-xs font-medium text-amber-200 mb-1">
+            How many requests a day may this endpoint be used for?
+          </label>
+          <p className="text-xs text-slate-400 mb-2.5">
+            The assistant runs on your key, so every request is billed to you.
+            This caps the damage a mistake can do in one day. You can change it
+            later.
+          </p>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {LIMIT_PRESETS.map(n => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => set('rate_limit_per_day', String(n))}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
+                  String(n) === String(form.rate_limit_per_day)
+                    ? 'border-amber-400 bg-amber-500/20 text-amber-200'
+                    : 'border-slate-700 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                {n.toLocaleString()} / day
+              </button>
+            ))}
+          </div>
+          <input
+            type="number"
+            min={1}
+            max={100000}
+            inputMode="numeric"
+            value={form.rate_limit_per_day}
+            onChange={(e) => set('rate_limit_per_day', e.target.value)}
+            placeholder="Or type a number"
+            className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition"
+          />
+          {form.rate_limit_per_day !== '' && !limitOk && (
+            <p className="text-xs text-amber-400 mt-1.5">
+              Enter a whole number between 1 and 100,000.
+            </p>
+          )}
+        </div>
+
         <div>
           <label className="block text-xs font-medium text-slate-400 mb-1.5">Type</label>
           <div className="grid grid-cols-2 gap-2">
@@ -293,6 +355,20 @@ export default function IntegrationsPanel() {
                     .filter(Boolean)
                     .join(' · ')}
                 </p>
+                {/*
+                  The number the server enforces, and how much of today is
+                  already gone. Reported rather than recomputed here so the two
+                  cannot disagree.
+                */}
+                {item.rate_limit_per_day > 0 && (
+                  <p className="text-xs mt-1">
+                    <span className={item.remaining_today === 0 ? 'text-amber-400' : 'text-slate-500'}>
+                      {item.used_today.toLocaleString()} of{' '}
+                      {item.rate_limit_per_day.toLocaleString()} requests used today
+                      {item.remaining_today === 0 ? ' — limit reached' : ''}
+                    </span>
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => toggle(item)}

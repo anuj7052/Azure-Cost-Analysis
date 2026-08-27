@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Upload, FileCode, Send, Download, AlertTriangle } from 'lucide-react';
 
 import { uploadBoq, planBoq, generateIac, chatAboutBoq } from '../api/client';
+import BuildAssistant from '../components/Boq/BuildAssistant';
 
 const SUGGESTIONS = [
   'Implement this BOQ',
@@ -209,6 +210,15 @@ export default function Deploy() {
           into your subscription from here.
         </p>
       </div>
+
+      {/*
+        The other half of this page. Above, an estimate becomes a template the
+        customer runs themselves. Here, a description becomes a resource that
+        is actually created — on their own Azure rights, after they authorise
+        it. Both live on this page because they answer the same question from
+        opposite ends: "how do I get this built?"
+      */}
+      <BuildAssistant />
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
         <div className="flex flex-wrap items-center gap-2">

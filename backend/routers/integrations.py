@@ -49,6 +49,9 @@ async def create_integration(
             status_code=409,
             detail=f'You already have an integration named "{body.label}".',
         )
+    except ValueError as exc:
+        # The daily limit is a required answer, not a field with a default.
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router.patch(
@@ -67,6 +70,8 @@ async def update_integration(
         )
     except aiosqlite.IntegrityError:
         raise HTTPException(status_code=409, detail="That name is already in use.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     if updated is None:
         raise HTTPException(status_code=404, detail="Integration not found.")
     return updated

@@ -144,6 +144,15 @@ async def chat_about_boq(
 ) -> Dict[str, Any]:
     """Converse about an estimate and generate templates on request."""
     llm = await integration_service.llm_config(db, current_user["account_id"])
+    try:
+        # The same endpoint and the same invoice as the build assistant, so it
+        # draws on the same daily allowance. Two chats sharing a key must not
+        # mean two separate budgets.
+        await integration_service.consume(
+            db, llm.get("integration_id"), llm.get("source", "your endpoint")
+        )
+    except integration_service.RateLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from None
     service = BoqChatService(payload.boq, resource_group=payload.resource_group, llm=llm)
     return await service.chat(
         payload.message, [t.model_dump() for t in payload.history]
@@ -161,6 +170,15 @@ async def chat_with_upload(
     """Upload an estimate and act on it in a single call."""
     boq = await _read_estimate(file)
     llm = await integration_service.llm_config(db, current_user["account_id"])
+    try:
+        # The same endpoint and the same invoice as the build assistant, so it
+        # draws on the same daily allowance. Two chats sharing a key must not
+        # mean two separate budgets.
+        await integration_service.consume(
+            db, llm.get("integration_id"), llm.get("source", "your endpoint")
+        )
+    except integration_service.RateLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from None
     service = BoqChatService(boq, resource_group=resource_group, llm=llm)
     return await service.chat(message, [])
 
