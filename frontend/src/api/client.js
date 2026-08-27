@@ -121,7 +121,7 @@ async function getSignInToken() {
 // price list and our own stored history, never the caller's Azure tenant. Given
 // an ARM token it would fail after a reload, when silent renewal is blocked,
 // for a route that never needed one.
-const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search', '/changes', '/prices'];
+const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search', '/changes', '/prices', '/team'];
 
 /**
  * Routes that live under a local prefix but do call Azure.
@@ -361,6 +361,19 @@ api.interceptors.response.use(
 // ── API functions ──────────────────────────────────────────────────────────
 
 export const fetchMe = () => api.get('/me').then(r => r.data);
+
+/** Only the phone number is editable: everything else comes from Entra. */
+export const updateProfile = (body) => api.patch('/me', body).then(r => r.data);
+
+// Team seats. Every write returns the whole team back, so the caller never has
+// to guess what the seat counts became after an invite or a removal.
+export const fetchTeam = () => api.get('/team').then(r => r.data);
+export const inviteTeamMember = (email) =>
+  api.post('/team/invitations', { email }).then(r => r.data);
+export const revokeInvitation = (id) =>
+  api.delete(`/team/invitations/${id}`).then(r => r.data);
+export const removeTeamMember = (id) =>
+  api.delete(`/team/members/${id}`).then(r => r.data);
 
 /** Fetches the guide as a blob so the download carries the auth header. */
 export const downloadSetupGuide = async () => {

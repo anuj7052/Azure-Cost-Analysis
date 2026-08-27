@@ -7,6 +7,7 @@ an admin can see *that* a customer connected a tenant and can revoke it, but
 not read their client secret or access token.
 """
 import aiosqlite
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth.dependencies import require_admin
@@ -23,7 +24,12 @@ router = APIRouter(
 )
 
 
-def _summary(row: aiosqlite.Row, tenant_count: int = 0) -> UserSummary:
+def _summary(
+    row: aiosqlite.Row,
+    tenant_count: int = 0,
+    owner_email: str = "",
+    team_size: int = 0,
+) -> UserSummary:
     return UserSummary(
         id=row["id"],
         email=row["email"],
@@ -34,7 +40,46 @@ def _summary(row: aiosqlite.Row, tenant_count: int = 0) -> UserSummary:
         created_at=row["created_at"],
         last_login_at=row["last_login_at"],
         tenant_count=tenant_count,
+        phone=row["phone"] or "",
+        login_count=row["login_count"] or 0,
+        days_since_registered=_days_since(row["created_at"]),
+        access_level="Administrator" if row["role"] == ROLE_ADMIN else "Standard",
+        is_owner=row["owner_id"] is None,
+        owner_email=owner_email,
+        team_size=team_size,
     )
+
+
+def _days_since(created_at: str | None) -> int | None:
+    """
+    Whole days between registration and now.
+
+    Returns None rather than 0 when the timestamp is missing or unparseable,
+    because "registered today" and "we do not know" are different answers and
+    the admin centre shows them differently.
+    """
+    if not created_at:
+        return None
+    try:
+        started = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - started).days)
+
+
+async def _owner_emails(db: aiosqlite.Connection) -> dict[int, str]:
+    async with db.execute("SELECT id, email FROM users") as cursor:
+        return {row["id"]: row["email"] or "" for row in await cursor.fetchall()}
+
+
+async def _team_sizes(db: aiosqlite.Connection) -> dict[int, int]:
+    async with db.execute(
+        "SELECT owner_id, COUNT(*) AS n FROM users "
+        "WHERE owner_id IS NOT NULL GROUP BY owner_id"
+    ) as cursor:
+        return {row["owner_id"]: row["n"] for row in await cursor.fetchall()}
 
 
 async def _get_user(db: aiosqlite.Connection, user_id: int) -> aiosqlite.Row:
@@ -95,7 +140,17 @@ async def list_users(
         rows = await cursor.fetchall()
 
     counts = await tenant_counts(db)
-    return [_summary(r, counts.get(r["id"], 0)) for r in rows]
+    emails = await _owner_emails(db)
+    sizes = await _team_sizes(db)
+    return [
+        _summary(
+            r,
+            counts.get(r["id"], 0),
+            emails.get(r["owner_id"], "") if r["owner_id"] else "",
+            sizes.get(r["id"], 0),
+        )
+        for r in rows
+    ]
 
 
 @router.get("/stats")
@@ -119,6 +174,30 @@ async def stats(db: aiosqlite.Connection = Depends(get_db)):
         "new_users_30d": await scalar(
             "SELECT COUNT(*) FROM users WHERE datetime(created_at) >= datetime('now', '-30 days')"
         ),
+        # Someone who has signed in at least once in the last 30 days. This is
+        # the closest thing to "actively using it" the app can prove, because
+        # only the most recent sign-in is recorded, not a per-day history.
+        "active_last_30d": await scalar(
+            "SELECT COUNT(*) FROM users WHERE last_login_at IS NOT NULL "
+            "AND datetime(last_login_at) >= datetime('now', '-30 days')"
+        ),
+        "never_signed_in": await scalar(
+            "SELECT COUNT(*) FROM users WHERE last_login_at IS NULL"
+        ),
+        "workspace_owners": await scalar(
+            "SELECT COUNT(*) FROM users WHERE owner_id IS NULL"
+        ),
+        "team_members": await scalar(
+            "SELECT COUNT(*) FROM users WHERE owner_id IS NOT NULL"
+        ),
+        "pending_invitations": await scalar(
+            "SELECT COUNT(*) FROM team_invitations WHERE status = 'pending'"
+        ),
+        # Compliance reads on this one: an account with no contact number
+        # cannot be reached outside the app.
+        "missing_phone": await scalar(
+            "SELECT COUNT(*) FROM users WHERE phone IS NULL OR phone = ''"
+        ),
     }
 
 
@@ -126,6 +205,8 @@ async def stats(db: aiosqlite.Connection = Depends(get_db)):
 async def get_user(user_id: int, db: aiosqlite.Connection = Depends(get_db)):
     row = await _get_user(db, user_id)
     counts = await tenant_counts(db)
+    emails = await _owner_emails(db)
+    sizes = await _team_sizes(db)
 
     connections: list[UserConnection] = []
     async with db.execute(
@@ -156,7 +237,12 @@ async def get_user(user_id: int, db: aiosqlite.Connection = Depends(get_db)):
             ))
 
     return UserDetail(
-        **_summary(row, counts.get(user_id, 0)).model_dump(),
+        **_summary(
+            row,
+            counts.get(user_id, 0),
+            emails.get(row["owner_id"], "") if row["owner_id"] else "",
+            sizes.get(user_id, 0),
+        ).model_dump(),
         connections=connections,
     )
 
@@ -174,7 +260,7 @@ async def update_user(
     if body.role is None and body.status is None:
         raise HTTPException(status_code=400, detail="Nothing to update.")
 
-    if user_id == admin["account_id"]:
+    if user_id == admin["actor_id"]:
         if body.role and body.role != ROLE_ADMIN:
             raise HTTPException(
                 status_code=409,
@@ -216,7 +302,7 @@ async def delete_user(
     """
     row = await _get_user(db, user_id)
 
-    if user_id == admin["account_id"]:
+    if user_id == admin["actor_id"]:
         raise HTTPException(status_code=409, detail="You cannot delete your own account.")
     await _guard_last_admin(db, row, "delete")
 

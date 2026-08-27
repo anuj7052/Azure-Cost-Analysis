@@ -31,6 +31,11 @@ export default function Settings() {
     removeTenantFromList, loadCosts, imported, addImport, clearImported, setImportCurrency,
     removeImportFile,
   } = useAppStore();
+  const me = useAppStore(s => s.me);
+  // Hiding these is convenience, not the security boundary: the API refuses
+  // them for team members regardless of what the browser renders.
+  const canManageTenants = me?.is_owner !== false;
+  const ownerEmail = me?.owner_email || '';
   const [showModal, setShowModal] = useState(false);
   const [showTokenModal, setShowTokenModal] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
@@ -114,6 +119,8 @@ export default function Settings() {
               <Download className="w-4 h-4" />
               Setup guide
             </button>
+            {canManageTenants && (
+            <>
             <button
               onClick={() => setShowTokenModal(true)}
               className="flex items-center gap-2 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-sm px-3 py-2 rounded-xl transition"
@@ -128,8 +135,18 @@ export default function Settings() {
               <Plus className="w-4 h-4" />
               Add Tenant
             </button>
+            </>
+            )}
           </div>
         </div>
+
+        {!canManageTenants && (
+          <p className="mb-4 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-400">
+            You have view access to this workspace. Connecting or removing a
+            tenant is done by the workspace owner
+            {ownerEmail ? <span className="text-slate-300">{` (${ownerEmail})`}</span> : null}.
+          </p>
+        )}
 
         <div className="space-y-2">
           {tenants.length === 0 && (
@@ -155,7 +172,7 @@ export default function Settings() {
                   : t.source === 'session_token' ? 'Session Token'
                   : 'Service Principal'}
               </span>
-              {t.source !== 'delegated' && (
+              {t.source !== 'delegated' && canManageTenants && (
                 <button
                   onClick={() => handleDeleteTenant(t)}
                   disabled={deletingId === t.tenant_id}

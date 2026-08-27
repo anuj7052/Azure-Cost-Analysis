@@ -36,6 +36,7 @@ const Estate             = lazy(() => import('./pages/Estate'));
 const SecurityHome       = lazy(() => import('./pages/SecurityHome'));
 const AccountHome        = lazy(() => import('./pages/AccountHome'));
 const ApiCatalog         = lazy(() => import('./pages/ApiCatalog'));
+const Team               = lazy(() => import('./pages/Team'));
 
 const PageLoader = () => (
   <div className="flex h-[60vh] items-center justify-center">
@@ -170,6 +171,7 @@ function AppShell() {
               <Route path="/advisor" element={<Advisor />} />
               <Route path="/defender" element={<Defender />} />
               <Route path="/policy" element={<PolicyGovernance />} />            <Route path="/settings" element={<Settings />} />
+            <Route path="/team" element={<Team />} />
             {/* Rendered only for admins. The backend enforces this too, so
                 hiding the route is convenience, not the security boundary. */}
             {me?.is_admin && <Route path="/admin" element={<Admin />} />}

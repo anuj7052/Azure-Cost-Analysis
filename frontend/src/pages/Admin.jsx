@@ -36,11 +36,14 @@ function relative(value) {
 
 const STAT_CARDS = [
   { key: 'total_users', label: 'Total users', icon: Users, tone: 'text-blue-400 bg-blue-500/10' },
-  { key: 'active_users', label: 'Active', icon: UserCheck, tone: 'text-emerald-400 bg-emerald-500/10' },
+  { key: 'active_last_30d', label: 'Signed in (30 d)', icon: UserCheck, tone: 'text-emerald-400 bg-emerald-500/10' },
   { key: 'suspended_users', label: 'Suspended', icon: UserX, tone: 'text-amber-400 bg-amber-500/10' },
-  { key: 'admins', label: 'Admins', icon: ShieldCheck, tone: 'text-violet-400 bg-violet-500/10' },
+  { key: 'admins', label: 'Administrators', icon: ShieldCheck, tone: 'text-violet-400 bg-violet-500/10' },
   { key: 'connected_tenants', label: 'Connected tenants', icon: Cloud, tone: 'text-cyan-400 bg-cyan-500/10' },
   { key: 'new_users_30d', label: 'New in 30 days', icon: Building2, tone: 'text-pink-400 bg-pink-500/10' },
+  { key: 'team_members', label: 'Team members', icon: Users, tone: 'text-sky-400 bg-sky-500/10' },
+  // A compliance read: these accounts cannot be reached outside the app.
+  { key: 'missing_phone', label: 'No contact number', icon: AlertTriangle, tone: 'text-orange-400 bg-orange-500/10' },
 ];
 
 function StatCard({ label, value, icon: Icon, tone }) {
@@ -240,7 +243,7 @@ export default function Admin() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
         {STAT_CARDS.map(c => (
           <StatCard key={c.key} label={c.label} value={stats?.[c.key]} icon={c.icon} tone={c.tone} />
         ))}
@@ -311,14 +314,38 @@ export default function Admin() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-medium text-white truncate">{u.name || u.email}</p>
                     {u.role === 'admin' && (
-                      <Pill tone="bg-violet-900/60 text-violet-300"><ShieldCheck className="w-3 h-3" />Admin</Pill>
+                      <Pill tone="bg-violet-900/60 text-violet-300"><ShieldCheck className="w-3 h-3" />Administrator</Pill>
+                    )}
+                    {u.role !== 'admin' && (
+                      <Pill tone="bg-slate-800 text-slate-400">Standard</Pill>
+                    )}
+                    {!u.is_owner && (
+                      <Pill tone="bg-sky-900/60 text-sky-300" >
+                        <Users className="w-3 h-3" />
+                        Team member{u.owner_email ? ` of ${u.owner_email}` : ''}
+                      </Pill>
+                    )}
+                    {u.is_owner && u.team_size > 0 && (
+                      <Pill tone="bg-slate-800 text-slate-400">
+                        <Users className="w-3 h-3" />{u.team_size} in team
+                      </Pill>
                     )}
                     {u.status === 'suspended'
                       ? <Pill tone="bg-red-900/60 text-red-300">Suspended</Pill>
                       : <Pill tone="bg-emerald-900/60 text-emerald-300">Active</Pill>}
                     {isSelf && <Pill tone="bg-slate-800 text-slate-400">You</Pill>}
                   </div>
-                  <p className="text-xs text-slate-500 truncate">{u.email}</p>
+                  <p className="text-xs text-slate-500 truncate">
+                    {u.email}
+                    {/* An account with no number cannot be reached outside the
+                        app. Entra does not supply one, so it stays blank until
+                        the person enters it, and blank is stated rather than
+                        filled in with something plausible. */}
+                    <span className="mx-1.5 text-slate-700">·</span>
+                    {u.phone
+                      ? <span className="text-slate-400">{u.phone}</span>
+                      : <span className="text-amber-500/80">No contact number</span>}
+                  </p>
                 </div>
 
                 <div className="hidden lg:block text-xs text-slate-400 w-32 shrink-0">
@@ -326,8 +353,21 @@ export default function Admin() {
                   <p>tenant{u.tenant_count === 1 ? '' : 's'}</p>
                 </div>
                 <div className="hidden lg:block text-xs text-slate-400 w-32 shrink-0">
+                  <p className="text-white">
+                    {u.days_since_registered == null
+                      ? 'Not available'
+                      : `${u.days_since_registered} day${u.days_since_registered === 1 ? '' : 's'}`}
+                  </p>
+                  {/* Account age, not days of measured usage: the app records
+                      only the most recent sign-in, not a per-day history. */}
+                  <p>registered</p>
+                </div>
+                <div className="hidden lg:block text-xs text-slate-400 w-32 shrink-0">
                   <p className="text-white">{relative(u.last_login_at)}</p>
-                  <p>last seen</p>
+                  <p>
+                    last seen
+                    {u.login_count ? ` · ${u.login_count} sign-in${u.login_count === 1 ? '' : 's'}` : ''}
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">

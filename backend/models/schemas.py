@@ -86,6 +86,68 @@ class UserSummary(BaseModel):
     created_at: Optional[str] = None
     last_login_at: Optional[str] = None
     tenant_count: int = 0
+    # Whatever the person typed into their profile. Entra sign-in tokens carry
+    # no phone number, so this is empty until they fill it in, and the admin
+    # centre says "Not available" rather than inventing one.
+    phone: str = ""
+    login_count: int = 0
+    # Whole days since the account was created. This is account age, not days
+    # of measured usage -- the app does not record a per-day activity log, so
+    # calling it "days active" would claim more than is known.
+    days_since_registered: Optional[int] = None
+    # "Administrator" or "Standard", plus who they belong to when they are an
+    # invited member rather than a workspace owner.
+    access_level: str = "Standard"
+    is_owner: bool = True
+    owner_email: str = ""
+    team_size: int = 0
+
+
+class TeamMember(BaseModel):
+    id: Optional[int] = None
+    email: str
+    name: str = ""
+    phone: str = ""
+    state: str                     # "accepted" | "pending"
+    account_status: str = ""
+    joined_at: Optional[str] = None
+    last_login_at: Optional[str] = None
+    login_count: int = 0
+    invitation_id: Optional[int] = None
+
+
+class TeamOverview(BaseModel):
+    is_owner: bool
+    owner_email: str = ""
+    limit: int
+    used: int
+    remaining: int
+    accepted: int
+    pending: int
+    members: List[TeamMember] = []
+
+
+class InviteRequest(BaseModel):
+    email: str
+
+
+class ProfileUpdate(BaseModel):
+    phone: Optional[str] = None
+
+    @field_validator("phone")
+    @classmethod
+    def valid_phone(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if len(v) > 32:
+            raise ValueError("Phone number is too long.")
+        # Deliberately permissive: country formats vary far too much to
+        # validate properly, and rejecting a real number is worse than storing
+        # an odd one. Only characters that could not belong are refused.
+        if v and not all(c.isdigit() or c in " +-()" for c in v):
+            raise ValueError("Phone number can only contain digits and + - ( ) spaces.")
+        return v
 
 
 class UserConnection(BaseModel):

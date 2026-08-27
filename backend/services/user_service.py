@@ -9,6 +9,7 @@ and should they still have access".
 import aiosqlite
 
 from core.config import settings
+from services.team_service import accept_pending_invitation
 
 ROLE_ADMIN = "admin"
 ROLE_USER = "user"
@@ -62,8 +63,8 @@ async def upsert_user(db: aiosqlite.Connection, claims: dict) -> aiosqlite.Row:
         await db.execute(
             """
             INSERT INTO users (azure_oid, email, name, azure_tenant_id, role,
-                               status, last_login_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                               status, login_count, last_login_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))
             """,
             (oid, email, name, azure_tenant_id, role or ROLE_USER, STATUS_ACTIVE),
         )
@@ -71,9 +72,17 @@ async def upsert_user(db: aiosqlite.Connection, claims: dict) -> aiosqlite.Row:
 
         async with db.execute("SELECT * FROM users WHERE azure_oid = ?", (oid,)) as cursor:
             created = await cursor.fetchone()
-        await _claim_orphaned_rows(db, created["id"])
-        await db.commit()
-        return created
+
+        # Order matters. A person who was invited must not adopt the orphaned
+        # credentials of a single-user install: they are joining someone
+        # else's workspace, not inheriting one.
+        joined = await accept_pending_invitation(db, created["id"], email, azure_tenant_id)
+        if joined is None:
+            await _claim_orphaned_rows(db, created["id"])
+            await db.commit()
+
+        async with db.execute("SELECT * FROM users WHERE id = ?", (created["id"],)) as cursor:
+            return await cursor.fetchone()
 
     # The allowlist can promote, but never demotes here: an admin promoted by
     # another admin in the UI would otherwise be reset on their next request.
@@ -84,12 +93,18 @@ async def upsert_user(db: aiosqlite.Connection, claims: dict) -> aiosqlite.Row:
         """
         UPDATE users
            SET email = ?, name = ?, azure_tenant_id = ?, role = ?,
+               login_count = COALESCE(login_count, 0) + 1,
                last_login_at = datetime('now')
          WHERE id = ?
         """,
         (email, name, azure_tenant_id, new_role, existing["id"]),
     )
     await db.commit()
+
+    # An invitation sent after this person had already signed in is redeemed on
+    # their next visit rather than being left stranded.
+    if existing["owner_id"] is None:
+        await accept_pending_invitation(db, existing["id"], email, azure_tenant_id)
 
     async with db.execute("SELECT * FROM users WHERE id = ?", (existing["id"],)) as cursor:
         return await cursor.fetchone()

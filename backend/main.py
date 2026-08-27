@@ -34,10 +34,11 @@ from core.middleware import (
 from core.versioning import API_V1_PREFIX, LEGACY_SUNSET, register_routers
 from auth.dependencies import get_current_user
 from services.user_service import tenant_counts
+from models.schemas import ProfileUpdate
 from routers import (
     admin, tenants, subscriptions, costs, services, upload, bandwidth, boq,
     guide, integrations, orphaned, scans, changes, activity, prices, security,
-    compute, anomalies,
+    compute, anomalies, team,
 )
 
 log = logging.getLogger("app")
@@ -62,6 +63,7 @@ API_ROUTERS = [
     prices.router,
     security.router,
     compute.router,
+    team.router,
 ]
 
 
@@ -174,16 +176,64 @@ async def me(
     scoped to the account — nobody sees a number that includes someone else's.
     """
     counts = await tenant_counts(db)
+    async with db.execute(
+        "SELECT phone, login_count FROM users WHERE id = ?", (current_user["actor_id"],)
+    ) as cursor:
+        profile = await cursor.fetchone()
+
+    owner_email = current_user["email"]
+    if not current_user["is_owner"]:
+        async with db.execute(
+            "SELECT email FROM users WHERE id = ?", (current_user["account_id"],)
+        ) as cursor:
+            row = await cursor.fetchone()
+        owner_email = row["email"] if row else ""
+
     return {
-        "id": current_user["account_id"],
+        "id": current_user["actor_id"],
+        "workspace_id": current_user["account_id"],
         "email": current_user["email"],
         "name": current_user["name"],
+        "phone": (profile["phone"] if profile else "") or "",
+        "login_count": (profile["login_count"] if profile else 0) or 0,
         "role": current_user["role"],
         "status": current_user["status"],
         "created_at": current_user["created_at"],
         "is_admin": current_user["role"] == "admin",
+        # What the person sees in the account menu. "Administrator" is the
+        # platform-wide role that opens the admin centre; everyone else is
+        # "Standard", whether they own a workspace or were invited into one.
+        "access_level": "Administrator" if current_user["role"] == "admin" else "Standard",
+        "is_owner": current_user["is_owner"],
+        "owner_email": owner_email,
         "tenant_count": counts.get(current_user["account_id"], 0),
     }
+
+
+@app.patch("/api/me", tags=["account"])
+@app.patch(f"{API_V1_PREFIX}/me", tags=["account"])
+async def update_me(
+    body: ProfileUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Update the parts of the profile this app owns.
+
+    Name, email and tenant come from Entra and are refreshed from the token on
+    every request, so they are deliberately not editable here -- an edit would
+    be silently overwritten on the next call. The phone number has no source
+    other than the person themselves.
+    """
+    if body.phone is None:
+        raise HTTPException(status_code=400, detail="Nothing to update.")
+
+    await db.execute(
+        "UPDATE users SET phone = ? WHERE id = ?",
+        (body.phone, current_user["actor_id"]),
+    )
+    await db.commit()
+    return await me(current_user=current_user, db=db)
 
 
 @app.get("/api/health", tags=["system"])

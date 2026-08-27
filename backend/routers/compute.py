@@ -23,7 +23,7 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, require_workspace_owner
 from core import db as db_module
 from core.db import get_db
 from services import azure_metrics, compute_intel, vm_resize
@@ -409,7 +409,9 @@ async def preview_resize(
     return plan
 
 
-@router.post("/resize")
+# Preview stays open to the whole workspace: it only reads. Executing the
+# resize restarts a live virtual machine, so it is the owner's call.
+@router.post("/resize", dependencies=[Depends(require_workspace_owner)])
 async def start_resize(
     body: ResizeRequest,
     current_user: dict = Depends(get_current_user),

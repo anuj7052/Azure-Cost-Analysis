@@ -13,9 +13,35 @@ _SCHEMAS = {
             name            TEXT    NOT NULL DEFAULT '',
             azure_tenant_id TEXT    NOT NULL DEFAULT '',
             role            TEXT    NOT NULL DEFAULT 'user',
-            status          TEXT    NOT NULL DEFAULT 'active',
-            created_at      TEXT    DEFAULT (datetime('now')),
+            status          TEXT    NOT NULL DEFAULT 'active',            -- The workspace this person reads. NULL means they are their own
+            -- owner. A team member carries their owner's id, which is what
+            -- makes them see the owner's connected tenants instead of an
+            -- empty account.
+            owner_id        INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            -- Contact number for the account. Entra sign-in tokens do not
+            -- carry one, so this is only ever what the person typed in.
+            phone           TEXT    NOT NULL DEFAULT '',
+            login_count     INTEGER NOT NULL DEFAULT 0,            created_at      TEXT    DEFAULT (datetime('now')),
             last_login_at   TEXT
+        )
+    """,
+    # People an owner has invited into their workspace. The row is created
+    # before the invitee has ever signed in, so it is keyed by email rather
+    # than by user id, and holds the Entra tenant the invite was issued from.
+    # Acceptance re-checks that tenant against the token, so an invitation
+    # cannot be redeemed by someone outside the owner's directory even if the
+    # email address is guessed or forwarded.
+    "team_invitations": """
+        CREATE TABLE IF NOT EXISTS team_invitations (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            email            TEXT    NOT NULL,
+            azure_tenant_id  TEXT    NOT NULL DEFAULT '',
+            status           TEXT    NOT NULL DEFAULT 'pending',
+            created_at       TEXT    DEFAULT (datetime('now')),
+            accepted_at      TEXT,
+            accepted_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE (owner_id, email)
         )
     """,
     "service_principals": """
@@ -350,6 +376,13 @@ _INDEXES = [
     # ownership columns lead the index because they lead the WHERE clause.
     "CREATE INDEX IF NOT EXISTS idx_security_audit_owner "
     "ON security_audit (user_id, tenant_id, id DESC)",
+    # Invitations are read two ways: "who is on my team" and, on every first
+    # sign-in, "is there anything pending for this email".
+    "CREATE INDEX IF NOT EXISTS idx_invitations_owner "
+    "ON team_invitations (owner_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_invitations_email "
+    "ON team_invitations (email, status)",
+    "CREATE INDEX IF NOT EXISTS idx_users_owner ON users (owner_id)",
 ]
 
 
@@ -390,10 +423,33 @@ async def _add_owner_column(db: aiosqlite.Connection, table: str, carried: list[
     await db.execute(f"DROP TABLE {table}_old")
 
 
+async def _add_missing_columns(db: aiosqlite.Connection, table: str, columns: dict[str, str]):
+    """
+    Add columns to a table that already exists in a deployed database.
+
+    `CREATE TABLE IF NOT EXISTS` silently does nothing when the table is
+    already there, so a new column in `_SCHEMAS` never reaches an existing
+    install. Every definition here must carry a default, because SQLite cannot
+    add a NOT NULL column without one.
+    """
+    if not await _table_exists(db, table):
+        return
+    existing = await _columns(db, table)
+    for name, definition in columns.items():
+        if name not in existing:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
 async def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
+        await _add_missing_columns(db, "users", {
+            "owner_id": "INTEGER REFERENCES users(id)",
+            "phone": "TEXT NOT NULL DEFAULT ''",
+            "login_count": "INTEGER NOT NULL DEFAULT 0",
+        })
         await db.execute(_SCHEMAS["users"])
+        await db.execute(_SCHEMAS["team_invitations"])
 
         await _add_owner_column(
             db,

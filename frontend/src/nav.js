@@ -2,7 +2,7 @@ import {
   Activity, AlertTriangle, ClipboardList, Cpu, FileCode, FolderOpen, Gauge,
   GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, Network, Plug, Scale,
   Search, Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
-  TrendingUp, UserCog, Wallet,
+  TrendingUp, UserCog, Users, Wallet,
 } from 'lucide-react';
 
 /**
@@ -139,6 +139,10 @@ export const SECTIONS = [
       {
         to: '/settings', label: 'Settings', icon: Settings,
         blurb: 'Connect Azure tenants, import usage files and set the reporting period.',
+      },
+      {
+        to: '/team', label: 'Team', icon: Users,
+        blurb: 'Give up to five colleagues from your directory view access to this workspace.',
       },
       {
         to: '/apis', label: 'API Catalog', icon: Plug,

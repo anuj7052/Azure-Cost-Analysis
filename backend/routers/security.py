@@ -22,7 +22,7 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, require_workspace_owner
 from core.db import get_db
 from services import access_change, access_review, graph_identity, security_fetch
 from services import security_posture as posture
@@ -845,7 +845,7 @@ async def preview_grant(
     }
 
 
-@router.post("/access/grant")
+@router.post("/access/grant", dependencies=[Depends(require_workspace_owner)])
 async def grant_access(
     body: GrantRequest,
     current_user: dict = Depends(get_current_user),
@@ -974,7 +974,7 @@ async def preview_revoke(
     }
 
 
-@router.post("/access/revoke")
+@router.post("/access/revoke", dependencies=[Depends(require_workspace_owner)])
 async def revoke_access(
     body: RevokeRequest,
     current_user: dict = Depends(get_current_user),

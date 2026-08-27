@@ -159,6 +159,9 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
+  /** Accepts a fresh account payload from an endpoint that already returned one. */
+  setMe: (me) => set({ me }),
+
   // ── Tenants ──
   tenants: readCache('tenants')?.value ?? [],
   selectedTenantId: prefs.selectedTenantId ?? null,
