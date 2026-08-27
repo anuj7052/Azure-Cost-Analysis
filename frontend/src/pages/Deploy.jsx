@@ -58,7 +58,10 @@ function PlanTable({ plan }) {
         <span className="font-medium text-slate-300">{plan.location}</span>.
       </p>
 
-      <table className="w-full text-xs tabular-nums">
+      {/* Resource names do not shorten, so on a narrow screen this scrolls
+          rather than crushing every column into an unreadable width. */}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[40rem] text-xs tabular-nums">
         <thead>
           <tr className="text-slate-500 border-b border-slate-800">
             <th className="py-1.5 text-left font-medium">Resource</th>
@@ -85,7 +88,8 @@ function PlanTable({ plan }) {
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
 
       <p className="text-[11px] text-slate-400 mt-3">
         The template covers {money(plan.covered_monthly_cost, plan.currency)} of the{' '}

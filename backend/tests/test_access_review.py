@@ -112,7 +112,39 @@ class TestNormalisation:
         raw = {"id": "/x", "properties": {"principalId": "p1", "scope": f"/subscriptions/{SUB_A}"}}
         item = ar.normalise_assignment(raw)
         assert item["resolved"] is False
-        assert item["principal_name"] == "p1"
+        # The object id is kept, but it is not offered as a name. Using it as
+        # one produced headlines like "265b1023-... has not used Owner", which
+        # reads as though the GUID were a colleague.
+        assert item["principal_name"] == "Name unavailable"
+        assert item["principal_id"] == "p1"
+
+    def test_unresolved_principal_is_named_by_its_type_where_known(self):
+        raw = {
+            "id": "/x",
+            "properties": {
+                "principalId": "p1",
+                "principalType": "ServicePrincipal",
+                "scope": f"/subscriptions/{SUB_A}",
+            },
+        }
+        item = ar.normalise_assignment(raw)
+        assert item["principal_name"] == "Name unavailable"
+
+    def test_subscription_name_is_used_where_it_is_known(self):
+        raw = {"id": "/x", "properties": {"principalId": "p1", "scope": f"/subscriptions/{SUB_A}"}}
+        item = ar.normalise_assignment(
+            raw, subscription_names={SUB_A: "Kredily Production"}
+        )
+        assert item["subscription_name"] == "Kredily Production"
+        assert item["scope_label"] == "Kredily Production"
+        # The id survives alongside the name, because operations act on it.
+        assert item["subscription_id"] == SUB_A
+
+    def test_unknown_subscription_is_not_shown_as_a_guid(self):
+        raw = {"id": "/x", "properties": {"principalId": "p1", "scope": f"/subscriptions/{SUB_A}"}}
+        item = ar.normalise_assignment(raw)
+        assert item["scope_label"] == "Unnamed subscription"
+        assert SUB_A not in item["scope_label"]
 
 
 class TestPrincipalView:
@@ -207,7 +239,7 @@ class TestReview:
             [norm(principal_id="p-ghost", principal="ghost")], events=[event()]
         )
         unused = [f for f in review["findings"] if f["kind"] == ar.UNUSED][0]
-        assert "confirm before revoking" in unused["detail"]
+        assert "confirm the requirement before removing it" in unused["detail"]
 
     def test_stale_uses_the_configured_threshold(self):
         review = ar.review_access(
@@ -459,3 +491,84 @@ class TestRightSizing:
         result = ar.review_access([norm()], [event()])
         note = result["right_sizing"]["note"]
         assert "data-plane" in note
+
+
+class TestFriendlyFieldsOnEveryFinding:
+    """
+    Every finding kind must carry the readable fields, not just the usage ones.
+
+    This is a regression test for a defect found against live Azure: the
+    redundancy and sprawl cards rendered "Where: Not available" while the unused
+    and stale cards named the subscription correctly, because each builder
+    assembled its own subset of fields by hand.
+    """
+
+    def _review(self):
+        # Three subscriptions, because sprawl is only reported past a
+        # threshold of three -- two would test the wrong branch.
+        sub_c = "33333333-3333-3333-3333-333333333333"
+        sub_names = {
+            SUB_A: "Kredily Production",
+            SUB_B: "Tally Group",
+            sub_c: "Millienium Semiconductors",
+        }
+        assignments = []
+        # Two subscription-level Owner grants plus a redundant one beneath,
+        # which between them trigger sprawl and redundancy.
+        for sub in (SUB_A, SUB_B, sub_c):
+            assignments.append(ar.normalise_assignment(
+                {
+                    "id": f"/a-{sub}",
+                    "properties": {
+                        "principalId": "p1",
+                        "principalType": "User",
+                        "principalName": "Anuj Singh",
+                        "roleDefinitionName": "Owner",
+                        "scope": f"/subscriptions/{sub}",
+                    },
+                },
+                subscription_names=sub_names,
+            ))
+        assignments.append(ar.normalise_assignment(
+            {
+                "id": "/a-nested",
+                "properties": {
+                    "principalId": "p1",
+                    "principalType": "User",
+                    "principalName": "Anuj Singh",
+                    "roleDefinitionName": "Owner",
+                    "scope": f"/subscriptions/{SUB_A}/resourceGroups/rg-prod",
+                },
+            },
+            subscription_names=sub_names,
+        ))
+        return ar.review_access(assignments, events=[event()])
+
+    def test_redundant_findings_say_where_they_apply(self):
+        findings = [f for f in self._review()["findings"] if f["kind"] == ar.REDUNDANT]
+        assert findings, "expected a redundant finding"
+        for finding in findings:
+            assert finding["scope_label"], "a redundant finding printed no location"
+            assert finding["subscription_name"] == "Kredily Production"
+
+    def test_sprawl_findings_say_where_they_apply(self):
+        findings = [f for f in self._review()["findings"] if f["kind"] == ar.SPRAWL]
+        assert findings, "expected a sprawl finding"
+        for finding in findings:
+            # Sprawl spans subscriptions, so it names the pattern rather than
+            # one place -- but it must never be blank.
+            assert finding["scope_label"] == "3 subscriptions"
+            assert finding["scope_sentence"]
+
+    def test_no_finding_prints_a_subscription_guid_as_its_location(self):
+        for finding in self._review()["findings"]:
+            assert SUB_A not in finding.get("scope_label", "")
+            assert SUB_B not in finding.get("scope_label", "")
+
+    def test_every_finding_carries_the_identifiers_operations_need(self):
+        # Names are for reading; ids are for acting. Losing the id would make
+        # the "Remove access" button on the card impossible to wire up.
+        for finding in self._review()["findings"]:
+            assert "principal_id" in finding
+            assert "role_definition_id" in finding
+            assert "assignment_id" in finding

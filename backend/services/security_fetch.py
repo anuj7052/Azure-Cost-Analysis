@@ -33,6 +33,7 @@ ADVISOR_API = "2020-01-01"
 ASSESSMENTS_API = "2021-06-01"
 ALERTS_API = "2022-01-01"
 SECURE_SCORE_API = "2020-01-01"
+PRICINGS_API = "2023-01-01"
 POLICY_STATES_API = "2019-10-01"
 POLICY_ASSIGNMENTS_API = "2022-06-01"
 POLICY_EXEMPTIONS_API = "2022-07-01-preview"
@@ -52,6 +53,22 @@ PERMISSION_FOR = {
 # point where the answer is still wanted.
 PER_SUBSCRIPTION_BUDGET = 90.0
 MAX_CONCURRENT = 4
+
+# Azure throttles per-subscription per-provider. Two retries is enough to ride
+# out a burst caused by our own fan-out without turning one slow subscription
+# into a ninety-second stall for everybody else.
+THROTTLE_RETRIES = 2
+MAX_RETRY_WAIT = 20.0
+
+
+def _retry_after(response: httpx.Response) -> float:
+    """How long Azure asked us to wait, clamped to something a request can survive."""
+    raw = response.headers.get("Retry-After") or response.headers.get("retry-after")
+    try:
+        wait = float(raw)
+    except (TypeError, ValueError):
+        wait = 2.0
+    return max(0.5, min(wait, MAX_RETRY_WAIT))
 
 
 def _headers(token: str) -> Dict[str, str]:
@@ -101,9 +118,40 @@ def describe_failure(exc: Exception, source: str, subscription_id: str) -> Dict[
                 "no data to give rather than data being withheld."
             )
             return entry
+        if code == 429:
+            # Distinct from a plain failure: the data exists and we are
+            # entitled to it, Azure is simply rate limiting. Telling somebody
+            # to check their permissions here sends them to the wrong place.
+            entry["kind"] = "throttled"
+            entry["message"] = (
+                "Azure rate limited this request after "
+                f"{THROTTLE_RETRIES} retries. The data exists and this account "
+                "can read it — narrow the subscription selection or try again "
+                "shortly."
+            )
+            return entry
         entry["message"] = f"Azure returned HTTP {code}."
 
     return entry
+
+
+async def _send(client: httpx.AsyncClient, request) -> httpx.Response:
+    """
+    Issue one ARM request, riding out throttling.
+
+    A 429 is not a failure of the query, it is Azure asking us to slow down --
+    usually because of our own fan-out. Retrying it here keeps a transient
+    burst from being reported to the user as a missing subscription, which
+    would read as "no findings" on a security page.
+    """
+    attempt = 0
+    while True:
+        response = await request()
+        if response.status_code != 429 or attempt >= THROTTLE_RETRIES:
+            response.raise_for_status()
+            return response
+        await asyncio.sleep(_retry_after(response))
+        attempt += 1
 
 
 async def _get_all(
@@ -111,19 +159,29 @@ async def _get_all(
     url: str,
     token: str,
     max_pages: int = 20,
+    flags: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """GET a paged ARM collection, following nextLink."""
+    """
+    GET a paged ARM collection, following nextLink.
+
+    If the collection is longer than `max_pages` the caller is told so through
+    `flags`. Silently returning the first slice would be the worst possible
+    outcome here: the short read gets written to a snapshot as if it were
+    complete, and the next diff reports every unread finding as "resolved".
+    """
     values: List[Dict[str, Any]] = []
     next_url: Optional[str] = url
     pages = 0
 
     while next_url and pages < max_pages:
-        response = await client.get(next_url, headers=_headers(token))
-        response.raise_for_status()
+        response = await _send(client, lambda u=next_url: client.get(u, headers=_headers(token)))
         payload = response.json()
         values.extend(payload.get("value") or [])
         next_url = payload.get("nextLink")
         pages += 1
+
+    if next_url and flags is not None:
+        flags["truncated"] = True
 
     return values
 
@@ -134,6 +192,7 @@ async def _post_all(
     token: str,
     body: Dict[str, Any],
     max_pages: int = 20,
+    flags: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """POST a paged ARM collection (Policy Insights uses POST for queries)."""
     values: List[Dict[str, Any]] = []
@@ -141,12 +200,16 @@ async def _post_all(
     pages = 0
 
     while next_url and pages < max_pages:
-        response = await client.post(next_url, headers=_headers(token), json=body)
-        response.raise_for_status()
+        response = await _send(
+            client, lambda u=next_url: client.post(u, headers=_headers(token), json=body)
+        )
         payload = response.json()
         values.extend(payload.get("value") or [])
         next_url = payload.get("@odata.nextLink") or payload.get("nextLink")
         pages += 1
+
+    if next_url and flags is not None:
+        flags["truncated"] = True
 
     return values
 
@@ -168,32 +231,43 @@ async def fetch_advisor(token: str, subscription_id: str) -> List[Dict[str, Any]
 
 async def fetch_defender(token: str, subscription_id: str) -> Dict[str, Any]:
     """
-    Defender assessments, alerts and secure score for one subscription.
+    Defender assessments, alerts, secure score and plan coverage for one subscription.
 
     Assessments are filtered to the unhealthy ones. A healthy assessment is a
     finding that does not exist, and a large estate produces tens of thousands
-    of them — carrying those into a diff would swamp every real change.
+    of them -- carrying those into a diff would swamp every real change.
+
+    Plan coverage is read because without it an empty result is unreadable. A
+    subscription with every Defender plan on Free tier reports no assessments
+    at all, which is indistinguishable from a subscription that is genuinely
+    clean unless we go and ask which plans are switched on.
     """
     base = f"{MGMT_BASE}/subscriptions/{subscription_id}/providers/Microsoft.Security"
+    flags: Dict[str, Any] = {}
 
     async with httpx.AsyncClient(timeout=90) as client:
-        assessments_raw = await _get_all(
-            client, f"{base}/assessments?api-version={ASSESSMENTS_API}", token
+        # Each of the four reads is a separate permission in practice. A tenant
+        # that grants alert access but not assessment access must still get its
+        # alerts -- those are the findings saying something may already have
+        # been exploited, and they are the worst possible thing to drop.
+        assessments_raw, assessments_error = await _optional(
+            _get_all(client, f"{base}/assessments?api-version={ASSESSMENTS_API}", token, flags=flags)
         )
-        # Alerts and secure score are secondary. If either provider is not
-        # enabled, the assessments still stand on their own.
-        try:
-            alerts_raw = await _get_all(
-                client, f"{base}/alerts?api-version={ALERTS_API}", token
-            )
-        except httpx.HTTPError:
-            alerts_raw = []
-        try:
-            scores_raw = await _get_all(
-                client, f"{base}/secureScores?api-version={SECURE_SCORE_API}", token
-            )
-        except httpx.HTTPError:
-            scores_raw = []
+        alerts_raw, _ = await _optional(
+            _get_all(client, f"{base}/alerts?api-version={ALERTS_API}", token)
+        )
+        scores_raw, _ = await _optional(
+            _get_all(client, f"{base}/secureScores?api-version={SECURE_SCORE_API}", token)
+        )
+        pricings_raw, _ = await _optional(
+            _get_all(client, f"{base}/pricings?api-version={PRICINGS_API}", token)
+        )
+
+    # If assessments were denied *and* nothing else came back, there is no
+    # answer here at all -- report it as the permission failure it is rather
+    # than as a clean subscription.
+    if assessments_error is not None and not alerts_raw and not scores_raw:
+        raise assessments_error
 
     assessments = [posture.normalise_assessment(a) for a in assessments_raw]
     unhealthy = [a for a in assessments if a["status"].lower() != "healthy"]
@@ -208,6 +282,60 @@ async def fetch_defender(token: str, subscription_id: str) -> Dict[str, Any]:
         "alerts": active,
         "secure_score": _secure_score(scores_raw, subscription_id),
         "assessed_count": len(assessments),
+        "plans": _defender_plans(pricings_raw, subscription_id),
+        "assessments_denied": assessments_error is not None,
+        "truncated": bool(flags.get("truncated")),
+    }
+
+
+async def _optional(coro) -> Tuple[List[Dict[str, Any]], Optional[Exception]]:
+    """Await a secondary read, returning the failure instead of raising it."""
+    try:
+        return await coro, None
+    except httpx.HTTPError as exc:
+        return [], exc
+
+
+def _defender_plans(raw: List[Dict[str, Any]], subscription_id: str) -> Dict[str, Any]:
+    """
+    Which Defender plans are actually paid for on this subscription.
+
+    Without this, "no findings" is ambiguous. With it, the page can say "no
+    findings because Defender is not switched on for these five resource
+    types", which is a completely different sentence and the only honest one.
+    """
+    enabled: List[str] = []
+    disabled: List[str] = []
+
+    for item in raw:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        tier = str(((item.get("properties") or {}).get("pricingTier")) or "").lower()
+        if tier == "standard":
+            enabled.append(name)
+        elif tier == "free":
+            disabled.append(name)
+
+    if not raw:
+        return {
+            "subscription_id": subscription_id,
+            "known": False,
+            "enabled": [],
+            "disabled": [],
+            "note": (
+                "Defender plan coverage could not be read for this subscription, "
+                "so an empty result here cannot be read as either clean or "
+                "unmonitored."
+            ),
+        }
+
+    return {
+        "subscription_id": subscription_id,
+        "known": True,
+        "enabled": sorted(enabled),
+        "disabled": sorted(disabled),
+        "note": "",
     }
 
 
@@ -258,16 +386,11 @@ async def fetch_policy(token: str, subscription_id: str, now_iso: str = "") -> D
         f"?api-version={POLICY_EXEMPTIONS_API}"
     )
 
+    flags: Dict[str, Any] = {}
     async with httpx.AsyncClient(timeout=90) as client:
-        states_raw = await _post_all(client, states_url, token, {})
-        try:
-            assignments_raw = await _get_all(client, assignments_url, token)
-        except httpx.HTTPError:
-            assignments_raw = []
-        try:
-            exemptions_raw = await _get_all(client, exemptions_url, token)
-        except httpx.HTTPError:
-            exemptions_raw = []
+        states_raw = await _post_all(client, states_url, token, {}, flags=flags)
+        assignments_raw, _ = await _optional(_get_all(client, assignments_url, token))
+        exemptions_raw, _ = await _optional(_get_all(client, exemptions_url, token))
 
     states = [posture.normalise_policy_state(s) for s in states_raw]
 
@@ -279,10 +402,15 @@ async def fetch_policy(token: str, subscription_id: str, now_iso: str = "") -> D
         "compliant_count": sum(1 for s in states if s["is_compliant"]),
         "assignments": [posture.normalise_policy_assignment(a) for a in assignments_raw],
         "exemptions": [posture.normalise_exemption(e, now_iso) for e in exemptions_raw],
+        "truncated": bool(flags.get("truncated")),
     }
 
 
-async def fetch_role_assignments(token: str, subscription_id: str) -> Dict[str, Any]:
+async def fetch_role_assignments(
+    token: str,
+    subscription_id: str,
+    subscription_names: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """
     Role assignments and role definitions for one subscription.
 
@@ -291,42 +419,100 @@ async def fetch_role_assignments(token: str, subscription_id: str) -> Dict[str, 
     distinct role; fetching the definition list once is a single request that
     resolves all of them.
 
-    Principal *names* are not resolved here. That needs Microsoft Graph, which
-    is a separate consent this app does not hold, so principals appear by object
-    id and the response says so rather than pretending the GUID is a name.
+    Subscription display names are passed in rather than fetched, because the
+    caller already read the subscription list to decide this request was
+    allowed at all. Asking Azure again, once per subscription, for a name it
+    has already handed over would be the classic N+1.
+
+    Principal *names* are resolved separately, by the router, using Microsoft
+    Graph. That needs its own consent, so it cannot be done here and must not
+    be allowed to fail this read.
     """
     base = f"{MGMT_BASE}/subscriptions/{subscription_id}/providers/Microsoft.Authorization"
 
+    flags: Dict[str, Any] = {}
     async with httpx.AsyncClient(timeout=90) as client:
         assignments_raw = await _get_all(
-            client, f"{base}/roleAssignments?api-version={ROLE_ASSIGNMENTS_API}", token
+            client, f"{base}/roleAssignments?api-version={ROLE_ASSIGNMENTS_API}", token, flags=flags
         )
-        try:
-            definitions_raw = await _get_all(
-                client, f"{base}/roleDefinitions?api-version={ROLE_DEFINITIONS_API}", token
-            )
-        except httpx.HTTPError:
-            definitions_raw = []
+        definitions_raw, _ = await _optional(
+            _get_all(client, f"{base}/roleDefinitions?api-version={ROLE_DEFINITIONS_API}", token)
+        )
 
     role_names = {}
     custom = set()
+    permissions: Dict[str, Dict[str, Any]] = {}
     for definition in definitions_raw:
         props = definition.get("properties") or {}
         key = str(definition.get("name") or "").lower()
         role_names[key] = props.get("roleName") or ""
         if str(props.get("type") or "").lower() == "customrole":
             custom.add(key)
+        permissions[key] = _role_power(props)
 
     from services import access_review
 
     assignments = []
     for raw in assignments_raw:
-        item = access_review.normalise_assignment(raw, role_names=role_names)
-        if item["role_definition_id"].rsplit("/", 1)[-1].lower() in custom:
+        item = access_review.normalise_assignment(
+            raw, role_names=role_names, subscription_names=subscription_names
+        )
+        definition_key = item["role_definition_id"].rsplit("/", 1)[-1].lower()
+        if definition_key in custom:
             item["is_custom"] = True
+        # What the role can actually do, taken from the definition rather than
+        # inferred from its name. A custom role called "Reader" that holds a
+        # write action is exactly the assignment a name-based check misses.
+        item["permissions"] = permissions.get(definition_key) or _role_power({})
         assignments.append(item)
 
-    return {"assignments": assignments, "definition_count": len(definitions_raw)}
+    return {
+        "assignments": assignments,
+        "definition_count": len(definitions_raw),
+        "definitions_read": bool(definitions_raw),
+        "truncated": bool(flags.get("truncated")),
+    }
+
+
+def _role_power(props: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Reduce a role definition's permission arrays to what a reviewer needs.
+
+    Three questions decide whether an assignment is dangerous, and none of them
+    can be answered from the role's name: can it write, can it delete, and can
+    it grant access to somebody else. The last is the one that matters most --
+    a principal that can write role assignments can give itself anything else.
+    """
+    actions: List[str] = []
+    data_actions: List[str] = []
+    for block in props.get("permissions") or []:
+        actions.extend(str(a) for a in (block.get("actions") or []))
+        data_actions.extend(str(a) for a in (block.get("dataActions") or []))
+
+    lowered = [a.lower() for a in actions]
+
+    def covers(action: str, needle: str) -> bool:
+        """Does one declared action grant `needle`, honouring a trailing wildcard?"""
+        if action == "*":
+            return True
+        if action.endswith("*"):
+            return needle.startswith(action[:-1])
+        return action == needle
+
+    can_write = any(a == "*" or a.endswith("/write") or a.endswith("*") for a in lowered)
+    can_delete = any(a == "*" or a.endswith("/delete") or a.endswith("*") for a in lowered)
+    can_grant = any(
+        covers(a, "microsoft.authorization/roleassignments/write") for a in lowered
+    )
+
+    return {
+        "known": bool(actions or data_actions),
+        "action_count": len(actions),
+        "data_action_count": len(data_actions),
+        "can_write": can_write,
+        "can_delete": can_delete,
+        "can_grant_access": can_grant,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -379,8 +565,10 @@ def coverage_note(
     wrong, or nothing could be read. Saying which is not optional.
     """
     blocked = {e["subscription_id"] for e in errors if e["kind"] == "permission"}
-    failed = {e["subscription_id"] for e in errors} - blocked
-    covered = len(requested) - len(blocked) - len(failed)
+    throttled = {e["subscription_id"] for e in errors if e["kind"] == "throttled"} - blocked
+    unavailable = {e["subscription_id"] for e in errors if e["kind"] == "unavailable"} - blocked
+    failed = {e["subscription_id"] for e in errors} - blocked - throttled - unavailable
+    covered = len(requested) - len(blocked) - len(throttled) - len(unavailable) - len(failed)
 
     if not errors:
         return f"All {len(requested)} subscription(s) read successfully."
@@ -391,6 +579,17 @@ def coverage_note(
             f"{len(blocked)} denied access — this needs "
             f"{PERMISSION_FOR.get(source, 'read permission')}. Those subscriptions "
             "are absent from these results, which is not the same as being clean."
+        )
+    if throttled:
+        parts.append(
+            f"{len(throttled)} were rate limited by Azure after retries. That is a "
+            "temporary limit, not a permission problem — the findings for those "
+            "subscriptions are missing rather than absent."
+        )
+    if unavailable:
+        parts.append(
+            f"{len(unavailable)} do not have the provider registered, so they have "
+            "no data to give."
         )
     if failed:
         parts.append(f"{len(failed)} failed for other reasons and can be retried.")

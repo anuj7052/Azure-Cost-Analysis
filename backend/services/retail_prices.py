@@ -20,7 +20,8 @@ Two documented behaviours shape the code:
     'Virtual Machines' matches and 'virtual machines' does not.
 """
 import logging
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 
@@ -41,6 +42,54 @@ log = logging.getLogger(__name__)
 def _quote(value: str) -> str:
     """Escape a value for an OData string literal."""
     return str(value).replace("'", "''")
+
+
+class PriceCache:
+    """
+    A small time-boxed cache for published retail rates.
+
+    Azure's public pricing endpoint is slow and unauthenticated, and it was
+    being re-queried on every page load and every resize preview even though
+    list prices change on the order of months. On an estate large enough to
+    need several regions, those round-trips were a real part of the
+    60-second budget the whole request has — the Compute page timed out
+    outright once a second lookup was added.
+
+    Deliberately holds nothing tenant-specific: these are published list
+    prices, identical for every customer, so there is nothing here that could
+    leak between accounts. Cost, quota and telemetry are never cached — those
+    are per-customer and must be read fresh on every request.
+    """
+
+    TTL_SECONDS = 6 * 60 * 60
+    MAX_ENTRIES = 64
+
+    def __init__(self) -> None:
+        self._entries: Dict[Any, tuple] = {}
+
+    def get(self, key: Any) -> Optional[Any]:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        stored_at, value = entry
+        if time.monotonic() - stored_at > self.TTL_SECONDS:
+            self._entries.pop(key, None)
+            return None
+        return value
+
+    def put(self, key: Any, value: Any) -> None:
+        if len(self._entries) >= self.MAX_ENTRIES:
+            oldest = min(self._entries, key=lambda k: self._entries[k][0])
+            self._entries.pop(oldest, None)
+        self._entries[key] = (time.monotonic(), value)
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+
+# Shared by the fleet page and the resize review, so opening a review straight
+# after loading the fleet reuses the rates the fleet already paid for.
+price_cache = PriceCache()
 
 
 def build_filter(
@@ -70,6 +119,74 @@ def build_filter(
         clauses.append(f"priceType eq '{_quote(price_type)}'")
 
     return " and ".join(clauses)
+
+
+def vm_sku_filter(skus: Iterable[str], region: str) -> str:
+    """
+    An OData filter matching several VM sizes in one region.
+
+    Written as a chain of `or` clauses rather than `armSkuName in (...)`.
+    That reads like valid OData and every reference to the `in` operator says
+    it should work, but the Retail Prices service rejects it outright with
+    `400 Invalid OData parameters supplied` — verified against the live public
+    endpoint. Because the caller treated any failure as "no price available",
+    the entire application silently reported that Azure publishes no price for
+    any VM size, and every right-sizing saving came out blank.
+    """
+    names = sorted({(s or "").strip() for s in skus if (s or "").strip()})
+    if not names or not region:
+        return ""
+    clause = " or ".join(f"armSkuName eq '{_quote(n)}'" for n in names)
+    return (
+        f"serviceName eq 'Virtual Machines' "
+        f"and armRegionName eq '{_quote(region)}' "
+        f"and type eq 'Consumption' and ({clause})"
+    )
+
+
+def best_vm_rates(
+    items: Iterable[Dict[str, Any]], windows: bool
+) -> Dict[str, float]:
+    """
+    The lowest on-demand hourly rate per size, keyed lower-case.
+
+    Three kinds of meter are refused rather than ranked:
+
+      - **Spot and low-priority.** They are 4-5x cheaper and can be evicted at
+        any moment. Quoting one as the price of a VM would invent a saving that
+        only exists for a workload that tolerates being killed.
+      - **The wrong operating system.** A Windows meter carries the licence and
+        costs roughly 2.5x the Linux rate for the same silicon. Comparing a
+        Windows current price against a Linux target price produces a saving
+        that is arithmetic on two different products.
+      - **Cloud Services.** Microsoft publishes the classic Cloud Services
+        meters under the same `armSkuName`, at the Windows rate. They are not
+        virtual machines, and letting them into the pool skews the minimum.
+
+    Keys are lower-cased because Resource Graph, Cost Management and the
+    pricing catalogue each capitalise `Standard_D4as_v5` differently, and an
+    exact-match lookup loses the row without saying so.
+    """
+    best: Dict[str, float] = {}
+    for item in items:
+        name = (item.get("arm_sku_name") or "").strip()
+        if not name:
+            continue
+        meter = (item.get("meter_name") or "").lower()
+        product = (item.get("product_name") or "").lower()
+        if "spot" in meter or "low priority" in meter:
+            continue
+        if "cloud services" in product:
+            continue
+        if ("windows" in product) != windows:
+            continue
+        rate = item.get("retail_price")
+        if not isinstance(rate, (int, float)) or rate <= 0:
+            continue
+        key = name.lower()
+        if key not in best or rate < best[key]:
+            best[key] = float(rate)
+    return best
 
 
 def normalise(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -200,3 +317,58 @@ def compare_to_list(actual_rate: Optional[float], list_rate: Optional[float]) ->
         "percent": round(percent, 2),
         "verdict": verdict,
     }
+
+
+# Azure Retail Prices rejects a filter with too many `or` clauses -- probing
+# the live endpoint, 15 names are accepted and 20 are answered with
+# "Invalid OData parameters supplied". Any list longer than that has to be
+# asked for a different way, so a caller needing hundreds of sizes asks for
+# the region instead of naming them. One region-wide query is eight pages and
+# covers every VM in it, which is both faster and immune to the clause limit.
+MAX_SKUS_PER_FILTER = 15
+
+# Enough pages to cover the largest region's VM meters. Measured against
+# centralindia: 8 pages, ~7,100 meters, ~1,460 distinct sizes.
+REGION_MAX_PAGES = 12
+
+
+def region_vm_filter(region: str) -> str:
+    """Every pay-as-you-go virtual machine meter in one region."""
+    if not region:
+        return ""
+    return (
+        f"serviceName eq 'Virtual Machines' "
+        f"and armRegionName eq '{_quote(region)}' "
+        f"and type eq 'Consumption'"
+    )
+
+
+async def region_vm_rates(region: str, currency: str) -> Dict[bool, Dict[str, float]]:
+    """
+    The cheapest hourly rate for every VM size in a region, keyed by whether
+    the meter carries a Windows licence.
+
+    Only the two small rate maps are cached, never the seven thousand meters
+    they were derived from -- caching the raw response would put a hundred
+    megabytes of published prices in memory to answer a question about a few
+    hundred sizes.
+
+    An empty result means Azure did not answer, and callers must render that
+    as "price not available". It never means the region is free.
+    """
+    odata = region_vm_filter(region)
+    if not odata:
+        return {False: {}, True: {}}
+
+    key = (odata, currency, "region_rates")
+    cached = price_cache.get(key)
+    if cached is not None:
+        return cached
+
+    items = await fetch_prices(odata, currency=currency, max_pages=REGION_MAX_PAGES)
+    rates = {
+        False: best_vm_rates(items, windows=False),
+        True: best_vm_rates(items, windows=True),
+    }
+    price_cache.put(key, rates)
+    return rates

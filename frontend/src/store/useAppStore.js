@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe, fetchOrphaned, fetchPricing } from '../api/client';
+import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe, fetchOrphaned, fetchPricing, fetchCompute, fetchActivity, fetchPolicy, fetchDefender, fetchAdvisor, fetchAccessReview, fetchRoleAssignments } from '../api/client';
 import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
 import { readCache, readPrefs, writeCache, writePrefs, evictApiCache } from '../utils/persistCache';
 
@@ -43,6 +43,23 @@ function dedupe(key, run) {
  * rather than making the user find and press Refresh.
  */
 const RATE_LIMIT_RETRIES = 2;
+
+/**
+ * How many times a partial cost result is allowed to heal itself.
+ *
+ * The retries above cover a request that failed outright. These cover the
+ * quieter case: the request succeeded, but Azure throttled one subscription
+ * out of it, so the total is a real number that is simply too small. Left
+ * alone it stays too small until somebody presses Refresh.
+ *
+ * Bounded, because a tenant that is throttled all afternoon must not be
+ * queried in a loop all afternoon -- that makes the throttling worse and
+ * outlives the reader's attention either way.
+ */
+const MAX_COST_RETRIES = 3;
+
+// Never come back sooner than this, whatever Azure asked for.
+const MIN_COST_RETRY_SECONDS = 5;
 
 function retryAfterSeconds(err) {
   const detail = err?.response?.data?.detail;
@@ -115,11 +132,8 @@ function dateKeyOf(dateMode, months, fromDate, toDate) {
 
 /** Remember what the user picked so a refresh restores the same view. */
 function savePrefs(get) {
-  const { selectedTenantId, months, dateMode, fromDate, toDate } = get();
-  // The subscription selection is not persisted: restoring it re-triggers a
-  // cost query per subscription on the next load, which is exactly what
-  // choosing them by hand is meant to prevent.
-  writePrefs({ selectedTenantId, months, dateMode, fromDate, toDate });
+  const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate } = get();
+  writePrefs({ selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate });
 }
 
 export const useAppStore = create((set, get) => ({
@@ -182,12 +196,17 @@ export const useAppStore = create((set, get) => ({
 
   // ── Subscriptions ──
   subscriptions: [],
-  // Deliberately not restored from preferences. A saved selection meant every
-  // reload re-selected the subscriptions from last time and immediately fired a
-  // Cost Management query per subscription — the auto-loading this was supposed
-  // to stop, just delayed by one page load. The tenant and date range are still
-  // remembered, because neither costs anything until a subscription is picked.
-  selectedSubscriptionIds: [],
+  // Restored across reloads so the dashboard shows the same view the user left,
+  // without making them re-pick their subscriptions every time.
+  //
+  // This does mean a reload re-issues a cost query per selected subscription.
+  // That is affordable because the responses are cached (in memory, in
+  // localStorage, and on the server), so a reload inside the cache window
+  // costs nothing and a reload outside it is work the user wanted anyway.
+  // Anything restored here is still filtered against the subscriptions that
+  // actually came back from Azure, so a stale or revoked id cannot resurrect
+  // itself and silently skew a total.
+  selectedSubscriptionIds: prefs.selectedSubscriptionIds ?? [],
   subscriptionsLoading: false,
   subscriptionsError: null,
 
@@ -269,16 +288,88 @@ export const useAppStore = create((set, get) => ({
         months,
         ...(dateMode === 'custom' && fromDate && toDate ? { from_date: fromDate, to_date: toDate } : {}),
       };
+      const key = `costs:${JSON.stringify(payload)}`;
+
+      // A new selection or date range is a new question, and a person pressing
+      // Refresh is asking again on purpose. Either way the automatic retry
+      // budget starts over -- carrying an exhausted one across would leave the
+      // page silently unable to heal itself for the rest of the session.
+      if (key !== get().costRetryKey || (opts.force && !opts.auto)) {
+        set({ costRetriesLeft: MAX_COST_RETRIES });
+      }
+      set({ costRetryKey: key });
+
       await cached(
-        `costs:${JSON.stringify(payload)}`,
+        key,
         () => fetchCosts(payload),
         (data) => set({ costData: data, costLoading: false, costError: null }),
         opts,
       );
       set({ costLoading: false });
+      get().scheduleThrottledCostRetry();
     } catch (err) {
       set({ costLoading: false, costError: err.response?.data?.detail || err.message });
     }
+  },
+
+  /* --------------------------------------------------------------------
+   * Filling in a subscription Azure refused to answer for
+   *
+   * A throttled subscription used to leave the page saying "wait about 4s and
+   * hit Refresh". That is reasonable advice for a person and useless to the
+   * page, which could not press its own button -- so the total sat there
+   * understated until somebody noticed the amber bar and acted on it. The
+   * numbers were never wrong, but they were quietly incomplete, which on a
+   * cost page is the same problem wearing a different coat.
+   *
+   * The retry re-runs the whole query rather than merging a per-subscription
+   * result into the existing totals. That is deliberate: the response is
+   * already aggregated across subscriptions and re-aggregating half of it on
+   * the client is exactly the kind of arithmetic that produces a figure nobody
+   * can reconcile against an invoice. Re-asking costs one request and the
+   * answer is whole.
+   *
+   * Only failures the server marked retryable are waited on. A missing Cost
+   * Management Reader role refuses identically for ever, and a timer around it
+   * is a spin loop, not resilience.
+   * ----------------------------------------------------------------- */
+  costRetryTimer: null,
+  costRetryAt: null,
+  costRetryKey: null,
+  costRetriesLeft: MAX_COST_RETRIES,
+
+  cancelThrottledCostRetry: () => {
+    const { costRetryTimer } = get();
+    if (costRetryTimer) clearTimeout(costRetryTimer);
+    set({ costRetryTimer: null, costRetryAt: null });
+  },
+
+  scheduleThrottledCostRetry: () => {
+    get().cancelThrottledCostRetry();
+
+    const errors = get().costData?.coverage?.errors;
+    if (!Array.isArray(errors)) return;
+
+    const waits = errors.filter(e => e?.retryable).map(e => Number(e.retry_after_seconds) || 0);
+    if (waits.length === 0) return;
+
+    const retriesLeft = get().costRetriesLeft;
+    if (retriesLeft <= 0) return;
+
+    // The longest wait any failure asked for. Coming back on the shortest one
+    // would retry a subscription that is still inside its own cooldown, which
+    // renews the throttle instead of clearing it.
+    const seconds = Math.max(...waits, MIN_COST_RETRY_SECONDS);
+
+    const timer = setTimeout(() => {
+      set({ costRetryTimer: null, costRetryAt: null, costRetriesLeft: get().costRetriesLeft - 1 });
+      // `force` because the previous, partial answer is in the cache and
+      // serving it again would make the retry a no-op. `auto` marks it as the
+      // timer's own doing so it does not refund its own retry budget.
+      get().loadCosts({ force: true, auto: true });
+    }, seconds * 1000);
+
+    set({ costRetryTimer: timer, costRetryAt: Date.now() + seconds * 1000 });
   },
 
   setCostData: (data) => set({ costData: data }),
@@ -583,7 +674,23 @@ export const useAppStore = create((set, get) => ({
     const currency = imported.currency || 'USD';
     const rows = filterRows(importedRowsInRange(), selectedSubscriptionIds);
     set({
-      costData: buildCostSummary(rows, currency),
+      // An import is a complete answer for the file it came from, and saying
+      // so keeps the coverage line honest rather than absent — an absent
+      // coverage reads as "unknown", which this is not.
+      costData: {
+        ...buildCostSummary(rows, currency),
+        coverage: {
+          source: imported.file_name
+            ? `Imported file — ${imported.file_name}`
+            : 'Imported file',
+          fetched_at: new Date().toISOString(),
+          requested_subscriptions: selectedSubscriptionIds.length,
+          succeeded_subscriptions: selectedSubscriptionIds.length,
+          failed_subscriptions: [],
+          partial: false,
+          errors: [],
+        },
+      },
       bandwidthData: buildBandwidthSummary(rows, currency),
       rgData: buildRgSummary(rows, currency),
       activeServices: buildServiceList(rows),
@@ -685,6 +792,147 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
+  // ── Compute Intelligence ──
+  //
+  // Lives in the store rather than in the page so that /compute and /estate
+  // share one answer. This endpoint fans out to Resource Graph, Cost
+  // Management, Azure Monitor and Retail Prices; running it twice because the
+  // user visited two pages is not merely slow, it is harmful — Monitor
+  // throttles, and the second call can push the first into a 429 and turn a
+  // working fleet into "Not enough data".
+  //
+  // The verdicts themselves are computed entirely on the backend. Nothing here
+  // interprets, re-derives or adjusts them.
+  computeData: null,
+  computeLoading: false,
+  computeError: null,
+
+  loadCompute: async (opts = {}) => {
+    const { selectedTenantId, selectedSubscriptionIds, imported } = get();
+    // An uploaded billing file lists charges; it cannot say what a VM's CPU
+    // did, so this dataset is live-only and simply stays empty during import.
+    if (imported) return;
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
+    set({ computeLoading: true, computeError: null });
+    try {
+      const payload = {
+        tenant_id: selectedTenantId,
+        subscription_ids: selectedSubscriptionIds,
+        days: 30,
+      };
+      await cached(
+        `compute:${JSON.stringify(payload)}`,
+        () => fetchCompute(payload),
+        (data) => set({ computeData: data, computeLoading: false, computeError: null }),
+        opts,
+      );
+      set({ computeLoading: false });
+    } catch (err) {
+      set({ computeLoading: false, computeError: err.response?.data?.detail || err.message });
+    }
+  },
+
+  // ── Activity log ──
+  activityData: null,
+  activityLoading: false,
+  activityError: null,
+
+  loadActivity: async (opts = {}) => {
+    const { selectedTenantId, selectedSubscriptionIds, imported } = get();
+    if (imported) return;
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
+    const days = 7;
+    set({ activityLoading: true, activityError: null });
+    try {
+      await cached(
+        `activity:${selectedTenantId}:${selectedSubscriptionIds.join(',')}:${days}`,
+        () => fetchActivity(selectedTenantId, selectedSubscriptionIds, { days }),
+        (data) => set({ activityData: data, activityLoading: false, activityError: null }),
+        opts,
+      );
+      set({ activityLoading: false });
+    } catch (err) {
+      set({ activityLoading: false, activityError: err.response?.data?.detail || err.message });
+    }
+  },
+
+  // ── Governance & security posture ──
+  //
+  // Three separate Azure providers behind one flag pair. They are requested
+  // together because the estate page shows them together, but each is stored
+  // on its own: Defender is a paid tier many subscriptions do not have, and a
+  // subscription that was never scanned must never be rendered as "0 findings".
+  policyData: null,
+  defenderData: null,
+  advisorData: null,
+  postureLoading: false,
+  postureError: null,
+
+  loadPosture: async (opts = {}) => {
+    const { selectedTenantId, selectedSubscriptionIds, imported } = get();
+    if (imported) return;
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
+    const payload = {
+      tenant_id: selectedTenantId,
+      subscription_ids: selectedSubscriptionIds,
+    };
+    const key = JSON.stringify(payload);
+    set({ postureLoading: true, postureError: null });
+
+    // Settled, not all: Defender failing because the tier is not enabled must
+    // not erase the Policy answer that arrived perfectly well beside it.
+    const results = await Promise.allSettled([
+      cached(`policy:${key}`, () => fetchPolicy(payload), (d) => set({ policyData: d }), opts),
+      cached(`defender:${key}`, () => fetchDefender(payload), (d) => set({ defenderData: d }), opts),
+      cached(`advisor:${key}`, () => fetchAdvisor(payload), (d) => set({ advisorData: d }), opts),
+    ]);
+
+    const failures = results.filter(r => r.status === 'rejected');
+    set({
+      postureLoading: false,
+      postureError: failures.length === results.length
+        ? (failures[0].reason?.response?.data?.detail || failures[0].reason?.message || 'Could not read governance or security data.')
+        : null,
+    });
+  },
+
+  // ── Access & RBAC ──
+  //
+  // Kept out of `loadPosture` on purpose. Both endpoints read every role
+  // assignment in every selected subscription and the access review reads the
+  // Activity Log on top of that, so they are the slowest pair in the
+  // application. Firing them in the same wave as Defender and Advisor pushes
+  // the whole group into Azure's throttle.
+  accessData: null,
+  rolesData: null,
+  accessLoading: false,
+  accessError: null,
+
+  loadAccess: async (opts = {}) => {
+    const { selectedTenantId, selectedSubscriptionIds, imported } = get();
+    if (imported) return;
+    if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
+    const payload = {
+      tenant_id: selectedTenantId,
+      subscription_ids: selectedSubscriptionIds,
+    };
+    const key = JSON.stringify(payload);
+    set({ accessLoading: true, accessError: null });
+
+    const results = await Promise.allSettled([
+      cached(`access:${key}`, () => fetchAccessReview(payload), (d) => set({ accessData: d }), opts),
+      cached(`roles:${key}`, () => fetchRoleAssignments(payload), (d) => set({ rolesData: d }), opts),
+    ]);
+
+    const failures = results.filter(r => r.status === 'rejected');
+    set({
+      accessLoading: false,
+      accessError: failures.length === results.length
+        ? (failures[0].reason?.response?.data?.detail || failures[0].reason?.message || 'Could not read role assignments.')
+        : null,
+    });
+  },
+
   // ── Refresh ──
   /**
    * Throw away every cached API answer and re-fetch what is on screen.
@@ -713,6 +961,10 @@ export const useAppStore = create((set, get) => ({
     if (s.orphanedData) jobs.push(s.loadOrphaned(force));
     if (s.pricingData) jobs.push(s.loadPricing(force));
     if (s.dailyData) jobs.push(s.loadDailyCosts(null, force));
+    if (s.computeData) jobs.push(s.loadCompute(force));
+    if (s.activityData) jobs.push(s.loadActivity(force));
+    if (s.policyData || s.defenderData || s.advisorData) jobs.push(s.loadPosture(force));
+    if (s.accessData || s.rolesData) jobs.push(s.loadAccess(force));
     await Promise.allSettled(jobs);
   },
 }));

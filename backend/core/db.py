@@ -199,11 +199,128 @@ _SCHEMAS = {
             errors        TEXT    NOT NULL DEFAULT '[]'
         )
     """,
+
+    # The only table in this application that records something the user did to
+    # Azure rather than something Azure told us. A resize stops and restarts a
+    # real machine, so the row is opened before the first destructive call and
+    # updated as each step completes: if the process dies mid-operation the
+    # record still shows what was attempted and where it stopped.
+    #
+    # Prices are nullable on purpose. A resize performed while Azure Retail
+    # Prices was unreachable is still a valid audit record; writing 0 would
+    # turn a missing rate into a claim that the machine was free.
+    "vm_resize_operations": """
+        CREATE TABLE IF NOT EXISTS vm_resize_operations (
+            id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation_id             TEXT    NOT NULL UNIQUE,
+            user_id                  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id                TEXT    NOT NULL,
+            subscription_id          TEXT    NOT NULL DEFAULT '',
+            resource_id              TEXT    NOT NULL,
+            vm_name                  TEXT    NOT NULL DEFAULT '',
+            region                   TEXT    NOT NULL DEFAULT '',
+            old_sku                  TEXT    NOT NULL DEFAULT '',
+            new_sku                  TEXT    NOT NULL DEFAULT '',
+            old_power_state          TEXT    NOT NULL DEFAULT '',
+            final_power_state        TEXT    NOT NULL DEFAULT '',
+            old_monthly_price        REAL,
+            new_monthly_price        REAL,
+            estimated_monthly_saving REAL,
+            currency                 TEXT    NOT NULL DEFAULT 'USD',
+            state                    TEXT    NOT NULL DEFAULT 'VALIDATING',
+            steps                    TEXT    NOT NULL DEFAULT '[]',
+            azure_operation_id       TEXT    NOT NULL DEFAULT '',
+            failure_reason           TEXT    NOT NULL DEFAULT '',
+            created_at               TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at               TEXT    NOT NULL DEFAULT (datetime('now')),
+            completed_at             TEXT
+        )
+    """,
+
+    # Everything this application has changed about who can reach Azure.
+    #
+    # The row is written whether the change succeeded or failed, and a failure
+    # is the more interesting record of the two: a refused attempt to grant
+    # somebody Owner is exactly what an investigation later needs to find. That
+    # is why `result` exists rather than only successful rows being kept.
+    #
+    # `previous_state` and `new_state` are stored as text rather than as ids so
+    # the record stays readable after the role, the principal or the whole
+    # subscription has been deleted from Azure. An audit trail that can only be
+    # interpreted by calling the system it audits is not an audit trail.
+    #
+    # user_id and tenant_id are both NOT NULL and always appear together in the
+    # WHERE clause, matching posture_snapshots. A history query that forgot
+    # either one would show one customer another customer's administration.
+    "security_audit": """
+        CREATE TABLE IF NOT EXISTS security_audit (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id        TEXT    NOT NULL UNIQUE,
+            user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id       TEXT    NOT NULL,
+            actor_name      TEXT    NOT NULL DEFAULT '',
+            actor_email     TEXT    NOT NULL DEFAULT '',
+            action          TEXT    NOT NULL,
+            subscription_id TEXT    NOT NULL DEFAULT '',
+            scope           TEXT    NOT NULL DEFAULT '',
+            target_id       TEXT    NOT NULL DEFAULT '',
+            target_name     TEXT    NOT NULL DEFAULT '',
+            target_kind     TEXT    NOT NULL DEFAULT '',
+            previous_state  TEXT    NOT NULL DEFAULT '',
+            new_state       TEXT    NOT NULL DEFAULT '',
+            result          TEXT    NOT NULL DEFAULT 'pending',
+            failure_reason  TEXT    NOT NULL DEFAULT '',
+            azure_operation TEXT    NOT NULL DEFAULT '',
+            detail          TEXT    NOT NULL DEFAULT '{}',
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            completed_at    TEXT
+        )
+    """,
+    "anomaly_tracking": """
+        CREATE TABLE IF NOT EXISTS anomaly_tracking (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            -- The fingerprint of a cost change, not a row id: anomalies are
+            -- recomputed from billing data on every request and have no
+            -- identity of their own. Derived from tenant, subscription,
+            -- service, resource and period so the same change keeps the same
+            -- status when the page is reloaded.
+            anomaly_key     TEXT    NOT NULL,
+            user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id       TEXT    NOT NULL,
+            subscription_id TEXT    NOT NULL DEFAULT '',
+            service         TEXT    NOT NULL DEFAULT '',
+            resource_name   TEXT    NOT NULL DEFAULT '',
+            period          TEXT    NOT NULL DEFAULT '',
+            status          TEXT    NOT NULL DEFAULT 'new',
+            updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (tenant_id, user_id, anomaly_key)
+        )
+    """,
+    "anomaly_events": """
+        CREATE TABLE IF NOT EXISTS anomaly_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            anomaly_key     TEXT    NOT NULL,
+            user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id       TEXT    NOT NULL,
+            actor_name      TEXT    NOT NULL DEFAULT '',
+            actor_email     TEXT    NOT NULL DEFAULT '',
+            previous_status TEXT    NOT NULL DEFAULT '',
+            new_status      TEXT    NOT NULL DEFAULT '',
+            comment         TEXT    NOT NULL DEFAULT '',
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """,
 }
 
 # Search runs against name_lower across every scan the user owns, so without
 # these it degrades to a full table scan once a few scans have accumulated.
 _INDEXES = [
+    # Status is always read for one tenant's worth of anomalies at a time, and
+    # the history for one anomaly newest-first.
+    "CREATE INDEX IF NOT EXISTS idx_anomaly_tracking_owner "
+    "ON anomaly_tracking (tenant_id, user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_anomaly_events_key "
+    "ON anomaly_events (tenant_id, user_id, anomaly_key, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_scans_owner ON scans (user_id, tenant_id, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_scan_resources_scan ON scan_resources (scan_id)",
     "CREATE INDEX IF NOT EXISTS idx_scan_resources_name ON scan_resources (name_lower)",
@@ -222,6 +339,17 @@ _INDEXES = [
     # tenant, that I own" — the pair a diff needs.
     "CREATE INDEX IF NOT EXISTS idx_posture_owner "
     "ON posture_snapshots (user_id, tenant_id, kind, id DESC)",
+    # Resize reads are either "my history for this tenant" or "is anything
+    # already running against this exact VM" — the duplicate-click guard, which
+    # deliberately ignores who started it.
+    "CREATE INDEX IF NOT EXISTS idx_resize_owner "
+    "ON vm_resize_operations (user_id, tenant_id, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_resize_resource "
+    "ON vm_resize_operations (resource_id, id DESC)",
+    # Audit reads are always "my history for this tenant, newest first". The
+    # ownership columns lead the index because they lead the WHERE clause.
+    "CREATE INDEX IF NOT EXISTS idx_security_audit_owner "
+    "ON security_audit (user_id, tenant_id, id DESC)",
 ]
 
 
@@ -288,6 +416,10 @@ async def init_db():
         await db.execute(_SCHEMAS["price_changes"])
         await db.execute(_SCHEMAS["fx_rates"])
         await db.execute(_SCHEMAS["posture_snapshots"])
+        await db.execute(_SCHEMAS["vm_resize_operations"])
+        await db.execute(_SCHEMAS["security_audit"])
+        await db.execute(_SCHEMAS["anomaly_tracking"])
+        await db.execute(_SCHEMAS["anomaly_events"])
         for statement in _INDEXES:
             await db.execute(statement)
         await db.commit()

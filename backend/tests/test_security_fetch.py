@@ -216,3 +216,102 @@ class TestSnapshots:
         assert [h["finding_count"] for h in history] == [0, 1]
         assert history[1]["high_count"] == 1
         await db.close()
+
+
+class TestThrottling:
+    """
+    429 is neither a permission problem nor a dead subscription. Conflating it
+    with either sends the reader to fix something that is not broken.
+    """
+
+    def test_rate_limiting_is_its_own_kind(self):
+        entry = sf.describe_failure(http_error(429), posture.DEFENDER, SUB_A)
+        assert entry["kind"] == "throttled"
+        assert entry["permission"] == ""
+
+    def test_rate_limiting_does_not_blame_permissions(self):
+        entry = sf.describe_failure(http_error(429), posture.DEFENDER, SUB_A)
+        assert "this account can read it" in entry["message"]
+
+    def test_coverage_separates_throttled_from_denied_and_failed(self):
+        errors = [
+            sf.describe_failure(http_error(403), posture.DEFENDER, "s1"),
+            sf.describe_failure(http_error(429), posture.DEFENDER, "s2"),
+            sf.describe_failure(http_error(500), posture.DEFENDER, "s3"),
+        ]
+        note = sf.coverage_note(["s1", "s2", "s3", "s4"], errors, posture.DEFENDER)
+        assert "1 of 4 subscription(s) read" in note
+        assert "1 denied access" in note
+        assert "1 were rate limited" in note
+        assert "1 failed for other reasons" in note
+
+    def test_unregistered_providers_are_not_counted_as_failures(self):
+        errors = [sf.describe_failure(http_error(404), posture.POLICY, "s1")]
+        note = sf.coverage_note(["s1", "s2"], errors, posture.POLICY)
+        assert "no data to give" in note
+        assert "failed for other reasons" not in note
+
+    def test_retry_after_is_honoured_but_clamped(self):
+        def response(value):
+            request = httpx.Request("GET", "https://management.azure.com/x")
+            return httpx.Response(429, request=request, headers={"Retry-After": value})
+
+        assert sf._retry_after(response("5")) == 5.0
+        # A multi-minute Retry-After would outlive the request budget.
+        assert sf._retry_after(response("600")) == sf.MAX_RETRY_WAIT
+        # A date-formatted or missing header must not crash the read.
+        assert sf._retry_after(response("Tue, 26 Aug 2026 10:00:00 GMT")) == 2.0
+
+
+class TestRolePower:
+    """
+    A role's name is not evidence of what it can do. These read the definition.
+    """
+
+    def test_owner_style_wildcard_can_do_everything(self):
+        power = sf._role_power({"permissions": [{"actions": ["*"]}]})
+        assert power["can_write"] and power["can_delete"] and power["can_grant_access"]
+
+    def test_a_custom_role_named_reader_that_can_write_is_caught(self):
+        power = sf._role_power({"permissions": [{
+            "actions": ["Microsoft.Compute/virtualMachines/read",
+                        "Microsoft.Compute/virtualMachines/write"],
+        }]})
+        assert power["can_write"] is True
+        assert power["can_grant_access"] is False
+
+    def test_granting_access_is_detected_through_a_wildcard(self):
+        power = sf._role_power({"permissions": [{
+            "actions": ["Microsoft.Authorization/*"],
+        }]})
+        assert power["can_grant_access"] is True
+
+    def test_a_genuine_reader_grants_nothing(self):
+        power = sf._role_power({"permissions": [{"actions": ["*/read"]}]})
+        assert power["can_write"] is False
+        assert power["can_delete"] is False
+        assert power["can_grant_access"] is False
+
+    def test_an_unreadable_definition_says_so_rather_than_claiming_no_power(self):
+        power = sf._role_power({})
+        assert power["known"] is False
+
+
+class TestDefenderPlans:
+    """
+    The distinction this whole module exists for: not looking versus nothing found.
+    """
+
+    def test_free_tier_subscriptions_are_reported_as_unmonitored(self):
+        plans = sf._defender_plans([
+            {"name": "VirtualMachines", "properties": {"pricingTier": "Free"}},
+            {"name": "StorageAccounts", "properties": {"pricingTier": "Standard"}},
+        ], SUB_A)
+        assert plans["known"] is True
+        assert plans["enabled"] == ["StorageAccounts"]
+        assert plans["disabled"] == ["VirtualMachines"]
+
+    def test_unreadable_pricing_refuses_to_claim_either_way(self):
+        plans = sf._defender_plans([], SUB_A)
+        assert plans["known"] is False
+        assert "cannot be read as either clean or unmonitored" in plans["note"]

@@ -33,7 +33,7 @@ from services.user_service import tenant_counts
 from routers import (
     admin, tenants, subscriptions, costs, services, upload, bandwidth, boq,
     guide, integrations, orphaned, scans, changes, activity, prices, security,
-    compute,
+    compute, anomalies,
 )
 
 log = logging.getLogger("app")
@@ -42,6 +42,7 @@ API_ROUTERS = [
     tenants.router,
     subscriptions.router,
     costs.router,
+    anomalies.router,
     services.router,
     upload.router,
     bandwidth.router,
@@ -122,7 +123,10 @@ app.add_middleware(
     # Enumerated rather than "*": a wildcard combined with credentials is the
     # configuration that turns one compromised origin into full account access.
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    # X-Graph-Token carries a Microsoft Graph credential used only to look up
+    # directory names. Omitting it here makes the browser strip the header on a
+    # cross-origin request, and account names silently fall back to object ids.
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Graph-Token"],
     expose_headers=[
         "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After",
     ],

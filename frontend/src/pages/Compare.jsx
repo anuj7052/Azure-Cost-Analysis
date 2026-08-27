@@ -368,18 +368,28 @@ function TrendTable({ trend, currency, groupLabel, stepGroupsFor, expanded, onTo
  * come from data that only exists once the query has already run. The calendar
  * is the one list of months that needs no billing data behind it.
  *
- * The month in progress is excluded: a partial month compared against a
- * complete one always looks like spend collapsed, and that reading is wrong
- * every time.
+ * The month in progress is included, and labelled. It used to be hidden, on the
+ * grounds that a partial month next to a complete one always looks like spend
+ * collapsed — which is true, and is exactly why someone checking "what have we
+ * spent so far this month" needs it. Hiding the month people most want to see,
+ * to protect them from a misreading, costs more than saying "in progress" next
+ * to it does.
  */
 function calendarMonths(count = 12) {
   const out = [];
   const now = new Date();
-  for (let i = 1; i <= count; i += 1) {
+  // i = 0 is the current month.
+  for (let i = 0; i < count; i += 1) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
   }
   return out;
+}
+
+/** `YYYY-MM` for the month currently being billed. */
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
 export default function Compare() {
@@ -462,6 +472,41 @@ export default function Compare() {
   // fetching second possible at all.
   const monthOptions = months.length ? months : calendarMonths(12);
 
+  // The month still being billed is a real choice, but it is not comparable to
+  // a finished one without saying so. Labelling it in the dropdown puts the
+  // caveat where the decision is made rather than in a footnote underneath the
+  // result.
+  const thisMonth = currentMonthKey();
+  const monthLabels = useMemo(
+    () => ({ [thisMonth]: `${thisMonth} · in progress` }),
+    [thisMonth],
+  );
+
+  // Open on the two most recent months instead of two empty dropdowns.
+  //
+  // This page used to insist the user choose before it would fetch anything,
+  // to avoid spending a rate limit on a question nobody had asked. But the
+  // options themselves come from billing data, so the common path was: land on
+  // the page, see two empty selects, and have no idea that picking any two
+  // would make a whole page appear. The overwhelmingly common question — "what
+  // changed between last month and this one" — is now answered on arrival, and
+  // both dropdowns still change it to any other pair.
+  const defaultPair = useMemo(() => {
+    if (monthOptions.length < 2) return null;
+    // monthOptions is newest-first, so [1] is the baseline and [0] the month
+    // being compared to it.
+    return [monthOptions[1], monthOptions[0]];
+  }, [monthOptions]);
+
+  useEffect(() => {
+    if (pair || !defaultPair) return undefined;
+    if (!imported && !selectedTenantId) return undefined;
+    // Deferred a tick: setting state straight from an effect body trips
+    // react-hooks, and a frame's delay here is invisible.
+    const id = setTimeout(() => setPair(defaultPair), 0);
+    return () => clearTimeout(id);
+  }, [pair, defaultPair, imported, selectedTenantId]);
+
   const variance = useMemo(() => {
     if (!prevMonth || !currMonth || prevMonth === currMonth) return null;
     return buildVariance(rows, prevMonth, currMonth, { groupBy });
@@ -522,9 +567,8 @@ export default function Compare() {
         <div>
           <h1 className="text-2xl font-bold text-white">Month comparison</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Pick two months and this page reads them meter by meter. Nothing is fetched until
-            you do — the detail behind a comparison is a cost query per subscription, and Azure
-            throttles those hard.
+            This page reads two months meter by meter. It opens on the latest pair; change
+            either dropdown to compare any other two.
           </p>
         </div>
 
@@ -534,6 +578,7 @@ export default function Compare() {
               label="Baseline"
               value={draftPrev}
               placeholder="Select month"
+              labels={monthLabels}
               options={monthOptions.filter(m => m !== draftCurr)}
               onChange={(m) => setPair([m, draftCurr])}
             />
@@ -542,6 +587,7 @@ export default function Compare() {
               label="Compared to"
               value={draftCurr}
               placeholder="Select month"
+              labels={monthLabels}
               options={monthOptions.filter(m => m !== draftPrev)}
               onChange={(m) => setPair([draftPrev, m])}
             />
@@ -606,6 +652,7 @@ export default function Compare() {
                 label="Baseline"
                 value={draftPrev}
                 placeholder="Select month"
+                labels={monthLabels}
                 options={monthOptions.filter(m => m !== draftCurr)}
                 onChange={(m) => setPair([m, draftCurr])}
               />
@@ -614,6 +661,7 @@ export default function Compare() {
                 label="Compared to"
                 value={draftCurr}
                 placeholder="Select month"
+                labels={monthLabels}
                 options={monthOptions.filter(m => m !== draftPrev)}
                 onChange={(m) => setPair([draftPrev, m])}
               />
@@ -733,6 +781,19 @@ export default function Compare() {
         )
       ) : (
         <>
+          {/* A month still being billed is short by however many days are left
+              in it, so it will read as a fall in spend regardless of what is
+              actually happening. Said here, next to the number it distorts. */}
+          {currMonth === thisMonth && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-5 py-3">
+              <p className="text-xs text-amber-200/90 leading-relaxed">
+                <span className="font-semibold">{thisMonth} is still being billed.</span>{' '}
+                It covers only the days so far, so it will look lower than {prevMonth}
+                {' '}even if nothing has changed. Compare it to a finished month for a like-for-like view.
+              </p>
+            </div>
+          )}
+
           {/* Headline */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
             <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
@@ -789,7 +850,8 @@ export default function Compare() {
             <h2 className="text-sm font-semibold text-white mb-3">
               What changed, biggest movement first
             </h2>
-            <table className="w-full text-xs">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[38rem] text-xs">
               <thead>
                 <tr className="text-slate-500 border-b border-slate-800">
                   <th className="text-left font-medium pb-2">
@@ -818,6 +880,7 @@ export default function Compare() {
                 ))}
               </tbody>
             </table>
+            </div>
             {variance.groups.length === 0 && (
               <p className="text-xs text-slate-500 text-center py-6">
                 Nothing changed between these two months.

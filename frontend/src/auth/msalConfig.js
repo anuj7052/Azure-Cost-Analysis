@@ -37,5 +37,22 @@ export const managementRequest = {
   scopes: ['https://management.azure.com/user_impersonation'],
 };
 
+/**
+ * Microsoft Graph, purely to turn directory object ids into people's names.
+ *
+ * Azure's role-assignment API returns object ids and never names, so without
+ * this every security screen shows GUIDs. Graph is a different audience from
+ * Azure Resource Manager and will not accept the management token, which is why
+ * this is a second request rather than an extra scope on the first.
+ *
+ * `Directory.Read.All` is admin-consented in most tenants. That is deliberate:
+ * asking for it at login would block sign-in for everyone whose administrator
+ * has not granted it, so it is requested only when a security page needs it and
+ * the page degrades to object ids when it is refused.
+ */
+export const graphRequest = {
+  scopes: ['https://graph.microsoft.com/Directory.Read.All'],
+};
+
 // @azure/msal-react v5: pass uninitialized instance — MsalProvider calls initialize() internally
 export const msalInstance = new PublicClientApplication(msalConfig);

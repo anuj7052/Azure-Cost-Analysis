@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
-  Plug, Plus, Trash2, X, Loader2, Pencil, KeyRound, Link2, Cpu, Power,
+  Plug, Plus, Trash2, Loader2, Pencil, KeyRound, Link2, Cpu, Power,
 } from 'lucide-react';
 import {
   createIntegration, deleteIntegration, fetchIntegrations, updateIntegration,
 } from '../../api/client';
+import Modal from '../Common/Modal';
 
 const KINDS = [
   {
@@ -104,26 +105,38 @@ function IntegrationModal({ existing, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-fade-in">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto animate-scale-in"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-semibold text-white">
-              {editing ? 'Edit integration' : 'Configure an endpoint'}
-            </h3>
-            <p className="text-xs text-slate-500 mt-1">
-              Connect your own API, model or webhook. It is stored against your
-              account only.
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="text-slate-500 hover:text-white">
-            <X className="w-5 h-5" />
+    <Modal
+      title={editing ? 'Edit integration' : 'Configure an endpoint'}
+      subtitle="Connect your own API, model or webhook. It is stored against your account only."
+      icon={Plug}
+      onClose={onClose}
+      busy={saving}
+      footer={
+        // This form is the longest in the app. It already scrolled, but the
+        // buttons scrolled away with it, so the reader had to scroll back down
+        // past four fields to find Save.
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="flex-1 py-2.5 rounded-xl border border-slate-700 text-slate-300 text-sm hover:bg-slate-800 disabled:opacity-50 transition"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="integration-form"
+            disabled={!valid || saving}
+            className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-[#fff] text-sm font-semibold flex items-center justify-center gap-2 transition"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            {editing ? 'Save changes' : 'Add integration'}
           </button>
         </div>
-
+      }
+    >
+      <form id="integration-form" onSubmit={submit} className="space-y-4">
         <div>
           <label className="block text-xs font-medium text-slate-400 mb-1.5">Type</label>
           <div className="grid grid-cols-2 gap-2">
@@ -183,26 +196,8 @@ function IntegrationModal({ existing, onClose, onSaved }) {
           placeholder={editing ? '••••••••' : 'Paste your key'}
           hint="Stored against your account and never shown again."
         />
-
-        <div className="flex gap-2 pt-1">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl border border-slate-700 text-slate-300 text-sm hover:bg-slate-800 transition"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!valid || saving}
-            className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-[#fff] text-sm font-semibold flex items-center justify-center gap-2 transition"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            {editing ? 'Save changes' : 'Add integration'}
-          </button>
-        </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 

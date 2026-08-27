@@ -5,13 +5,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 from auth.dependencies import get_current_user
-from services.token_resolver import resolve_tenant_token
+from services.token_resolver import resolve_tenant_token, subscription_names
 from services.cost_client import (
     gather_by_subscription,
     query_costs,
     query_daily_usage,
     query_usage,
-    friendly_error,
+    error_entry,
     summarise_errors,
 )
 from services.activity import (
@@ -34,6 +34,7 @@ from models.schemas import (
     DailyCostRequest, DailyCostResponse, DailyCostItem,
     PricingResponse, ReservedDetailResponse,
 )
+from services.coverage import build_coverage
 from services.pricing import summarise_pricing, reserved_detail
 from core.db import get_db
 
@@ -70,7 +71,7 @@ async def get_costs(
             )
             all_records.extend(records)
         except Exception as exc:
-            errors.append({"subscription_id": sub_id, "error": friendly_error(exc)})
+            errors.append(error_entry(sub_id, exc, subscription_names(body.tenant_id, token)))
 
     if not all_records and errors:
         raise HTTPException(
@@ -80,7 +81,15 @@ async def get_costs(
 
     monthly = aggregate_by_month(all_records)
     summary = build_summary(monthly)
-    return CostQueryResponse(**summary)
+
+    # The per-subscription failures were being collected and then dropped
+    # whenever at least one subscription succeeded, so a partial total was
+    # returned looking exactly like a complete one. The coverage travels with
+    # the numbers instead.
+    return CostQueryResponse(
+        **summary,
+        coverage=build_coverage(body.subscription_ids, errors),
+    )
 
 
 async def _get_token(body_tenant_id: str, current_user: dict, db: aiosqlite.Connection) -> str:
@@ -329,7 +338,7 @@ async def get_usage_detail(
                 # usage curve rather than an error page.
                 log.warning("Activity read failed for %s: %s", sub_id, exc)
                 activity_errors.append(
-                    {"subscription_id": sub_id, "error": friendly_error(exc)}
+                    error_entry(sub_id, exc)
                 )
                 return []
 
@@ -397,7 +406,7 @@ async def get_rg_costs(
             )
             all_records.extend(records)
         except Exception as exc:
-            errors.append({"subscription_id": sub_id, "error": friendly_error(exc)})
+            errors.append(error_entry(sub_id, exc, subscription_names(body.tenant_id, token)))
 
     if not all_records and errors:
         raise HTTPException(status_code=502, detail=summarise_errors(errors, "resource group costs"))
@@ -439,7 +448,7 @@ async def get_daily_costs(
             )
             all_records.extend(records)
         except Exception as exc:
-            errors.append({"subscription_id": sub_id, "error": friendly_error(exc)})
+            errors.append(error_entry(sub_id, exc, subscription_names(body.tenant_id, token)))
 
     if not all_records and errors:
         raise HTTPException(status_code=502, detail=summarise_errors(errors, "daily costs"))

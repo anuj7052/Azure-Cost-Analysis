@@ -1,10 +1,12 @@
 import { useMsal } from '@azure/msal-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useTheme } from '../../store/useTheme';
-import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Hash } from 'lucide-react';
+import { useNav } from '../../store/useNav';
+import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Hash, Menu } from 'lucide-react';
 import { useState } from 'react';
 import { evictAll, evictApiCache } from '../../utils/persistCache';
 import { COMPACT, EXACT, getAmountMode, setAmountMode } from '../../utils/currency';
+import { tenantLabel } from '../../utils/tenantName';
 import SubscriptionPicker from './SubscriptionPicker';
 
 const ROLLING_OPTIONS = [1, 3, 6, 12];
@@ -23,6 +25,7 @@ export default function Topbar() {
   } = useAppStore();
   const theme       = useTheme(s => s.theme);
   const toggleTheme = useTheme(s => s.toggleTheme);
+  const toggleNav   = useNav(s => s.toggleNav);
   const [tenantOpen, setTenantOpen]     = useState(false);
   const [filterOpen, setFilterOpen]     = useState(false);
   const [filterTab, setFilterTab]       = useState('rolling'); // 'rolling' | 'month' | 'custom'
@@ -68,15 +71,7 @@ export default function Topbar() {
     : '??';
 
   const currentTenant = tenants.find(t => t.tenant_id === selectedTenantId);
-  const tenantLabel = (() => {
-    if (!currentTenant) return 'Select tenant';
-    const name = currentTenant.tenant_name;
-    if (/^[0-9a-f-]{36}$/i.test(name)) {
-      const domain = (user?.username || '').split('@')[1];
-      return domain ? `My Tenant (${domain})` : 'My Azure Tenant';
-    }
-    return name;
-  })();
+  const tenantLabelText = tenantLabel(currentTenant, user?.username);
 
   // Human-readable label for current filter
   const filterLabel = (() => {
@@ -111,25 +106,43 @@ export default function Topbar() {
   };
 
   return (
-    <header className="h-16 bg-slate-950/75 backdrop-blur-xl border-b border-slate-800/80 flex items-center px-5 gap-3 sticky top-0 z-40 elevated">
+    /*
+     * Wraps below `lg` rather than overflowing.
+     *
+     * Laid out as a single 64px row this bar needs roughly 520px of controls,
+     * so on any phone the right-hand end -- sign out, the theme toggle, the
+     * account -- simply fell off the edge with no way to scroll to it. Allowing
+     * the row to wrap keeps every control reachable at every width; from `lg`
+     * upwards `flex-nowrap` restores the original single-line bar exactly.
+     */
+    <header className="sticky top-0 z-40 flex flex-wrap items-center gap-2 border-b border-slate-800/80 bg-slate-950/75 px-3 py-2 backdrop-blur-xl elevated sm:gap-3 sm:px-5 lg:h-16 lg:flex-nowrap lg:py-0">
+      {/* Opens the navigation drawer. Only meaningful below lg, where the rail
+          is off-canvas -- without it every page on a phone is unreachable. */}
+      <button
+        type="button"
+        onClick={toggleNav}
+        aria-label="Open navigation"
+        className="-ml-1 shrink-0 rounded-xl p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white lg:hidden"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
       {/* Tenant selector */}
-      <div className="relative">
+      <div className="relative min-w-0">
         <button
           onClick={() => setTenantOpen(o => !o)}
-           className="flex items-center gap-2 bg-slate-900/80 hover:bg-slate-800 border border-slate-800 px-3 py-2 rounded-xl text-sm text-slate-300 transition"
+           className="flex max-w-full items-center gap-2 bg-slate-900/80 hover:bg-slate-800 border border-slate-800 px-3 py-2 rounded-xl text-sm text-slate-300 transition"
         >
-          <span className="max-w-[180px] truncate">{tenantLabel}</span>
+          <span className="max-w-[110px] sm:max-w-[180px] truncate">{tenantLabelText}</span>
           <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
         </button>
         {tenantOpen && (
-          <div className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 min-w-[220px] py-1">
+          <div className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 min-w-[220px] max-w-[calc(100vw-1.5rem)] py-1">
             {tenants.length === 0 && (
               <p className="px-4 py-3 text-xs text-slate-500">No tenants loaded yet</p>
             )}
             {tenants.map(t => {
-              const isGuid    = /^[0-9a-f-]{36}$/i.test(t.tenant_name);
-              const domain    = (user?.username || '').split('@')[1];
-              const dispName  = isGuid ? (domain ? `My Tenant (${domain})` : 'My Azure Tenant') : t.tenant_name;
+              const dispName = tenantLabel(t, user?.username);
               return (
                 <button
                   key={t.tenant_id}
@@ -179,7 +192,7 @@ export default function Topbar() {
         )}
 
         {filterOpen && (
-          <div className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl z-50 w-80 p-4 space-y-4">
+          <div className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl z-50 w-[min(20rem,calc(100vw-1.5rem))] p-4 space-y-4">
             {/* Tab row */}
             <div className="flex gap-1 bg-slate-900 rounded-xl p-1">
               {[
@@ -284,7 +297,9 @@ export default function Topbar() {
         )}
       </div>
 
-      <div className="flex-1" />
+      {/* Only pushes the actions right once the bar is a single line. On a
+          wrapped layout it would force a pointless empty row. */}
+      <div className="hidden lg:block lg:flex-1" />
 
       {/* Imported-file indicator */}
       {imported && (
@@ -307,7 +322,7 @@ export default function Topbar() {
       <button
         onClick={hardRefresh}
         disabled={busy}
-        className="flex items-center gap-2 text-slate-400 hover:text-white transition text-sm disabled:opacity-60"
+        className="flex shrink-0 items-center gap-2 text-slate-400 hover:text-white transition text-sm disabled:opacity-60"
       >
         <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
         <span className="hidden md:inline">{busy ? 'Refreshing…' : 'Refresh'}</span>
@@ -322,7 +337,7 @@ export default function Topbar() {
             : 'Showing compact amounts — click for full (1,23,456.79)'
         }
         aria-pressed={amountMode === EXACT}
-        className={`flex items-center gap-1.5 px-2.5 h-10 rounded-xl border text-xs font-semibold transition ${
+        className={`flex shrink-0 items-center gap-1.5 px-2.5 h-10 rounded-xl border text-xs font-semibold transition ${
           amountMode === EXACT
             ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
             : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
@@ -337,7 +352,7 @@ export default function Topbar() {
         onClick={toggleTheme}
         title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-         className="relative w-10 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-center transition-colors overflow-hidden"
+         className="relative flex w-10 h-10 shrink-0 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 items-center justify-center transition-colors overflow-hidden"
       >
         <Sun
           className={`w-4 h-4 absolute transition-all duration-300 ${
@@ -352,7 +367,7 @@ export default function Topbar() {
       </button>
 
       {/* User avatar */}
-      <div className="flex items-center gap-2 ml-1">
+      <div className="flex shrink-0 items-center gap-2 sm:ml-1">
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-xs font-bold text-[#fff] shrink-0">
           {initials}
         </div>

@@ -567,6 +567,23 @@ class MonthlyCost(BaseModel):
     by_subscription: dict
 
 
+class Coverage(BaseModel):
+    """
+    What a result actually covers.
+
+    Any subscription can fail on its own, and the total is still a number that
+    looks like an answer. It is only the answer for the subscriptions that
+    responded, so every aggregate says which those were.
+    """
+    source: str = "Azure Cost Management"
+    fetched_at: Optional[str] = None
+    requested_subscriptions: int = 0
+    succeeded_subscriptions: int = 0
+    failed_subscriptions: List[str] = []
+    partial: bool = False
+    errors: List[dict] = []
+
+
 class CostQueryResponse(BaseModel):
     months: List[MonthlyCost]
     total_6m: float
@@ -574,6 +591,9 @@ class CostQueryResponse(BaseModel):
     top_services: List[dict]          # [{ name, cost, mom_change_pct }]
     anomalies: List[dict]             # [{ service, month, pct_change, reason }]
     savings: List[dict]               # [{ service, month, pct_change }]
+    # Never omitted. A total with no coverage cannot be told apart from a
+    # complete one, which is exactly the confusion this field exists to stop.
+    coverage: Optional[Coverage] = None
 
 
 class CostRow(BaseModel):

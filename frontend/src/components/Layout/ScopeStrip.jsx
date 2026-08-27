@@ -1,4 +1,6 @@
+import { useMsal } from '@azure/msal-react';
 import { useAppStore } from '../../store/useAppStore';
+import { tenantLabel } from '../../utils/tenantName';
 
 /**
  * What the pages below are currently looking at.
@@ -12,6 +14,7 @@ import { useAppStore } from '../../store/useAppStore';
  * of its own, or a landing page becomes slower than the page it links to.
  */
 export default function ScopeStrip() {
+  const { accounts } = useMsal();
   const tenants = useAppStore(s => s.tenants);
   const selectedTenantId = useAppStore(s => s.selectedTenantId);
   const subscriptions = useAppStore(s => s.subscriptions);
@@ -42,7 +45,7 @@ export default function ScopeStrip() {
 
   return (
     <p className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 text-xs leading-relaxed text-slate-400">
-      Showing <span className="text-slate-200">{tenant?.tenant_name || selectedTenantId}</span>
+      Showing <span className="text-slate-200">{tenantLabel(tenant, accounts?.[0]?.username)}</span>
       {' · '}
       <span className={selectedCount === 0 ? 'text-amber-300' : 'text-slate-200'}>
         {selectedCount} of {totalCount} subscription{totalCount === 1 ? '' : 's'}

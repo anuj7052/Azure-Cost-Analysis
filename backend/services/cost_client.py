@@ -27,8 +27,21 @@ COST_API_VERSION = "2023-11-01"
 
 logger = logging.getLogger(__name__)
 
-# Azure allows very few concurrent Cost Management queries before throttling.
-MAX_CONCURRENT_QUERIES = 3
+# How many Cost Management queries may be in flight at once.
+#
+# This was 3, which was costing roughly two thirds of every cold dashboard
+# load. Azure meters the Query API *per scope* — the quota that matters is
+# "requests per minute against this subscription" — so nine queries aimed at
+# nine different subscriptions are not competing with one another at all. A
+# global gate of 3 turned a single wave into three sequential ones and made a
+# ~20s read take ~70s.
+#
+# 10 keeps a ceiling on the damage a very large tenant can do in one burst
+# while letting a normal estate resolve in a single wave. Requests that do get
+# throttled are still retried, still honour Retry-After, and still fall back to
+# cached data, so raising this trades a little more 429 risk for a large
+# latency win rather than trading away correctness.
+MAX_CONCURRENT_QUERIES = int(os.getenv("COST_MAX_CONCURRENT_QUERIES") or 10)
 MAX_RETRIES = 3
 MAX_RETRY_DELAY = 15.0
 # A short cooldown is worth waiting out. Failing fast turns a two-second delay
@@ -261,12 +274,30 @@ _load_cache()
 
 
 def _build_date_range(months_back: int = 6) -> tuple[str, str]:
-    """Return (from_date, to_date) strings for the last N complete months."""
+    """
+    Return (from_date, to_date) covering the last N months *including* the
+    current one, month-to-date.
+
+    This used to end on the last day of the previous month, which meant the
+    current month was never fetched at all. On the 24th of August, "last 6
+    months" returned February through July: the tile labelled "Latest Month"
+    showed July, the daily burn rate was computed from a month that had already
+    finished, and there was no way to see what the estate had spent so far this
+    month short of hand-typing a custom range.
+
+    Excluding it was presumably meant to avoid comparing a part-month against
+    whole ones. That is a real trap, but the honest fix is to label the partial
+    month rather than to hide it — which the dashboard already does, it simply
+    never had a partial month to label.
+    """
     today = date.today()
-    # End of previous month
-    end = date(today.year, today.month, 1) - relativedelta(days=1)
-    # Start of N months before that
-    start = date(end.year, end.month, 1) - relativedelta(months=months_back - 1)
+    # Month-to-date. Azure has no data for the rest of the month yet, and
+    # asking for it is harmless, but stopping at today keeps the cache key
+    # stable within a day and makes the range self-describing.
+    end = today
+    # Count back from the *current* month, so months_back=6 on 24 Aug gives
+    # 1 Mar - 24 Aug: five complete months plus the one in progress.
+    start = date(today.year, today.month, 1) - relativedelta(months=months_back - 1)
     return start.strftime("%Y-%m-%dT00:00:00Z"), end.strftime("%Y-%m-%dT23:59:59Z")
 
 
@@ -357,7 +388,7 @@ async def gather_by_subscription(subscription_ids, fetch, budget: float = DEFAUL
         await asyncio.sleep(wait + 1)
         pending = [s for s, _ in failed]
 
-    errors = [{"subscription_id": s, "error": friendly_error(e)} for s, e in failed]
+    errors = [error_entry(s, e) for s, e in failed]
     return records, errors
 
 
@@ -366,7 +397,7 @@ def friendly_error(exc: Exception) -> str:
     if isinstance(exc, RateLimited):
         return (
             "Azure is rate limiting cost queries for this account. "
-            f"Wait about {exc.retry_in}s and hit Refresh — or select fewer subscriptions."
+            f"This subscription will be read again automatically in about {exc.retry_in}s."
         )
     # asyncio.TimeoutError is an alias of TimeoutError on 3.11+, and both carry
     # an empty str(), which used to surface as a blank reason next to the
@@ -387,6 +418,65 @@ def friendly_error(exc: Exception) -> str:
     if status:
         return f"Azure returned HTTP {status}."
     return str(exc) or exc.__class__.__name__
+
+
+# How long to tell the client to wait when Azure throttled us but did not say
+# for how long. Long enough that the retry is not simply throttled again.
+DEFAULT_RETRY_AFTER = 30
+
+# A floor under whatever Azure asked for. `RateLimited` clamps its own wait to a
+# minimum of one second, and coming back after one second is how a retry becomes
+# a second throttle -- the margin costs the reader four seconds and saves a
+# round trip that was never going to succeed.
+MIN_RETRY_AFTER = 5
+
+
+def error_entry(
+    subscription_id: str,
+    exc: Exception,
+    names: Dict[str, str] | None = None,
+) -> Dict[str, Any]:
+    """
+    A per-subscription failure the client can act on without reading English.
+
+    The message alone was enough for a human and useless to the code: the page
+    could tell somebody to wait four seconds and press Refresh, but could not
+    press it itself. Saying *whether* a retry is worth making, and *when*, is
+    what lets a throttled subscription fill itself in without the reader having
+    to babysit the page.
+
+    Only throttling and timeouts are marked retryable. A missing Cost
+    Management Reader role will refuse identically for ever, and retrying it on
+    a timer would be a spin loop dressed up as resilience.
+    """
+    retry_after = 0
+    retryable = False
+
+    if isinstance(exc, RateLimited):
+        stated = int(getattr(exc, "retry_in", 0) or DEFAULT_RETRY_AFTER)
+        retry_after = max(MIN_RETRY_AFTER, stated)
+        retryable = True
+    elif isinstance(exc, (asyncio.TimeoutError, TimeoutError, httpx.ReadTimeout, httpx.ConnectTimeout)):
+        # A timeout is usually load, not a permanent condition, but it is also
+        # not a promise from Azure about when it will be over -- hence a fixed
+        # pause rather than a number invented to look precise.
+        retry_after = DEFAULT_RETRY_AFTER
+        retryable = True
+    elif getattr(getattr(exc, "response", None), "status_code", None) == 429:
+        retry_after = DEFAULT_RETRY_AFTER
+        retryable = True
+
+    return {
+        "subscription_id": subscription_id,
+        # A GUID is an identifier, not a name. Saying which subscription is
+        # missing is the whole point of listing it, and "c604c07b-..." tells the
+        # reader nothing they can act on. A miss falls back to the id rather
+        # than inventing a name.
+        "subscription_name": (names or {}).get(subscription_id, ""),
+        "error": friendly_error(exc),
+        "retryable": retryable,
+        "retry_after_seconds": retry_after,
+    }
 
 
 def summarise_errors(errors: List[dict], what: str = "cost data") -> str:

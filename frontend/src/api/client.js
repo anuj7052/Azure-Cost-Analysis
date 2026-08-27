@@ -1,6 +1,6 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import { msalInstance, managementRequest, loginRequest } from '../auth/msalConfig';
+import { msalInstance, managementRequest, loginRequest, graphRequest } from '../auth/msalConfig';
 import { errorDetail, errorMessage } from '../utils/apiError';
 
 const api = axios.create({
@@ -23,7 +23,7 @@ const api = axios.create({
  */
 const SLOW_ROUTES = [
   '/costs', '/bandwidth', '/orphaned', '/scans', '/changes',
-  '/services', '/activity', '/subscriptions', '/security',
+  '/services', '/activity', '/subscriptions', '/security', '/anomalies',
 ];
 const SLOW_TIMEOUT = 120000;
 
@@ -143,6 +143,93 @@ const AZURE_ROUTES = ['/boq/from-subscription'];
 // someone clicked a unit rate.
 const GESTURE_ROUTES = ['/upload', '/boq', '/tenants', '/prices'];
 
+/**
+ * Routes that can show people's names instead of object ids if we hand the
+ * server a Microsoft Graph token alongside the usual one.
+ *
+ * This is a second credential in a second header, never a replacement for the
+ * Authorization bearer. The server authenticates the request exactly as before
+ * and uses this token for one thing only: asking Graph who an object id belongs
+ * to. Sending it as the Authorization token instead would fail signature
+ * verification, since Microsoft signs Graph tokens so that only Graph can
+ * validate them.
+ */
+const GRAPH_ROUTES = [
+  '/security/role-assignments',
+  '/security/access-review',
+  '/security/access/grant/preview',
+  '/security/access/revoke/preview',
+];
+
+let _graphToken = null;
+let _graphExpiry = 0;
+let _graphPending = null;
+// Once the tenant refuses the directory scope, every later attempt refuses too.
+// Retrying on each request would add a failed round trip to every scan for no
+// possible gain, so the refusal is remembered for the life of the page.
+let _graphRefused = false;
+
+/**
+ * A Graph token, or null.
+ *
+ * Null is a normal outcome, not an error: the directory scope needs admin
+ * consent that many tenants have not granted. The caller sends the request
+ * without the header and the server says plainly that names were not looked up.
+ */
+async function getGraphToken() {
+  if (_graphRefused) return null;
+  if (_graphToken && Date.now() < _graphExpiry) return _graphToken;
+
+  const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+  if (!account) return null;
+
+  if (!_graphPending) {
+    _graphPending = msalInstance
+      .acquireTokenSilent({ ...graphRequest, account })
+      .then((result) => {
+        _graphToken = result.accessToken;
+        _graphExpiry = (result.expiresOn?.getTime() || Date.now() + 3600_000) - 120_000;
+        return _graphToken;
+      })
+      .catch(() => {
+        // No popup here. This runs during a background scan, where browsers
+        // block popups anyway, and a blocked popup would be a worse failure
+        // than simply showing object ids.
+        _graphRefused = true;
+        return null;
+      })
+      .finally(() => { _graphPending = null; });
+  }
+  return _graphPending;
+}
+
+/**
+ * Ask the user, interactively, for permission to read directory names.
+ *
+ * Separate from `getGraphToken` because the two run at different moments. That
+ * one runs inside a background scan, where a popup would be blocked by the
+ * browser and would fail worse than showing object ids. This one runs from a
+ * button the user just pressed, which is the only context in which a popup is
+ * allowed and the only context in which it is not a surprise.
+ *
+ * Returns true if names can now be resolved. A rejection is not an error: some
+ * tenants require an administrator to approve this, and the pages carry on
+ * saying "Name unavailable" rather than breaking.
+ */
+export async function requestDirectoryConsent() {
+  const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+  if (!account) return false;
+  try {
+    const result = await msalInstance.acquireTokenPopup({ ...graphRequest, account });
+    _graphToken = result.accessToken;
+    _graphExpiry = (result.expiresOn?.getTime() || Date.now() + 3600_000) - 120_000;
+    _graphRefused = false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Attach Bearer token to every request
 api.interceptors.request.use(async (config) => {
   const url = config.url || '';
@@ -158,6 +245,11 @@ api.interceptors.request.use(async (config) => {
   const userInitiated = needsAzure || GESTURE_ROUTES.some((r) => url.startsWith(r));
   const token = (localRoute ? await getSignInToken() : null)
     || (await getToken(userInitiated));
+
+  if (GRAPH_ROUTES.some((r) => url.startsWith(r))) {
+    const graph = await getGraphToken();
+    if (graph) config.headers['X-Graph-Token'] = graph;
+  }
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -318,6 +410,24 @@ export const fetchRgCosts = (body) =>
   api.post('/costs/rg', body).then(r => r.data);
 
 /**
+ * Classified cost changes for a period against its comparison window.
+ *
+ * Reads the same Cost Management data the rest of the app uses -- this is one
+ * request for the whole page, not one per finding.
+ */
+export const analyzeAnomalies = (body) =>
+  api.post('/anomalies/analyze', body).then(r => r.data);
+
+/** Record that somebody triaged a finding. Returns the refreshed trail. */
+export const setAnomalyStatus = (body) =>
+  api.post('/anomalies/status', body).then(r => r.data);
+
+/** The activity trail for one finding. */
+export const fetchAnomalyHistory = (tenantId, anomalyKey) =>
+  api.get('/anomalies/history', { params: { tenant_id: tenantId, anomaly_key: anomalyKey } })
+    .then(r => r.data);
+
+/**
  * Reserved Instance / Savings Plan coverage, and what moved between months.
  *
  * Asked separately from the main rows query because Cost Management accepts at
@@ -380,6 +490,33 @@ export const fetchPolicy = (body) =>
 /** Every stored reading of one source, for the trend line. */
 export const fetchPostureSnapshots = (params) =>
   api.get('/security/snapshots', { params }).then(r => r.data);
+
+/**
+ * Changing access.
+ *
+ * Every mutation here has a matching preview that runs the identical checks
+ * server-side. The preview exists so a user can see what would happen; it is
+ * not what makes the change safe, because the server re-runs every check before
+ * touching Azure regardless of what the preview said.
+ */
+export const fetchAssignableRoles = (body) =>
+  api.post('/security/access/roles', body).then(r => r.data);
+
+export const previewGrantAccess = (body) =>
+  api.post('/security/access/grant/preview', body).then(r => r.data);
+
+export const grantAccess = (body) =>
+  api.post('/security/access/grant', body).then(r => r.data);
+
+export const previewRevokeAccess = (body) =>
+  api.post('/security/access/revoke/preview', body).then(r => r.data);
+
+export const revokeAccess = (body) =>
+  api.post('/security/access/revoke', body).then(r => r.data);
+
+/** What this account has changed about access in this tenant. */
+export const fetchAccessHistory = (params) =>
+  api.get('/security/access/history', { params }).then(r => r.data);
 
 export const fetchDailyCosts = (body) =>
   api.post('/costs/daily', body).then(r => r.data);
@@ -508,6 +645,31 @@ export const fetchOrphaned = (body) =>
 export const fetchCompute = (body) =>
   api.post('/compute', body).then(r => r.data);
 
+/**
+ * Ask what a resize would involve. Read-only on the Azure side — the backend
+ * performs only GETs — so this is safe to call whenever the review opens.
+ * Its `can_resize` verdict is what enables the confirm button.
+ */
+export const previewResize = (body) =>
+  api.post('/compute/resize/preview', body).then(r => r.data);
+
+/**
+ * Start a real resize. The backend refuses without `confirmation: true` and
+ * re-validates everything against Azure, so nothing here is load-bearing for
+ * safety — the explicit flag exists so an accidental call cannot be
+ * destructive.
+ */
+export const startResize = (body) =>
+  api.post('/compute/resize', { ...body, confirmation: true }).then(r => r.data);
+
+/** Where a running resize has actually got to, read from the backend record. */
+export const fetchResizeOperation = (operationId) =>
+  api.get(`/compute/resize/operations/${operationId}`).then(r => r.data);
+
+export const fetchResizeHistory = (tenantId) =>
+  api.get('/compute/resize/history', { params: { tenant_id: tenantId } })
+    .then(r => r.data);
+
 export const fetchServices = (tenantId, subscriptionIds, months = 1, range = {}) =>
   api.get('/services', {
     params: {
@@ -564,3 +726,10 @@ export const chatAboutBoq = (body) =>
   api.post('/boq/chat', body).then(r => r.data);
 
 export default api;
+
+/**
+ * Every size this VM can move to, each with its own quota, availability and
+ * price, read live from the caller's own tenant. Read-only.
+ */
+export const fetchResizeOptions = (body) =>
+  api.post('/compute/resize/options', body).then(r => r.data);

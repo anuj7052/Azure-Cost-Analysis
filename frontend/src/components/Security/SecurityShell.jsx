@@ -1,5 +1,8 @@
 import { AlertTriangle, Info, Lock, RefreshCw, ShieldAlert } from 'lucide-react';
-import { when } from './securityData';
+import { useMsal } from '@azure/msal-react';
+import { useAppStore } from '../../store/useAppStore';
+import { tenantLabel } from '../../utils/tenantName';
+import { FAILURE, when } from './securityData';
 
 /**
  * Shared pieces for the Access & Security pages.
@@ -23,21 +26,126 @@ const SEVERITY_TONE = {
   informational: 'bg-slate-800 text-slate-400 border-slate-700',
 };
 
-export function PageHeader({ title, subtitle, onRun, loading, disabled }) {
+/**
+ * The header every Access & Security page shares.
+ *
+ * It carries the scope deliberately. These pages all answer "what is wrong",
+ * and an answer of that kind is meaningless without saying what it was asked
+ * about -- six of nine subscriptions is a different statement from all nine,
+ * and a reading from an hour ago is a different statement from one taken now.
+ *
+ * The scope is read from the store rather than passed in, so no page can
+ * accidentally render a different subscription count from the one it queried.
+ */
+export function PageHeader({
+  title, subtitle, onRun, loading, disabled, lastUpdated, cached = false, loaded = false,
+}) {
+  const { accounts } = useMsal();
+  const tenants = useAppStore(s => s.tenants);
+  const selectedTenantId = useAppStore(s => s.selectedTenantId);
+  const subscriptions = useAppStore(s => s.subscriptions);
+  const selectedSubscriptionIds = useAppStore(s => s.selectedSubscriptionIds);
+
+  const tenant = tenants?.find(t => t.tenant_id === selectedTenantId);
+  const selected = selectedSubscriptionIds?.length || 0;
+  const total = subscriptions?.length || 0;
+
   return (
     <div className="flex flex-wrap items-start justify-between gap-4">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-bold text-white">{title}</h1>
         <p className="text-slate-400 text-sm mt-1 max-w-3xl leading-relaxed">{subtitle}</p>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+          {selectedTenantId && (
+            <span className="text-slate-400">{tenantLabel(tenant, accounts?.[0]?.username)}</span>
+          )}
+          {total > 0 && (
+            <span>
+              {selected} of {total} subscription{total === 1 ? '' : 's'} selected
+            </span>
+          )}
+        </div>
+        {/* Four states, four sentences. "Not read yet" left a reader guessing
+            whether that was a failure, an empty result, or something they were
+            supposed to do -- and data carried over from an earlier visit must
+            never be described as though it had just been read. */}
+        <p className="mt-1 text-[11px] text-slate-500">
+          {loading && !lastUpdated && 'Reading from Azure…'}
+          {loading && lastUpdated && `Refreshing. Showing the reading from ${lastUpdated.toLocaleString()}.`}
+          {!loading && lastUpdated && (
+            <>
+              Last updated {lastUpdated.toLocaleString()}.
+              {cached && <span className="ml-1 text-slate-600">Cached — Refresh reads the latest data from Azure.</span>}
+            </>
+          )}
+          {!loading && !lastUpdated && (loaded
+            ? 'No data was returned for this selection.'
+            : 'No data has been loaded yet.')}
+        </p>
       </div>
       <button
         onClick={() => onRun()}
         disabled={loading || disabled}
+        title="Reads the latest data from Azure"
         className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60"
       >
         <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-        {loading ? 'Reading Azure…' : 'Run scan'}
+        {loading ? (lastUpdated ? 'Refreshing…' : 'Reading Azure…') : lastUpdated ? 'Refresh' : 'Load data'}
       </button>
+    </div>
+  );
+}
+
+/**
+ * A failed request, described by what actually went wrong.
+ *
+ * The four kinds need four different responses from the reader: ask for a role,
+ * wait, retry, or check the connection. Rendering them identically -- or worse,
+ * rendering any of them as an empty result -- is how a security tool ends up
+ * implying an estate is clean when nobody managed to look at it.
+ */
+export function Failure({ kind, message, onRetry, stale = false }) {
+  const denied = kind === FAILURE.NO_ACCESS;
+  const throttled = kind === FAILURE.THROTTLED;
+
+  const tone = denied
+    ? 'border-red-500/30 bg-red-950/30 text-red-200'
+    : 'border-amber-500/30 bg-amber-950/30 text-amber-200';
+
+  const Icon = denied ? Lock : AlertTriangle;
+
+  return (
+    <div className={`rounded-2xl border p-6 ${tone}`}>
+      <div className="flex items-start gap-3">
+        <Icon size={18} className="shrink-0 mt-0.5" />
+        <div className="min-w-0 space-y-2">
+          <p className="text-sm font-semibold">
+            {denied && 'Access unavailable'}
+            {throttled && 'Azure rate limited this request'}
+            {!denied && !throttled && 'Could not read from Azure'}
+          </p>
+          <p className="text-sm leading-relaxed opacity-90">{message}</p>
+          <p className="text-xs leading-relaxed opacity-70">
+            {denied
+              ? 'This is a missing permission, not a clean result. Nothing below should be read as evidence that there is nothing wrong.'
+              : 'The data was not read, so an empty or unchanged page below does not mean there is nothing to find.'}
+          </p>
+          {stale && (
+            <p className="text-xs leading-relaxed opacity-70">
+              The figures below are from the previous successful reading and are
+              now out of date.
+            </p>
+          )}
+          {onRetry && !denied && (
+            <button
+              onClick={onRetry}
+              className="mt-1 rounded-lg border border-current/30 px-3 py-1.5 text-xs font-semibold transition hover:bg-white/5"
+            >
+              Try again
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

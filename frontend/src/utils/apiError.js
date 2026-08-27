@@ -84,6 +84,63 @@ export function errorMessage(err) {
 export const errorRequestId = (err) => body(err).error?.request_id || '';
 
 /**
+ * The same failure, said in a sentence rather than a status code.
+ *
+ * `errorMessage` returns whatever the server sent, which is right for
+ * diagnostics and wrong for a dialog: Azure's own wording runs to things like
+ * "The client 'x' with object id 'y' does not have authorization to perform
+ * action 'Microsoft.Authorization/roleAssignments/write' over scope '/…'".
+ * That is precise, useful to an engineer, and unreadable to the person being
+ * asked to approve something.
+ *
+ * Status codes are mapped rather than passed through because each one implies a
+ * different next step, and the next step is the only part the reader needs:
+ * wait, ask for a permission, sign in, or try again. The server's own message
+ * is preferred where it exists and reads like prose -- our own copy is a
+ * fallback for the raw ones, never a replacement for a considered explanation.
+ */
+export function friendlyError(err) {
+  const status = err?.response?.status;
+  const code = errorCode(err);
+
+  if (status === 429 || code === ErrorCode.AZURE_THROTTLED || code === ErrorCode.RATE_LIMITED) {
+    const wait = Number(errorDetail(err).retry_after_seconds) || 0;
+    return wait > 0
+      ? `Azure is temporarily limiting requests. Please wait about ${wait} second${wait === 1 ? '' : 's'} and try again.`
+      : 'Azure is temporarily limiting requests. Please wait a moment and try again.';
+  }
+
+  if (status === 403 || code === ErrorCode.FORBIDDEN || code === ErrorCode.AZURE_PERMISSION_REQUIRED) {
+    const role = errorDetail(err).required_role;
+    return role
+      ? `You do not have permission to do this. It needs the ${role} role.`
+      : 'You do not have permission to read or change this.';
+  }
+
+  if (status === 401 || code === ErrorCode.UNAUTHENTICATED) {
+    return 'Your Azure session has expired. Sign in again to continue.';
+  }
+
+  if (status === 404 || code === ErrorCode.NOT_FOUND) {
+    return 'That item no longer exists in Azure. It may have been changed or removed since this page was loaded.';
+  }
+
+  if (status === 504) {
+    return 'Azure took too long to respond. This usually clears on its own.';
+  }
+
+  if (status && status >= 500) {
+    return "We couldn't complete this right now. Please try again.";
+  }
+
+  if (err?.response === undefined && err?.message) {
+    return 'We could not reach the service. Check your connection and try again.';
+  }
+
+  return errorMessage(err);
+}
+
+/**
  * Classify a failure into the state the UI should display.
  *
  * This is the function that keeps "we could not read this" from being rendered

@@ -19,11 +19,11 @@ import {
  */
 export const SECTIONS = [
   {
-    key: 'command',
-    title: 'Command',
-    icon: LayoutDashboard,
+    key: 'cost',
+    title: 'Cost',
+    icon: Wallet,
     hub: '/',
-    tagline: 'Where you land, and how you find anything.',
+    tagline: 'What you are spending, and why it moved.',
     items: [
       {
         to: '/', label: 'Dashboard', icon: LayoutDashboard, overview: true,
@@ -33,38 +33,17 @@ export const SECTIONS = [
         to: '/search', label: 'Global Search', icon: Search,
         blurb: 'Find any resource, meter or resource group by name across every subscription.',
       },
-    ],
-  },
-  {
-    key: 'cost',
-    title: 'Cost',
-    icon: Wallet,
-    hub: '/cost',
-    tagline: 'What you are spending, and why it moved.',
-    items: [
       {
-        to: '/cost', label: 'Cost Overview', icon: Wallet, overview: true,
-        blurb: 'Everything in this section, and what each page is for.',
-      },
-      {
-        to: '/trends', label: 'Cost Trends', icon: TrendingUp,
-        blurb: 'Spend over time, so a rise can be seen before the invoice arrives.',
+        to: '/explorer', label: 'Cost Explorer', icon: TrendingUp,
+        blurb: 'Spend over time with a forecast, split by service, region, resource group or meter, down to the resource.',
       },
       {
         to: '/compare', label: 'Month Compare', icon: GitCompareArrows,
         blurb: 'Two months side by side, with the services that drove the difference.',
       },
       {
-        to: '/services', label: 'Services', icon: Server,
-        blurb: 'Spend broken down by Azure service, then by the meters inside it.',
-      },
-      {
         to: '/bandwidth', label: 'Bandwidth', icon: Network,
         blurb: 'Data transfer costs by resource, with the egress meters that caused them.',
-      },
-      {
-        to: '/anomalies', label: 'Cost Anomalies', icon: AlertTriangle,
-        blurb: 'Costs that jumped further than normal variation explains.',
       },
       {
         to: '/boq', label: 'BOQ vs Actual', icon: ClipboardList,
@@ -84,12 +63,12 @@ export const SECTIONS = [
     tagline: 'What is actually running, what changed, and what is being wasted.',
     items: [
       {
-        to: '/estate', label: 'Resource Overview', icon: Gauge, overview: true,
+        to: '/estate', label: 'Overview', icon: Gauge, overview: true,
         blurb: 'Everything in this section, and what each page is for.',
       },
       {
-        to: '/compute', label: 'Compute Intelligence', icon: Cpu,
-        blurb: 'Every VM judged against 30 days of real utilization: idle, oversized or correct.',
+        to: '/anomalies', label: 'Anomalies', icon: AlertTriangle,
+        blurb: 'Costs that jumped further than normal variation explains.',
       },
       {
         to: '/changes', label: 'Change Tracking', icon: GitCompareArrows,
@@ -98,6 +77,10 @@ export const SECTIONS = [
       {
         to: '/activity', label: 'Activity Explorer', icon: Activity,
         blurb: 'Who did what in Azure, from the Activity Log. Retained 90 days.',
+      },
+      {
+        to: '/compute', label: 'Compute Intelligence', icon: Cpu,
+        blurb: 'Every VM judged against 30 days of real utilization: idle, oversized or correct.',
       },
       {
         to: '/orphaned', label: 'Orphaned Resources', icon: Trash2,
@@ -111,13 +94,13 @@ export const SECTIONS = [
   },
   {
     key: 'security',
-    title: 'Security',
+    title: 'Access & Security',
     icon: Shield,
     hub: '/security',
     tagline: 'Who can reach what, and how exposed the estate is.',
     items: [
       {
-        to: '/security', label: 'Security Overview', icon: Shield, overview: true,
+        to: '/security', label: 'Overview', icon: Shield, overview: true,
         blurb: 'Everything in this section, and what each page is for.',
       },
       {
@@ -150,7 +133,7 @@ export const SECTIONS = [
     tagline: 'Connections, data sources and who can use this app.',
     items: [
       {
-        to: '/account', label: 'Account Overview', icon: Settings, overview: true,
+        to: '/account', label: 'Overview', icon: Settings, overview: true,
         blurb: 'Everything in this section, and what each page is for.',
       },
       {

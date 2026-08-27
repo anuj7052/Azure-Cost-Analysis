@@ -137,10 +137,21 @@ class TestClassify:
         assert result["confident"] is True
         assert "deallocated" in result["reason"]
 
-    def test_deallocated_is_not_billed_and_not_a_finding(self):
+    def test_deallocated_is_its_own_verdict_not_missing_data(self):
+        """
+        A deallocated VM used to report "not enough data", which is true about
+        the telemetry and useless to the reader: nothing is missing and there is
+        nothing to investigate. The machine is simply off.
+        """
         result = ci.classify({}, power_state="PowerState/deallocated")
-        assert result["verdict"] == ci.INSUFFICIENT_DATA
+        assert result["verdict"] == ci.DEALLOCATED
+        assert result["confident"] is True
+        assert result["telemetry"] == ci.TELEMETRY_NOT_APPLICABLE
         assert "not billed for compute" in result["reason"]
+
+    def test_a_deallocated_vm_is_never_called_idle(self):
+        result = ci.classify({}, power_state="PowerState/deallocated")
+        assert result["verdict"] != ci.IDLE
 
     def test_a_quiet_vm_is_idle(self):
         metrics = cpu(1.0)
@@ -254,10 +265,47 @@ class TestSavings:
     PRICES = {"Standard_D8s_v5": 0.40, "Standard_D4s_v5": 0.20}
 
     def test_savings_come_from_two_real_prices(self):
+        # D8s is published at 0.40 and D4s at 0.20 — half. Applied to the VM's
+        # real 300/month bill, not to 730 hours of list price.
         out = ci.estimate_savings(300.0, "Standard_D8s_v5", "Standard_D4s_v5", self.PRICES)
+        assert out["monthly"] == pytest.approx(150.0)
+        assert out["annual"] == pytest.approx(1800.0)
+        assert out["basis"] == "actual_cost_and_retail_ratio"
+
+    def test_a_saving_can_never_exceed_the_bill_it_comes_off(self):
+        """
+        Observed live: a VM billed at ₹2,650 a month was reported as saving
+        ₹20,598 a month, because the difference between two list prices was
+        taken over a full 730 hours while the bill was for a machine that ran
+        for part of the month at a discounted rate.
+
+        A saving larger than the entire cost of the thing being changed does
+        not read as an error, it reads as a tool that cannot count.
+        """
+        out = ci.estimate_savings(
+            2650.76, "Standard_D8as_v5", "Standard_D4as_v5",
+            {"Standard_D8as_v5": 21.234, "Standard_D4as_v5": 10.617},
+        )
+        assert out["monthly"] <= 2650.76
+        assert out["monthly"] == pytest.approx(2650.76 * 0.5, rel=1e-3)
+
+    def test_the_sku_casing_azure_used_does_not_lose_the_price(self):
+        """
+        Resource Graph, Cost Management and the pricing catalogue disagree
+        about how to capitalise a size name. An exact-match lookup silently
+        dropped the row, which the UI then reported as "no published price".
+        """
+        out = ci.estimate_savings(
+            300.0, "STANDARD_D8S_V5", "standard_d4s_v5",
+            {"Standard_D8s_v5": 0.40, "Standard_D4s_v5": 0.20},
+        )
+        assert out["monthly"] == pytest.approx(150.0)
+
+    def test_without_a_billed_cost_it_falls_back_to_list_price_and_says_so(self):
+        out = ci.estimate_savings(None, "Standard_D8s_v5", "Standard_D4s_v5", self.PRICES)
         assert out["monthly"] == pytest.approx(0.20 * 730)
-        assert out["annual"] == pytest.approx(0.20 * 730 * 12)
         assert out["basis"] == "retail_prices"
+        assert "list-price" in out["note"]
 
     def test_no_price_means_no_number_rather_than_a_guess(self):
         """
@@ -299,7 +347,7 @@ class TestAnalyseVm:
         assert out["verdict"] == ci.UNDERUTILIZED
         assert out["recommended_sku"] == "Standard_D4s_v5"
         assert out["action"] == "resize"
-        assert out["savings"]["monthly"] == pytest.approx(146.0)
+        assert out["savings"]["monthly"] == pytest.approx(150.0)
 
     def test_a_stopped_vm_is_told_to_deallocate(self):
         out = ci.analyse_vm(self.vm(power_state="PowerState/stopped"), {})
@@ -345,18 +393,27 @@ class TestFleetSummary:
         """The confident figure is the one safe to show a finance team."""
         analyses = [
             {"verdict": ci.IDLE, "confident": True, "action": "review_for_deletion",
+             "right_sizing": {"status": ci.RS_IDLE, "confidence": ci.CONF_HIGH},
              "savings": {"monthly": 100.0}},
             {"verdict": ci.IDLE, "confident": False, "action": "review_for_deletion",
+             "right_sizing": {"status": ci.RS_IDLE, "confidence": ci.CONF_LOW},
              "savings": {"monthly": 900.0}},
         ]
         out = ci.summarise_fleet(analyses)
         assert out["monthly_savings"] == 1000.0
         assert out["confident_monthly_savings"] == 100.0
 
-    def test_an_empty_fleet_summarises_to_zero_not_an_error(self):
+    def test_an_empty_fleet_reports_no_opportunity_rather_than_zero(self):
+        """
+        "₹0 of savings" claims the fleet was examined and found perfect. None
+        says no opportunity was identified, which is the honest answer for an
+        estate that is mostly deallocated or unmeasurable.
+        """
         out = ci.summarise_fleet([])
         assert out["total"] == 0
-        assert out["monthly_savings"] == 0
+        assert out["monthly_savings"] is None
+        assert out["annual_savings"] is None
+        assert out["no_opportunity_note"]
 
     def test_sorting_leads_with_money_at_stake(self):
         items = [

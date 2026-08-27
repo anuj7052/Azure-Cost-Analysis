@@ -8,6 +8,7 @@ import {
   fetchAdminStats, fetchAdminUser, fetchAdminUsers, updateAdminUser, deleteAdminUser,
 } from '../api/client';
 import { useAppStore } from '../store/useAppStore';
+import Modal from '../components/Common/Modal';
 
 const errText = (err, fallback) =>
   err?.response?.data?.detail || err?.message || fallback;
@@ -68,36 +69,18 @@ function ConfirmDelete({ user, onCancel, onConfirm }) {
   const ready = text.trim().toLowerCase() === user.email.toLowerCase();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6">
-        <div className="flex items-start gap-3 mb-4">
-          <div className="w-9 h-9 rounded-lg bg-red-500/10 text-red-400 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-4.5 h-4.5" />
-          </div>
-          <div>
-            <h3 className="text-white font-semibold">Delete this account permanently</h3>
-            <p className="text-sm text-slate-400 mt-1">
-              This removes <span className="text-white">{user.name || user.email}</span> and every
-              Azure credential they stored. It cannot be undone.
-            </p>
-          </div>
-        </div>
-
-        <p className="text-sm text-slate-400 mb-2">
-          Type <span className="text-white font-mono">{user.email}</span> to confirm.
-        </p>
-        <input
-          autoFocus
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-red-500"
-          placeholder={user.email}
-        />
-
-        <div className="flex justify-end gap-2 mt-5">
+    <Modal
+      title="Delete this account permanently"
+      icon={AlertTriangle}
+      onClose={onCancel}
+      busy={busy}
+      size="md"
+      footer={
+        <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="px-4 py-2 rounded-xl text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800"
+            disabled={busy}
+            className="px-4 py-2 rounded-xl text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -110,8 +93,24 @@ function ConfirmDelete({ user, onCancel, onConfirm }) {
             Delete account
           </button>
         </div>
-      </div>
-    </div>
+      }
+    >
+      <p className="text-sm text-slate-400">
+        This removes <span className="text-white">{user.name || user.email}</span> and every
+        Azure credential they stored. It cannot be undone.
+      </p>
+
+      <p className="text-sm text-slate-400 mb-2 mt-4">
+        Type <span className="text-white font-mono break-all">{user.email}</span> to confirm.
+      </p>
+      <input
+        autoFocus
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-red-500"
+        placeholder={user.email}
+      />
+    </Modal>
   );
 }
 

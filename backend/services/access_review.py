@@ -21,6 +21,8 @@ finding carries the evidence it was drawn from and the reason it might be wrong.
 """
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from services import azure_names
+
 # Roles that can grant further access, or take any action. Losing track of one
 # of these is the difference between an incident and a catastrophe, so they are
 # named explicitly rather than inferred.
@@ -92,7 +94,9 @@ TIER_ROLE = {
 
 TIER_LABEL = {
     TIER_NONE: "nothing recorded",
-    TIER_READ: "read only",
+    # Worded to sit after "did only ...". "read only" produced the sentence
+    # "did only read only", which reads like a stutter in a security finding.
+    TIER_READ: "read operations",
     TIER_WRITE: "creates and changes resources",
     TIER_GRANT: "manages who has access",
 }
@@ -206,6 +210,7 @@ def normalise_assignment(
     raw: Dict[str, Any],
     role_names: Optional[Dict[str, str]] = None,
     principals: Optional[Dict[str, Dict[str, Any]]] = None,
+    subscription_names: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     One role assignment, flattened and enriched.
@@ -214,6 +219,13 @@ def normalise_assignment(
     readable, and a review that shows GUIDs is a review nobody completes, so
     both are resolved against lookups where those are available and left
     honestly unresolved where they are not.
+
+    "Honestly unresolved" is the important part. An earlier version fell back
+    to the object id, which meant every finding headline read like
+    `265b1023-8610-487b-8eac-76245f735289 has not used Owner` -- a sentence
+    that presents a failed lookup as though the GUID were somebody's name. The
+    id is still returned, under `principal_id`, for the technical panel and for
+    every operation that has to act on it.
     """
     props = raw.get("properties") or raw
     role_names = role_names or {}
@@ -231,31 +243,41 @@ def normalise_assignment(
     lookup = principals.get(principal_id.lower(), {})
     display = _text(props.get("principalName")) or _text(lookup.get("display_name"))
     upn = _text(props.get("principalUpn")) or _text(lookup.get("upn"))
+    ptype = principal_kind(props.get("principalType") or lookup.get("type"))
 
     scope = _text(props.get("scope"))
+    where = azure_names.describe_scope(scope, subscription_names or {})
 
     return {
         "id": _text(raw.get("id")),
         "principal_id": principal_id,
-        "principal_name": display or upn or principal_id or "Unknown principal",
+        "principal_name": azure_names.principal_label(display, upn, ptype),
         "principal_upn": upn,
-        "principal_type": principal_kind(
-            props.get("principalType") or lookup.get("type")
-        ),
-        "resolved": bool(display or upn),
+        "principal_type": ptype,
+        "resolved": azure_names.is_named(display, upn),
         "role_name": role_name or "Unknown role",
+        "role_meaning": azure_names.role_meaning(role_name),
         "role_definition_id": definition_id,
         "privilege": classify_role(role_name),
         "is_custom": bool(props.get("isCustomRole")) or _lower(lookup.get("role_kind")) == "customrole",
         "scope": scope,
         "scope_kind": scope_kind(scope),
         "scope_name": scope.rsplit("/", 1)[-1] if scope else "",
+        # Where this access applies, in words. Parsed from the scope string
+        # itself, so it needs no Azure call and cannot be throttled.
+        "scope_label": where["label"],
+        "scope_sentence": where["sentence"],
+        "resource_name": where["resource_name"],
+        "resource_type": where["resource_type"],
+        "resource_group": where["resource_group"],
+        "management_group": where["management_group"],
         "subscription_id": subscription_of(scope),
+        "subscription_name": where["subscription_name"],
         "created_at": _text(props.get("createdOn")),
         "created_by": _text(props.get("createdBy")),
         # An assignment inherited from a group is the hardest kind to trace,
         # because the user never appears in the assignment at all.
-        "via_group": principal_kind(props.get("principalType")) == "Group",
+        "via_group": ptype == "Group",
     }
 
 
@@ -733,14 +755,7 @@ def _usage_findings(assignments, activity, window_days, stale_days, now_iso, has
     for item in assignments:
         usage = _usage_for(item, activity)
         base = {
-            "principal_id": item["principal_id"],
-            "principal_name": item["principal_name"],
-            "principal_type": item["principal_type"],
-            "role_name": item["role_name"],
-            "privilege": item["privilege"],
-            "scope": item["scope"],
-            "scope_kind": item["scope_kind"],
-            "subscription_id": item["subscription_id"],
+            **_identity_fields(item),
             "window_days": window_days,
         }
 
@@ -755,13 +770,13 @@ def _usage_findings(assignments, activity, window_days, stale_days, now_iso, has
                 "kind": UNUSED,
                 "severity": "high" if item["privilege"] == CRITICAL else "medium",
                 "weight": 3 if item["privilege"] == CRITICAL else 1,
-                "headline": f"{item['principal_name']} has not used {item['role_name']}",
+                "headline": f"{item['principal_name']} has not used {item['role_name']} access",
                 "detail": (
-                    f"No Activity Log entries at all from this principal in "
-                    f"{window_days} days, while holding {item['role_name']} on "
-                    f"this {item['scope_kind']}. Service principals that run "
-                    "monthly, and people on long leave, will look identical to "
-                    "genuinely dead access — confirm before revoking."
+                    f"We found no activity from this account at all in the last "
+                    f"{window_days} days, while it held {item['role_name']} on "
+                    f"this {item['scope_kind']}. Applications that run monthly, "
+                    "and people on long leave, look exactly the same as genuinely "
+                    "dead access — confirm the requirement before removing it."
                 ),
                 "evidence": "0 operations recorded",
             })
@@ -792,8 +807,7 @@ def _usage_findings(assignments, activity, window_days, stale_days, now_iso, has
                 "kind": OVER_PRIVILEGED,
                 "severity": "high",
                 "weight": 3,
-                "headline": f"{item['principal_name']} holds {item['role_name']} but never grants access",
-                "detail": (
+                "headline": f"{item['principal_name']} holds {item['role_name']} but never grants access",                "detail": (
                     f"{usage['count']} operations in {window_days} days, none of "
                     "them a role assignment or definition change. The power to "
                     "grant access is the part of this role being carried "
@@ -828,6 +842,38 @@ def _usage_findings(assignments, activity, window_days, stale_days, now_iso, has
     return findings
 
 
+def _identity_fields(item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The readable half of an assignment, copied onto a finding.
+
+    Every finding builder needs these and each used to assemble its own subset,
+    which is how the redundancy and sprawl cards ended up printing "Where: Not
+    available" while the usage cards named the subscription correctly. One
+    helper means a field added here appears on every card at once.
+    """
+    return {
+        "principal_id": item["principal_id"],
+        "principal_name": item["principal_name"],
+        "principal_upn": item.get("principal_upn", ""),
+        "principal_type": item["principal_type"],
+        "resolved": item.get("resolved", False),
+        "role_name": item["role_name"],
+        "role_meaning": item.get("role_meaning", ""),
+        "role_definition_id": item.get("role_definition_id", ""),
+        "assignment_id": item.get("id", ""),
+        "privilege": item["privilege"],
+        "scope": item["scope"],
+        "scope_kind": item["scope_kind"],
+        "scope_label": item.get("scope_label", ""),
+        "scope_sentence": item.get("scope_sentence", ""),
+        "resource_name": item.get("resource_name", ""),
+        "resource_type": item.get("resource_type", ""),
+        "resource_group": item.get("resource_group", ""),
+        "subscription_id": item["subscription_id"],
+        "subscription_name": item.get("subscription_name", ""),
+    }
+
+
 def _sprawl_findings(assignments):
     """The same role, for the same principal, repeated across subscriptions."""
     groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
@@ -843,17 +889,22 @@ def _sprawl_findings(assignments):
             continue
         first = items[0]
         findings.append({
+            **_identity_fields(first),
             "kind": SPRAWL,
             "severity": "high" if first["privilege"] == CRITICAL else "low",
             "weight": len(subs),
-            "principal_id": principal_id,
-            "principal_name": first["principal_name"],
-            "principal_type": first["principal_type"],
-            "role_name": first["role_name"],
-            "privilege": first["privilege"],
+            # Sprawl is about a pattern across many subscriptions, so no single
+            # scope applies. Named rather than left blank, which the card would
+            # otherwise render as "Not available" and read like a failure.
             "scope": "",
             "scope_kind": "subscription",
+            "scope_label": f"{len(subs)} subscriptions",
+            "scope_sentence": (
+                f"This role is held separately on {len(subs)} different "
+                "subscriptions."
+            ),
             "subscription_id": "",
+            "subscription_name": "",
             "headline": (
                 f"{first['principal_name']} holds {first['role_name']} on "
                 f"{len(subs)} subscriptions"
@@ -891,17 +942,10 @@ def _redundancy_findings(assignments):
             if not broader:
                 continue
             findings.append({
+                **_identity_fields(item),
                 "kind": REDUNDANT,
                 "severity": "low",
                 "weight": 1,
-                "principal_id": principal_id,
-                "principal_name": item["principal_name"],
-                "principal_type": item["principal_type"],
-                "role_name": item["role_name"],
-                "privilege": item["privilege"],
-                "scope": item["scope"],
-                "scope_kind": item["scope_kind"],
-                "subscription_id": item["subscription_id"],
                 "headline": (
                     f"{item['principal_name']}'s {item['role_name']} on this "
                     f"{item['scope_kind']} grants nothing new"

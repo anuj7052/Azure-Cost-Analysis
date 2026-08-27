@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { fetchAdvisor } from '../api/client';
 import {
-  PageHeader, NeedsSelection, ErrorCard, Coverage,
+  PageHeader, NeedsSelection, Failure, Coverage,
   ChangeStrip, Stat, Severity, Empty, Chips,
 } from '../components/Security/SecurityShell';
 import { useSecurityQuery, when } from '../components/Security/securityData';
+import DetailPanel from '../components/Common/DetailPanel';
+import { plainAdvisorCategory, plainSeverity } from '../utils/securityLanguage';
 import { useAppStore } from '../store/useAppStore';
 import { formatAmount } from '../utils/currency';
 
@@ -28,14 +31,26 @@ const CHANGE_TABS = [
   { key: 'persisting', label: 'Still open' },
 ];
 
-function Recommendation({ item, currency }) {
+const SEVERITIES = ['critical', 'high', 'medium', 'low'];
+
+const MISSING = 'Not available';
+
+function value(v) {
+  return v === null || v === undefined || v === '' ? MISSING : v;
+}
+
+function Recommendation({ item, currency, onOpen }) {
+  const category = plainAdvisorCategory(item.category);
+
   return (
-    <div className="border border-slate-800 bg-slate-800/30 hover:bg-slate-800/60 rounded-xl p-3 transition">
+    <button
+      onClick={onOpen}
+      className="w-full text-left border border-slate-800 bg-slate-800/30 hover:bg-slate-800/60 rounded-xl p-3 transition"
+    >
       <div className="flex items-center gap-2 flex-wrap">
         <Severity level={item.severity} />
-        <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">
-          {item.category}
-        </span>
+        <span className="text-xs font-semibold text-slate-300">{category.plain}</span>
+        <span className="font-mono text-[11px] text-slate-500">{value(item.category)}</span>
         {item.change === 'new' && (
           <span className="text-[10px] text-red-300 border border-red-500/30 bg-red-950/40 rounded px-1.5 py-0.5">
             new
@@ -48,7 +63,7 @@ function Recommendation({ item, currency }) {
         )}
       </div>
 
-      <p className="text-sm font-semibold text-white mt-1.5">{item.title}</p>
+      <p className="text-sm font-semibold text-white mt-1.5">{value(item.title)}</p>
       {item.solution && (
         <p className="text-xs text-slate-400 mt-1 leading-relaxed">{item.solution}</p>
       )}
@@ -67,38 +82,128 @@ function Recommendation({ item, currency }) {
         )}
         {item.last_updated && <span>Updated {when(item.last_updated)}</span>}
       </div>
+    </button>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">{title}</p>
+      {children}
     </div>
+  );
+}
+
+function RecommendationDetail({ item, currency }) {
+  const category = plainAdvisorCategory(item?.category);
+  const saving = typeof item?.annual_saving === 'number'
+    ? formatAmount(item.annual_saving, item.currency || currency)
+    : 'Financial impact not available';
+
+  return (
+    <>
+      <Section title="What this is about">
+        <p className="text-sm text-slate-300">{category.plain}</p>
+        <p className="font-mono text-[11px] text-slate-500">Azure category: {value(item?.category)}</p>
+      </Section>
+
+      <Section title="Why it matters">
+        <p className="text-sm text-slate-300 leading-relaxed">
+          {item?.description || item?.problem || category.why || MISSING}
+        </p>
+      </Section>
+
+      <Section title="Recommended action">
+        <p className="text-sm text-slate-300 leading-relaxed">{value(item?.solution)}</p>
+      </Section>
+
+      <Section title="Saving">
+        <p className="text-sm text-emerald-300">{saving}</p>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          Advisor&rsquo;s own estimate, carried through unchanged.
+        </p>
+      </Section>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Technical details</p>
+        <dl className="mt-2 space-y-1.5">
+          {[
+            ['Resource id', item?.resource_id],
+            ['Category', item?.category],
+            ['Severity', item?.severity],
+            ['Recommendation id', item?.recommendation_id || item?.key],
+          ].map(([label, val]) => (
+            <div key={label} className="flex flex-wrap gap-x-2">
+              <dt className="text-[11px] text-slate-500">{label}</dt>
+              <dd className="font-mono text-[11px] text-slate-400 break-all">{value(val)}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </>
   );
 }
 
 export default function Advisor() {
   const tenantId = useAppStore(s => s.selectedTenantId);
   const currency = useAppStore(s => s.costData?.currency) || 'INR';
-  const { data, error, loading, run, ready } = useSecurityQuery(fetchAdvisor);
+  const { data, error, failure, loading, lastUpdated, cached, loaded, run, ready } = useSecurityQuery(fetchAdvisor, { source: 'advisor' });
+  const [searchParams] = useSearchParams();
 
   const [tab, setTab] = useState('all');
   const [category, setCategory] = useState('all');
+  const [selected, setSelected] = useState(null);
+  // Deep links from the overview arrive already narrowed; deriving the initial
+  // state keeps that promise without a state-setting effect.
+  const [severity, setSeverity] = useState(() => {
+    const wanted = String(searchParams.get('severity') || '').toLowerCase();
+    return SEVERITIES.includes(wanted) ? wanted : 'all';
+  });
 
   const rows = useMemo(() => {
     if (!data) return [];
-    const base = tab === 'all' ? data.findings : (data.change?.[tab] || []);
-    return category === 'all' ? base : base.filter(f => f.category === category);
-  }, [data, tab, category]);
+    const all = Array.isArray(data.findings) ? data.findings : [];
+    const change = data.change?.[tab];
+    const base = tab === 'all' ? all : (Array.isArray(change) ? change : []);
+    return base.filter(f =>
+      (category === 'all' || f.category === category) &&
+      (severity === 'all' || String(f.severity || '').toLowerCase() === severity)
+    );
+  }, [data, tab, category, severity]);
 
-  const summary = data?.summary;
+  // A partial body from the backend must degrade to an empty panel rather than
+  // a blank page -- a security screen that fails to render says nothing at all,
+  // which reads as nothing being wrong.
+  const summary = data?.summary || {};
+  const byCategory = summary.by_category || {};
+
+  // Counted from the findings, because the summary carries no severity split
+  // and a chip must never show a number it did not derive from what it filters.
+  const severityCounts = useMemo(() => {
+    const all = Array.isArray(data?.findings) ? data.findings : [];
+    return all.reduce((acc, f) => {
+      const key = String(f?.severity || '').toLowerCase();
+      if (key) acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+  }, [data]);
 
   return (
     <div className="p-6 space-y-6 max-w-screen-2xl mx-auto">
       <PageHeader
         title="Azure Advisor"
-        subtitle="Every Advisor recommendation across every selected subscription, in one list — and what changed since the last time this ran."
-        onRun={run}
+        subtitle="Microsoft's own suggestions for saving money, tightening security and keeping services online — every subscription in one list, and what changed since the last run."
+        onRun={() => run({ force: true })}
         loading={loading}
         disabled={!ready}
+        lastUpdated={lastUpdated}
+        cached={cached}
+        loaded={loaded}
       />
 
       {!ready && <NeedsSelection hasTenant={Boolean(tenantId)} />}
-      {error && <ErrorCard message={error} />}
+      {error && <Failure kind={failure} message={error} onRetry={() => run({ force: true })} stale={Boolean(data)} />}
 
       {data && (
         <>
@@ -107,7 +212,7 @@ export default function Advisor() {
             <Stat label="High impact" value={summary.high_count} tone="text-red-300" />
             <Stat
               label="Categories"
-              value={Object.keys(summary.by_category).length}
+              value={Object.keys(byCategory).length}
             />
             <Stat
               label="Advisor's estimated saving"
@@ -145,7 +250,27 @@ export default function Advisor() {
                   onChange={setCategory}
                   options={[
                     { key: 'all', label: 'All' },
-                    ...Object.entries(summary.by_category).map(([key, count]) => ({ key, label: key, count })),
+                    ...Object.entries(byCategory).map(([key, count]) => ({
+                      key,
+                      label: plainAdvisorCategory(key).plain,
+                      count,
+                    })),
+                  ]}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">
+                  Severity
+                </span>
+                <Chips
+                  value={severity}
+                  onChange={setSeverity}
+                  options={[
+                    { key: 'all', label: 'All' },
+                    ...SEVERITIES
+                      .filter(s => severityCounts[s])
+                      .map(s => ({ key: s, label: plainSeverity(s).plain, count: severityCounts[s] })),
                   ]}
                 />
               </div>
@@ -159,7 +284,14 @@ export default function Advisor() {
                     : 'No recommendations match this view. Check the coverage line above before reading that as good news.'}
                 </Empty>
               ) : (
-                rows.map((item, i) => <Recommendation key={item.key || i} item={item} currency={currency} />)
+                rows.map((item, i) => (
+                  <Recommendation
+                    key={item.key || i}
+                    item={item}
+                    currency={currency}
+                    onOpen={() => setSelected(item)}
+                  />
+                ))
               )}
             </div>
           </div>
@@ -174,6 +306,15 @@ export default function Advisor() {
           </div>
         </>
       )}
+
+      <DetailPanel
+        open={Boolean(selected)}
+        title={selected?.title || 'Recommendation'}
+        subtitle={selected ? plainAdvisorCategory(selected.category).plain : undefined}
+        onClose={() => setSelected(null)}
+      >
+        {selected && <RecommendationDetail item={selected} currency={currency} />}
+      </DetailPanel>
     </div>
   );
 }

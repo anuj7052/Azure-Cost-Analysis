@@ -39,17 +39,35 @@ export function shortId(value) {
  *
  * `resolved` is set by the backend when it managed to find a display name or
  * UPN. When it did not, `principal_name` falls back to the object id, and
- * printing that would put a bare GUID on screen — so instead we say what kind
- * of thing it is and abbreviate the id.
+ * printing that would put a bare GUID on screen.
+ *
+ * The stand-in is "Name unavailable" rather than "Unknown user", because the
+ * two say different things. "Unknown" sounds like a judgement about the
+ * account — as though Azure knows of someone shadowy it will not name.
+ * "Name unavailable" says what actually happened: we were not given the name,
+ * and there is a permission that would fix it. `UNRESOLVED_NOTE` carries that
+ * explanation so the phrase never appears on its own.
  */
+export const UNRESOLVED_LABEL = 'Name unavailable';
+
+export const UNRESOLVED_NOTE =
+  'Azure did not provide a display name for this account. Resolving names ' +
+  'requires the Directory.Read.All permission, which is approved separately ' +
+  'from the permission that reads your subscriptions.';
+
 export function principalLabel(item) {
-  if (!item) return 'Unknown principal';
+  if (!item) return UNRESOLVED_LABEL;
   const name = String(item.principal_name || '').trim();
   if (name && !isGuid(name)) return name;
 
-  const kind = String(item.principal_type || '').trim() || 'Principal';
-  const id = item.principal_id || name;
-  return id ? `Unnamed ${kind.toLowerCase()} ${shortId(id)}` : `Unnamed ${kind.toLowerCase()}`;
+  const upn = String(item.principal_upn || item.email || '').trim();
+  if (upn) return upn;
+
+  // Deliberately no id in the result. Appending one produced labels such as
+  // "Unnamed principal · 265b1023…", which reads as though the GUID were part
+  // of somebody's name rather than the trace of a failed lookup. The id is
+  // still on the item, and every detail panel shows it under technical details.
+  return UNRESOLVED_LABEL;
 }
 
 /** True when the label had to be invented because Azure gave us no name. */

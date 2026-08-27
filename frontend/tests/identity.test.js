@@ -47,8 +47,24 @@ describe('principalLabel', () => {
       principal_name: SUB, principal_id: SUB, principal_type: 'Service principal',
     });
     expect(label).not.toBe(SUB);
-    expect(label).toContain('Unnamed service principal');
-    expect(label).toContain('7f801a91…8362');
+    expect(label).toBe('Name unavailable');
+    // The id is deliberately absent. Appending it produced labels such as
+    // "Unnamed service principal · 7f801a91…", which reads as though the GUID
+    // were part of a name rather than the trace of a failed lookup.
+    expect(label).not.toContain('7f801a91');
+  });
+
+  it('prefers an email address over an unknown-account placeholder', () => {
+    expect(principalLabel({ principal_upn: 'anuj@company.com', principal_type: 'User' }))
+      .toBe('anuj@company.com');
+  });
+
+  it('names the kind of thing it could not resolve', () => {
+    expect(principalLabel({ principal_type: 'User' })).toBe('Name unavailable');
+    expect(principalLabel({ principal_type: 'Group' })).toBe('Name unavailable');
+    expect(principalLabel({ principal_type: 'Managed identity' }))
+      .toBe('Name unavailable');
+    expect(principalLabel({})).toBe('Name unavailable');
   });
 });
 

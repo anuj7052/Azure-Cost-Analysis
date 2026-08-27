@@ -1,5 +1,5 @@
 import { useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, RequireAuth } from './auth/AuthProvider';
 import Sidebar from './components/Layout/Sidebar';
@@ -7,18 +7,17 @@ import Topbar from './components/Layout/Topbar';
 import { useAppStore } from './store/useAppStore';
 import { useTheme } from './store/useTheme';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
+import { clearSecurityCache } from './components/Security/securityData';
 
 // Lazy load pages — only loaded when user navigates to them
 const Dashboard      = lazy(() => import('./pages/Dashboard'));
-const CostTrends     = lazy(() => import('./pages/CostTrends'));
+const CostExplorer   = lazy(() => import('./pages/CostExplorer'));
 const Compare        = lazy(() => import('./pages/Compare'));
-const ServiceAnalysis = lazy(() => import('./pages/ServiceAnalysis'));
 const Anomalies      = lazy(() => import('./pages/Anomalies'));
 const Settings       = lazy(() => import('./pages/Settings'));
 const ResourceGroups = lazy(() => import('./pages/ResourceGroups'));
 const Orphaned       = lazy(() => import('./pages/Orphaned'));
 const Compute        = lazy(() => import('./pages/Compute'));
-const CostHome       = lazy(() => import('./pages/CostHome'));
 const GlobalSearch   = lazy(() => import('./pages/GlobalSearch'));
 const Changes        = lazy(() => import('./pages/Changes'));
 const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
@@ -29,6 +28,7 @@ const Admin          = lazy(() => import('./pages/Admin'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const AccessOptimization = lazy(() => import('./pages/AccessOptimization'));
 const RoleAssignments    = lazy(() => import('./pages/RoleAssignments'));
+const AccessHistory      = lazy(() => import('./pages/AccessHistory'));
 const Advisor            = lazy(() => import('./pages/Advisor'));
 const Defender           = lazy(() => import('./pages/Defender'));
 const PolicyGovernance   = lazy(() => import('./pages/PolicyGovernance'));
@@ -71,7 +71,7 @@ function AccountLoadFailed({ error, onRetry }) {
             Try again
           </button>
           <button
-            onClick={() => { instance.clearCache(); instance.logoutRedirect(); }}
+            onClick={() => { clearSecurityCache(); instance.clearCache(); instance.logoutRedirect(); }}
             className="flex-1 rounded-xl border border-slate-700 py-2.5 text-sm font-medium text-slate-300 transition hover:text-white"
           >
             Sign out
@@ -145,14 +145,16 @@ function AppShell() {
           <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/trends" element={<CostTrends />} />
+            <Route path="/explorer" element={<CostExplorer />} />
+            {/* Cost Trends and Services merged into the explorer. Kept as
+                redirects so existing links and bookmarks still land. */}
+            <Route path="/trends" element={<Navigate to="/explorer" replace />} />
+            <Route path="/services" element={<Navigate to="/explorer" replace />} />
             <Route path="/compare" element={<Compare />} />
-            <Route path="/services" element={<ServiceAnalysis />} />
             <Route path="/anomalies" element={<Anomalies />} />
             <Route path="/resource-groups" element={<ResourceGroups />} />
             <Route path="/orphaned" element={<Orphaned />} />
             <Route path="/compute" element={<Compute />} />
-            <Route path="/cost" element={<CostHome />} />
             <Route path="/search" element={<GlobalSearch />} />
             <Route path="/changes" element={<Changes />} />
             <Route path="/activity" element={<ActivityLog />} />
@@ -164,6 +166,7 @@ function AppShell() {
               <Route path="/apis" element={<ApiCatalog />} />
               <Route path="/access-optimization" element={<AccessOptimization />} />
               <Route path="/role-assignments" element={<RoleAssignments />} />
+              <Route path="/access-history" element={<AccessHistory />} />
               <Route path="/advisor" element={<Advisor />} />
               <Route path="/defender" element={<Defender />} />
               <Route path="/policy" element={<PolicyGovernance />} />            <Route path="/settings" element={<Settings />} />

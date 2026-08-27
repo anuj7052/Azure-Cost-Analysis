@@ -322,3 +322,203 @@ def test_suspended_accounts_are_rejected(isolated_db, two_customers):
         assert exc.value.status_code == 403
 
     asyncio.get_event_loop().run_until_complete(check())
+
+
+# ---------------------------------------------------------------------------
+# Subscription authorisation
+# ---------------------------------------------------------------------------
+
+import pytest as _pytest
+from fastapi import HTTPException as _HTTPException
+
+from services import token_resolver as _tr
+
+
+@_pytest.fixture(autouse=True)
+def _clear_subscription_cache():
+    """The allow-list is cached per token; a stale entry would mask a real result."""
+    _tr._SUBSCRIPTION_CACHE.clear()
+    yield
+    _tr._SUBSCRIPTION_CACHE.clear()
+
+
+def _directory(monkeypatch, subs, calls=None):
+    async def fake(token):
+        if calls is not None:
+            calls.append(token)
+        return subs
+    monkeypatch.setattr(_tr, "list_subscriptions", fake)
+
+
+class TestSubscriptionAuthorisation:
+    """
+    Subscription ids arrive from the browser. Azure would refuse a foreign one,
+    but that refusal surfaces to the user as a coverage gap -- which turns the
+    API into a probe for which subscriptions exist. It is decided here instead.
+    """
+
+    async def test_ids_the_token_cannot_see_are_dropped(self, monkeypatch):
+        _directory(monkeypatch, [
+            {"subscriptionId": "mine", "tenantId": "t1"},
+        ])
+        allowed = await _tr.authorize_subscriptions("tok", "t1", ["mine", "somebody-elses"])
+        assert allowed == ["mine"]
+
+    async def test_a_subscription_from_another_tenant_is_not_allowed(self, monkeypatch):
+        _directory(monkeypatch, [
+            {"subscriptionId": "a", "tenantId": "t1"},
+            {"subscriptionId": "b", "tenantId": "t2"},
+        ])
+        allowed = await _tr.authorize_subscriptions("tok", "t1", ["a", "b"])
+        assert allowed == ["a"]
+
+    async def test_asking_only_for_foreign_subscriptions_is_refused_outright(self, monkeypatch):
+        _directory(monkeypatch, [{"subscriptionId": "a", "tenantId": "t1"}])
+        with _pytest.raises(_HTTPException) as exc:
+            await _tr.authorize_subscriptions("tok", "t1", ["b", "c"])
+        assert exc.value.status_code == 403
+
+    async def test_an_unreadable_directory_fails_closed(self, monkeypatch):
+        async def boom(token):
+            raise RuntimeError("directory unavailable")
+        monkeypatch.setattr(_tr, "list_subscriptions", boom)
+        with _pytest.raises(_HTTPException) as exc:
+            await _tr.authorize_subscriptions("tok", "t1", ["a"])
+        # Not 403: we are not saying the caller lacks access, we are saying we
+        # could not tell -- and guessing in either direction would be wrong.
+        assert exc.value.status_code == 502
+        assert "not sent to Azure" in exc.value.detail
+
+    async def test_the_allow_list_is_cached_per_token(self, monkeypatch):
+        calls = []
+        _directory(monkeypatch, [{"subscriptionId": "a", "tenantId": "t1"}], calls)
+        await _tr.authorize_subscriptions("tok", "t1", ["a"])
+        await _tr.authorize_subscriptions("tok", "t1", ["a"])
+        assert len(calls) == 1
+
+    async def test_a_different_token_does_not_reuse_another_accounts_allow_list(self, monkeypatch):
+        calls = []
+        _directory(monkeypatch, [{"subscriptionId": "a", "tenantId": "t1"}], calls)
+        await _tr.authorize_subscriptions("tok-one", "t1", ["a"])
+        await _tr.authorize_subscriptions("tok-two", "t1", ["a"])
+        assert len(calls) == 2
+
+    async def test_the_cache_never_stores_the_bearer_token(self, monkeypatch):
+        _directory(monkeypatch, [{"subscriptionId": "a", "tenantId": "t1"}])
+        await _tr.authorize_subscriptions("super-secret-token", "t1", ["a"])
+        assert all("super-secret-token" not in str(k) for k in _tr._SUBSCRIPTION_CACHE)
+
+    async def test_empty_selection_is_not_an_authorisation_failure(self, monkeypatch):
+        _directory(monkeypatch, [{"subscriptionId": "a", "tenantId": "t1"}])
+        assert await _tr.authorize_subscriptions("tok", "t1", []) == []
+
+
+# ---------------------------------------------------------------------------
+# The audit trail
+#
+# security_audit records what an administrator did to Azure access. It is the
+# one table where a leak is not merely embarrassing: it would tell one customer
+# which of another customer's staff hold Owner, and when that was granted.
+# ---------------------------------------------------------------------------
+
+class TestAuditIsolation:
+    async def test_history_returns_only_this_account_and_tenant(self, two_customers, isolated_db):
+        from services import access_change
+
+        alice, bob = two_customers["alice"], two_customers["bob"]
+
+        await access_change.open_event(
+            isolated_db,
+            {"account_id": alice["id"], "name": "Alice", "email": "alice@a.com"},
+            ALICE_TENANT,
+            access_change.ACTION_GRANT,
+            scope="/subscriptions/sub-alice",
+            target_name="Contractor",
+            new_state="Owner",
+        )
+        await access_change.open_event(
+            isolated_db,
+            {"account_id": bob["id"], "name": "Bob", "email": "bob@b.com"},
+            BOB_TENANT,
+            access_change.ACTION_GRANT,
+            scope="/subscriptions/sub-bob",
+            target_name="Bob's contractor",
+            new_state="Reader",
+        )
+
+        alice_rows = await access_change.history(isolated_db, alice["id"], ALICE_TENANT)
+        bob_rows = await access_change.history(isolated_db, bob["id"], BOB_TENANT)
+
+        assert [r["target_name"] for r in alice_rows] == ["Contractor"]
+        assert [r["target_name"] for r in bob_rows] == ["Bob's contractor"]
+
+    async def test_knowing_the_tenant_id_is_not_enough(self, two_customers, isolated_db):
+        """Bob guesses Alice's tenant id. He still sees nothing."""
+        from services import access_change
+
+        alice, bob = two_customers["alice"], two_customers["bob"]
+        await access_change.open_event(
+            isolated_db,
+            {"account_id": alice["id"], "name": "Alice", "email": "alice@a.com"},
+            ALICE_TENANT,
+            access_change.ACTION_REVOKE,
+            scope="/subscriptions/sub-alice",
+            target_name="Someone",
+        )
+
+        stolen = await access_change.history(isolated_db, bob["id"], ALICE_TENANT)
+        assert stolen == []
+
+    async def test_a_failed_change_is_still_recorded(self, two_customers, isolated_db):
+        """A refused attempt to grant Owner is exactly what an audit needs."""
+        from services import access_change
+
+        alice = two_customers["alice"]
+        event_id = await access_change.open_event(
+            isolated_db,
+            {"account_id": alice["id"], "name": "Alice", "email": "alice@a.com"},
+            ALICE_TENANT,
+            access_change.ACTION_GRANT,
+            scope="/subscriptions/sub-alice",
+            target_name="Contractor",
+            new_state="Owner",
+        )
+        await access_change.close_event(
+            isolated_db, event_id, access_change.RESULT_FAILED,
+            failure_reason="AuthorizationFailed",
+        )
+
+        rows = await access_change.history(isolated_db, alice["id"], ALICE_TENANT)
+        assert rows[0]["result"] == "failed"
+        assert rows[0]["failure_reason"] == "AuthorizationFailed"
+        assert rows[0]["completed_at"]
+
+    async def test_an_unclosed_event_stays_pending(self, two_customers, isolated_db):
+        """A process killed mid-change leaves evidence that nobody confirmed."""
+        from services import access_change
+
+        alice = two_customers["alice"]
+        await access_change.open_event(
+            isolated_db,
+            {"account_id": alice["id"], "name": "Alice", "email": "alice@a.com"},
+            ALICE_TENANT,
+            access_change.ACTION_GRANT,
+            scope="/subscriptions/sub-alice",
+        )
+        rows = await access_change.history(isolated_db, alice["id"], ALICE_TENANT)
+        assert rows[0]["result"] == "pending"
+        assert rows[0]["completed_at"] is None
+
+    async def test_subscription_is_recorded_from_the_scope(self, two_customers, isolated_db):
+        from services import access_change
+
+        alice = two_customers["alice"]
+        await access_change.open_event(
+            isolated_db,
+            {"account_id": alice["id"], "name": "Alice", "email": "alice@a.com"},
+            ALICE_TENANT,
+            access_change.ACTION_GRANT,
+            scope="/subscriptions/sub-9/resourceGroups/prod",
+        )
+        rows = await access_change.history(isolated_db, alice["id"], ALICE_TENANT)
+        assert rows[0]["subscription_id"] == "sub-9"

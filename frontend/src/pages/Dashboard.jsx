@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { IndianRupee, TrendingUp, TrendingDown, AlertTriangle, PiggyBank, BarChart2, Flame, Network, ArrowUpFromLine, ArrowDownToLine, CalendarDays } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import HeroCard from '../components/Cards/HeroCard';
+import DataQuality from '../components/Common/DataQuality';
 import PricingSection from '../components/Cards/PricingSection';
 import DetailPanel, { DetailStat } from '../components/Common/DetailPanel';
 import PortalGuide, { COST_GUIDE } from '../components/Common/PortalGuide';
@@ -29,11 +30,29 @@ export default function Dashboard() {
   const [detail, setDetail] = useState(null);
 
   useEffect(() => {
-    if (imported || (selectedTenantId && selectedSubscriptionIds.length > 0)) {
-      loadCosts();
-      loadBandwidth();
-      loadPricing();
-    }
+    if (!(imported || (selectedTenantId && selectedSubscriptionIds.length > 0))) return undefined;
+
+    let cancelled = false;
+
+    // Costs first, on its own, then the rest together.
+    //
+    // All three are Cost Management queries that fan out across every selected
+    // subscription, and firing all of them at once on a nine-subscription
+    // tenant put ~27 queries in flight and got the lot throttled.
+    //
+    // Fully serialising them fixed that but made the page three times slower
+    // than it needed to be. Costs fills every tile above the fold, so it gets
+    // the whole rate-limit budget to itself and lands as fast as Azure can
+    // manage it. Bandwidth and reservations decorate sections further down,
+    // and once costs is done there is no reason to make them wait on each
+    // other as well.
+    (async () => {
+      await loadCosts();
+      if (cancelled) return;
+      await Promise.allSettled([loadBandwidth(), loadPricing()]);
+    })();
+
+    return () => { cancelled = true; };
   }, [imported, selectedTenantId, selectedSubscriptionIds.join(','), dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const latest        = costData?.months?.at(-1);
@@ -264,6 +283,10 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* What these figures cover. A partial total looks identical to a
+          complete one, so the difference is stated next to them. */}
+      <DataQuality coverage={costData?.coverage} />
+
       {!selectedTenantId && !imported && (
         <div className="bg-blue-950/40 border border-blue-500/30 rounded-2xl p-6 text-center">
           <p className="text-blue-300 font-medium">No tenant selected</p>
@@ -428,7 +451,8 @@ export default function Dashboard() {
         ) : !costData?.top_services?.length ? (
           <p className="text-slate-500 text-sm text-center py-6">No data available</p>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[34rem] text-sm">
             <thead>
               <tr className="text-left text-slate-500 border-b border-slate-800">
                 <th className="pb-2 font-medium">#</th>
@@ -456,6 +480,7 @@ export default function Dashboard() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

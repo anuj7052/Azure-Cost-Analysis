@@ -20,6 +20,23 @@ def _parse_usage_date(date_val) -> str:
     return s[:7]
 
 
+def _parse_usage_day(date_val) -> str:
+    """
+    The same value as a full 'YYYY-MM-DD' day, or '' when only a month is known.
+
+    Comparing an unfinished month against an equal slice of the previous one
+    needs day resolution; a month key cannot express "the first 27 days". This
+    sits alongside the month key rather than replacing it so the existing
+    month-over-month callers are untouched.
+    """
+    s = str(date_val)
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    return ""
+
+
 def aggregate_by_month(records: List[Dict[str, Any]]) -> Dict[str, Dict]:
     """
     Group raw cost records into:
@@ -110,6 +127,9 @@ def to_cost_rows(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         rows.append({
             "month": _parse_usage_date(
                 r.get("BillingMonth") or r.get("UsageDate") or r.get("Date") or "19700101"
+            ),
+            "day": _parse_usage_day(
+                r.get("UsageDate") or r.get("Date") or r.get("BillingMonth") or ""
             ),
             "cost": cost,
             "quantity": qty,
