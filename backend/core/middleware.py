@@ -86,21 +86,45 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
     Defensive response headers.
 
-    The API serves JSON to a separate frontend origin, so the CSP here is the
-    restrictive API-only one. It is not the policy for the frontend host, which
-    belongs wherever the SPA is served from.
+    Two policies, because this process answers as two different things. API
+    routes return JSON that should be able to load nothing at all, so they keep
+    the locked-down policy. The document routes return the single-page app, and
+    applying the API policy to those would forbid the app's own script and
+    stylesheet -- a page that returns 200 and renders blank, which is the
+    failure mode that looks most like success.
+
+    The document policy names every origin the app genuinely needs and nothing
+    else, so it is still an allow-list rather than a relaxation.
     """
+
+    API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+
+    # 'unsafe-inline' for styles only, and only because it is unavoidable here:
+    # the slide-over panel injects a <style> element for its entrance keyframes.
+    # Scripts get no such exemption -- that is the one that would matter.
+    DOCUMENT_CSP = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        "connect-src 'self' https://login.microsoftonline.com "
+        "https://management.azure.com https://graph.microsoft.com "
+        "https://prices.azure.com; "
+        # MSAL renews tokens in a hidden iframe pointed at the login host.
+        # Without this, every silent refresh fails and the user is bounced to
+        # an interactive sign-in roughly once an hour.
+        "frame-src https://login.microsoftonline.com; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
 
     BASE_HEADERS = {
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Referrer-Policy": "no-referrer",
-        "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Resource-Policy": "same-site",
         "Permissions-Policy": "geolocation=(), camera=(), microphone=(), payment=()",
-        "Content-Security-Policy": (
-            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-        ),
         # Financial and infrastructure data has no business in a shared cache.
         "Cache-Control": "no-store",
     }
@@ -110,6 +134,30 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         for header, value in self.BASE_HEADERS.items():
             response.headers.setdefault(header, value)
+
+        path = request.url.path
+        is_api = path.startswith("/api")
+
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            self.API_CSP if is_api else self.DOCUMENT_CSP,
+        )
+
+        # `same-origin` severs window.opener, which is precisely what the MSAL
+        # popup sign-in relies on to hand the result back. The document that
+        # opens those popups therefore gets `same-origin-allow-popups`: still
+        # isolated from anything that tries to open *us*, but able to open the
+        # login window and hear the answer.
+        response.headers.setdefault(
+            "Cross-Origin-Opener-Policy",
+            "same-origin" if is_api else "same-origin-allow-popups",
+        )
+
+        # Content-hashed asset filenames change whenever the bytes change, so a
+        # long cache is safe and `no-store` would mean re-downloading the whole
+        # bundle on every single page load.
+        if path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
 
         if settings.SECURITY_HEADERS_HSTS:
             response.headers.setdefault(

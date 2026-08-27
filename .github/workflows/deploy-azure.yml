@@ -1,0 +1,122 @@
+# Builds the SPA, runs both test suites, and ships the result to Azure App Service
+# on every push to main.
+#
+# Authentication uses GitHub's OIDC token exchanged for an Azure token via a
+# federated credential on the user-assigned managed identity `id-github-deploy`.
+# There is no Azure password or publish profile stored in this repository, and
+# publish-profile (basic auth) deployment is disabled on the web app anyway.
+#
+# The identity is scoped to the single web app resource, not the subscription.
+
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # required to request the OIDC token
+  contents: read
+
+# Never let two deploys overwrite each other. Queue instead of cancelling, so a
+# push that is already mid-deploy finishes rather than leaving a half-written app.
+concurrency:
+  group: deploy-azure
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.VITE_AZURE_REDIRECT_URI }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------- frontend ----------
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm test
+
+      # Vite inlines VITE_* values at build time, so they must be present here and
+      # not in App Service settings. None of them are secrets: they all end up
+      # readable in the shipped JS bundle.
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_AZURE_CLIENT_ID: ${{ vars.VITE_AZURE_CLIENT_ID }}
+          VITE_AZURE_TENANT_ID: ${{ vars.VITE_AZURE_TENANT_ID }}
+          VITE_AZURE_REDIRECT_URI: ${{ vars.VITE_AZURE_REDIRECT_URI }}
+        run: npm run build
+
+      # main.py serves the SPA from backend/static when index.html exists there.
+      # The directory is build output and is deliberately not committed.
+      - name: Stage frontend build into the backend
+        run: |
+          rm -rf backend/static
+          cp -R frontend/dist backend/static
+
+      # ---------- backend ----------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Backend tests
+        working-directory: backend
+        run: python -m pytest -q
+
+      # Tests and local runs create these; they must not reach the server.
+      - name: Strip local-only files from the deploy payload
+        run: |
+          rm -rf backend/tests backend/data backend/.pytest_cache
+          find backend -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+      # ---------- deploy ----------
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: backend
+
+      # A deploy that returns 200 on / can still be broken, so assert on the API
+      # health endpoint and fail the run if it does not come back healthy.
+      - name: Verify the deployment is healthy
+        run: |
+          url="${{ vars.VITE_AZURE_REDIRECT_URI }}/api/health"
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /tmp/health.txt -w '%{http_code}' "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "healthy: $(cat /tmp/health.txt)"
+              exit 0
+            fi
+            echo "attempt $i: HTTP $code, retrying..."
+            sleep 15
+          done
+          echo "Health check never returned 200."
+          cat /tmp/health.txt || true
+          exit 1

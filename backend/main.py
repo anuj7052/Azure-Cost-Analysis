@@ -6,9 +6,13 @@ route mounting. Domain logic lives in `services/`, HTTP surfaces in `routers/`.
 """
 import logging
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import aiosqlite
 
@@ -187,3 +191,55 @@ async def me(
 async def health():
     """Liveness only. Deliberately reveals nothing about configuration."""
     return {"status": "ok", "version": app.version}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Built frontend
+#
+# The single-page app is served by this same process rather than from a
+# separate host. That is not only about saving a resource: the browser client
+# calls `/api/v1/...` as a relative path, so sharing an origin means the
+# production wiring is identical to the development proxy. Splitting the two
+# would require a cross-origin base URL, a CORS allow-list that has to be kept
+# in step with it, and a second redirect URI on the app registration -- three
+# things to get wrong in exchange for nothing this deployment needs.
+#
+# Mounted last so every API route is matched first, and only when a build is
+# actually present, so local development and the test suite are untouched.
+# ─────────────────────────────────────────────────────────────────────────────
+_FRONTEND_DIR = Path(__file__).resolve().parent / "static"
+
+if (_FRONTEND_DIR / "index.html").is_file():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=_FRONTEND_DIR / "assets"),
+        name="assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa(full_path: str):
+        """
+        Hand any non-API path back to the SPA so client-side routes survive a
+        refresh. Without this, reloading on /anomalies asks the server for a
+        file that was never built and gets a 404 -- the page works until the
+        moment someone bookmarks it.
+
+        An unmatched /api path must still 404 as an API, not silently return
+        HTML, or a typo in a route reads as a JSON parse error in the client.
+        """
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # Serve a real file when one exists (favicon, manifest, robots), and
+        # fall back to the shell for everything else. `resolve()` plus the
+        # prefix check is what stops `../` in the URL reaching outside the
+        # build directory.
+        candidate = (_FRONTEND_DIR / full_path).resolve()
+        if (
+            full_path
+            and candidate.is_file()
+            and str(candidate).startswith(str(_FRONTEND_DIR))
+        ):
+            return FileResponse(candidate)
+
+        return FileResponse(_FRONTEND_DIR / "index.html")
