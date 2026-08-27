@@ -28,9 +28,11 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ vars.VITE_AZURE_REDIRECT_URI }}
+    # Deliberately no `environment:`. Declaring one changes the OIDC subject
+    # GitHub presents from `...:ref:refs/heads/main` to `...:environment:<name>`,
+    # which has to be registered as a separate federated credential. The ref
+    # form is what the identity trusts, and the branch filter above already
+    # restricts this job to main.
 
     steps:
       - uses: actions/checkout@v4
