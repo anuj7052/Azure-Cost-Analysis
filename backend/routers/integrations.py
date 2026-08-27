@@ -11,7 +11,7 @@ from typing import List
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 
-from auth.dependencies import get_current_user, require_workspace_owner
+from auth.dependencies import get_current_user, require_workspace_admin
 from core.db import get_db
 from models.schemas import (
     CreateIntegrationRequest,
@@ -33,7 +33,7 @@ async def list_integrations(
 
 @router.post(
     "", response_model=Integration, status_code=201,
-    dependencies=[Depends(require_workspace_owner)],
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def create_integration(
     body: CreateIntegrationRequest,
@@ -56,7 +56,7 @@ async def create_integration(
 
 @router.patch(
     "/{integration_id}", response_model=Integration,
-    dependencies=[Depends(require_workspace_owner)],
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def update_integration(
     integration_id: int,
@@ -79,7 +79,7 @@ async def update_integration(
 
 @router.delete(
     "/{integration_id}", status_code=204,
-    dependencies=[Depends(require_workspace_owner)],
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def delete_integration(
     integration_id: int,

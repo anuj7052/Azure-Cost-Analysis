@@ -21,7 +21,15 @@ _SCHEMAS = {
             -- Contact number for the account. Entra sign-in tokens do not
             -- carry one, so this is only ever what the person typed in.
             phone           TEXT    NOT NULL DEFAULT '',
-            login_count     INTEGER NOT NULL DEFAULT 0,            created_at      TEXT    DEFAULT (datetime('now')),
+            login_count     INTEGER NOT NULL DEFAULT 0,
+            -- What this person may do inside the workspace they were added to.
+            -- Deliberately separate from `role` above: that one is the
+            -- platform-wide flag that opens the Admin Centre over every
+            -- account on the server. Conflating the two would mean granting
+            -- someone "admin of my workspace" and accidentally handing them
+            -- everybody else's.
+            workspace_role  TEXT    NOT NULL DEFAULT 'user',
+            created_at      TEXT    DEFAULT (datetime('now')),
             last_login_at   TEXT
         )
     """,
@@ -37,6 +45,9 @@ _SCHEMAS = {
             owner_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             email            TEXT    NOT NULL,
             azure_tenant_id  TEXT    NOT NULL DEFAULT '',
+            -- The role the person is being given, chosen when they are added
+            -- and carried onto their account when they first sign in.
+            role             TEXT    NOT NULL DEFAULT 'user',
             status           TEXT    NOT NULL DEFAULT 'pending',
             created_at       TEXT    DEFAULT (datetime('now')),
             accepted_at      TEXT,
@@ -489,9 +500,13 @@ async def init_db():
             "owner_id": "INTEGER REFERENCES users(id)",
             "phone": "TEXT NOT NULL DEFAULT ''",
             "login_count": "INTEGER NOT NULL DEFAULT 0",
+            "workspace_role": "TEXT NOT NULL DEFAULT 'user'",
         })
         await db.execute(_SCHEMAS["users"])
         await db.execute(_SCHEMAS["team_invitations"])
+        await _add_missing_columns(
+            db, "team_invitations", {"role": "TEXT NOT NULL DEFAULT 'user'"}
+        )
 
         await _add_owner_column(
             db,

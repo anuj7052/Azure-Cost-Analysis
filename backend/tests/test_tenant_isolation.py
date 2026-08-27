@@ -143,6 +143,8 @@ def identity(user: dict, oid: str, tenant_id: str) -> dict:
         "account_id": user["id"],
         "actor_id": user["id"],
         "is_owner": True,
+        "workspace_role": "admin",
+        "can_administer": True,
         "owner_id": user["id"],
         "role": user["role"],
         "status": user["status"],

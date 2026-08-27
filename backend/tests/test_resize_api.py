@@ -55,6 +55,7 @@ def identity(user: dict, oid: str, tenant_id: str = "tenant-1") -> dict:
         "email": user["email"], "tenant_id": tenant_id,
         "account_id": user["id"], "actor_id": user["id"],
         "is_owner": True, "owner_id": user["id"],
+        "workspace_role": "admin", "can_administer": True,
         "role": user["role"],
         "status": user["status"], "created_at": user["created_at"],
     }

@@ -34,7 +34,10 @@ export default function Settings() {
   const me = useAppStore(s => s.me);
   // Hiding these is convenience, not the security boundary: the API refuses
   // them for team members regardless of what the browser renders.
-  const canManageTenants = me?.is_owner !== false;
+  // The owner, plus anyone they gave the Administrator role in this workspace.
+  // Undefined means /me has not answered yet, and hiding the controls on a
+  // slow response would look like they had been taken away.
+  const canManageTenants = me?.can_administer !== false;
   const ownerEmail = me?.owner_email || '';
   const [showModal, setShowModal] = useState(false);
   const [showTokenModal, setShowTokenModal] = useState(false);

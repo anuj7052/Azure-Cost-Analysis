@@ -56,13 +56,19 @@ async def get_current_user(
     # "actor_id" is the person, and is what audit trails and self-checks must
     # use. Conflating the two would attribute a member's actions to the owner.
     workspace = workspace_id(user)
+    is_owner = user["owner_id"] is None
+    # The owner is always an administrator of their own workspace. For everyone
+    # else it is whatever role they were given when they were added.
+    workspace_role = "admin" if is_owner else (user["workspace_role"] or "user")
 
     return {
         **claims,
         "account_id": workspace,
         "actor_id": user["id"],
-        "is_owner": user["owner_id"] is None,
+        "is_owner": is_owner,
         "owner_id": workspace,
+        "workspace_role": workspace_role,
+        "can_administer": is_owner or workspace_role == "admin",
         "role": user["role"],
         "status": user["status"],
         "created_at": user["created_at"],
@@ -79,16 +85,42 @@ async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     return current_user
 
 
-async def require_workspace_owner(
+async def require_workspace_admin(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """
     Gate for actions that change the workspace itself or change Azure.
 
-    Invited team members can read everything the owner connected, because that
-    is the point of inviting them. They cannot connect or disconnect a tenant,
-    edit stored credentials, manage the team, or push a change into Azure. A
-    seat is a way to share a view, not a way to hand out the owner's keys.
+    Everyone with a seat can read everything the owner connected, because that
+    is the point of adding them. Only the owner and the people they gave the
+    Administrator role can connect or disconnect a tenant, edit stored
+    credentials, or push a change into Azure.
+
+    This is administration of one workspace and nothing wider. The platform
+    Admin Centre, which sees every account on the server, stays behind
+    `require_admin` and is not reachable from here.
+    """
+    if not current_user.get("can_administer"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You have view access to this workspace. Ask the workspace "
+                "owner or an administrator to make this change."
+            ),
+        )
+    return current_user
+
+
+async def require_workspace_owner(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    Gate for the seats themselves: who is in the workspace, and at what role.
+
+    Kept narrower than `require_workspace_admin` on purpose. An administrator
+    can change what the workspace does; only the owner decides who is in it,
+    so an administrator cannot quietly add more administrators or remove the
+    person who added them.
     """
     if not current_user["is_owner"]:
         raise HTTPException(

@@ -159,6 +159,8 @@ const GRAPH_ROUTES = [
   '/security/access-review',
   '/security/access/grant/preview',
   '/security/access/revoke/preview',
+  // Looking people up by name is a directory read like any other.
+  '/team/directory',
 ];
 
 let _graphToken = null;
@@ -368,8 +370,22 @@ export const updateProfile = (body) => api.patch('/me', body).then(r => r.data);
 // Team seats. Every write returns the whole team back, so the caller never has
 // to guess what the seat counts became after an invite or a removal.
 export const fetchTeam = () => api.get('/team').then(r => r.data);
-export const inviteTeamMember = (email) =>
-  api.post('/team/invitations', { email }).then(r => r.data);
+
+/**
+ * People in the signed-in user's own Microsoft directory whose name or address
+ * starts with `q`. Comes back as `{ people, reason, note }` rather than a bare
+ * list, because a directory the administrator has not consented to is a
+ * different answer from a directory with nobody by that name.
+ */
+export const searchDirectory = (q) =>
+  api.get('/team/directory', { params: { q } }).then(r => r.data);
+
+export const inviteTeamMember = (email, role = 'user') =>
+  api.post('/team/invitations', { email, role }).then(r => r.data);
+export const setMemberRole = (id, role) =>
+  api.patch(`/team/members/${id}/role`, { role }).then(r => r.data);
+export const setInvitationRole = (id, role) =>
+  api.patch(`/team/invitations/${id}/role`, { role }).then(r => r.data);
 export const revokeInvitation = (id) =>
   api.delete(`/team/invitations/${id}`).then(r => r.data);
 export const removeTeamMember = (id) =>

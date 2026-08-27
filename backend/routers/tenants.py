@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 import aiosqlite
-from auth.dependencies import get_current_user, require_workspace_owner
+from auth.dependencies import get_current_user, require_workspace_admin
 from services.azure_mgmt import (
     get_sp_token, is_expired, list_subscriptions, read_token_claims, token_expiry,
 )
@@ -75,7 +75,7 @@ async def get_tenants(
 
 @router.post(
     "/token", response_model=TenantInfo, status_code=201,
-    dependencies=[Depends(require_workspace_owner)],
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def add_session_token(
     body: AddSessionTokenRequest,
@@ -161,7 +161,7 @@ async def add_session_token(
 
 @router.post(
     "", response_model=TenantInfo, status_code=201,
-    dependencies=[Depends(require_workspace_owner)],
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def add_tenant(
     body: AddTenantRequest,
@@ -211,7 +211,7 @@ async def add_tenant(
 
 @router.delete(
     "/{tenant_id}", status_code=204,
-    dependencies=[Depends(require_workspace_owner)],
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def delete_tenant(
     tenant_id: str,

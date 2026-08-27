@@ -142,7 +142,7 @@ export const SECTIONS = [
       },
       {
         to: '/team', label: 'Team', icon: Users,
-        blurb: 'Give up to five colleagues from your directory view access to this workspace.',
+        blurb: 'Pick up to five colleagues from your directory and choose what each may do.',
       },
       {
         to: '/apis', label: 'API Catalog', icon: Plug,

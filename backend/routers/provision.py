@@ -22,7 +22,7 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from auth.dependencies import get_current_user, require_workspace_owner
+from auth.dependencies import get_current_user, require_workspace_admin
 from core.db import DB_PATH
 from core.db import get_db
 from models.schemas import (
@@ -82,7 +82,7 @@ async def chat(
     "/deploy",
     response_model=ProvisionDeployment,
     status_code=202,
-    dependencies=[Depends(require_workspace_owner)],
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def deploy(
     body: ProvisionDeployRequest,

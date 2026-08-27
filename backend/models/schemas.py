@@ -119,6 +119,8 @@ class TeamMember(BaseModel):
     phone: str = ""
     state: str                     # "accepted" | "pending"
     account_status: str = ""
+    role: str = "user"             # "admin" | "user", within this workspace
+    role_label: str = "User"
     joined_at: Optional[str] = None
     last_login_at: Optional[str] = None
     login_count: int = 0
@@ -138,6 +140,27 @@ class TeamOverview(BaseModel):
 
 class InviteRequest(BaseModel):
     email: str
+    role: str = "user"
+
+
+class MemberRoleRequest(BaseModel):
+    role: str
+
+
+class DirectoryPerson(BaseModel):
+    id: str = ""
+    name: str = ""
+    email: str = ""
+    job_title: str = ""
+    department: str = ""
+
+
+class DirectorySearchResult(BaseModel):
+    people: List[DirectoryPerson] = []
+    # Why the list is empty, when it is empty for a reason other than "nobody
+    # matched". The page says something different for each.
+    reason: Optional[str] = None
+    note: str = ""
 
 
 # ── Provisioning ───────────────────────────────────────────────────────────

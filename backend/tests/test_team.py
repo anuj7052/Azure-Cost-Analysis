@@ -357,7 +357,13 @@ async def test_every_state_changing_route_that_touches_azure_is_gated():
     because nobody remembered the dependency.
     """
     import main
-    from auth.dependencies import require_workspace_owner
+    from auth.dependencies import require_workspace_admin, require_workspace_owner
+
+    # Both gates count as "not open to a plain member". They differ in how far
+    # they open: an administrator of the workspace can change Azure, only the
+    # owner can change who is in the workspace. Which routes sit behind which
+    # is pinned separately below.
+    gates = {require_workspace_admin, require_workspace_owner}
 
     expected = {
         ("POST", "/api/v1/tenants"),
@@ -372,20 +378,39 @@ async def test_every_state_changing_route_that_touches_azure_is_gated():
         ("POST", "/api/v1/team/invitations"),
         ("DELETE", "/api/v1/team/invitations/{invitation_id}"),
         ("DELETE", "/api/v1/team/members/{member_id}"),
+        ("PATCH", "/api/v1/team/members/{member_id}/role"),
+        ("PATCH", "/api/v1/team/invitations/{invitation_id}/role"),
+        ("GET", "/api/v1/team/directory"),
         # Creates resources and starts a recurring charge — the single most
         # consequential write in the product.
         ("POST", "/api/v1/provision/deploy"),
     }
 
     gated = set()
+    owner_only = set()
     for route in main.app.routes:
         dependencies = getattr(route, "dependant", None)
         if dependencies is None:
             continue
         calls = {d.call for d in route.dependant.dependencies}
-        if require_workspace_owner in calls:
+        if calls & gates:
             for method in route.methods - {"HEAD", "OPTIONS"}:
                 gated.add((method, route.path))
+        if require_workspace_owner in calls:
+            for method in route.methods - {"HEAD", "OPTIONS"}:
+                owner_only.add((method, route.path))
 
     assert expected <= gated, f"no longer gated: {expected - gated}"
+
+    # Handing someone the Administrator role must not let them hand it on, or
+    # remove the person who gave it to them. Seat management stays with the
+    # owner.
+    seats = {
+        ("POST", "/api/v1/team/invitations"),
+        ("DELETE", "/api/v1/team/invitations/{invitation_id}"),
+        ("DELETE", "/api/v1/team/members/{member_id}"),
+        ("PATCH", "/api/v1/team/members/{member_id}/role"),
+        ("PATCH", "/api/v1/team/invitations/{invitation_id}/role"),
+    }
+    assert seats <= owner_only, f"seat management leaked: {seats - owner_only}"
 

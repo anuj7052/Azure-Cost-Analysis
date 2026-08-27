@@ -27,6 +27,34 @@ STATUS_PENDING = "pending"
 STATUS_ACCEPTED = "accepted"
 STATUS_REVOKED = "revoked"
 
+# What a person may do inside the workspace they were added to.
+#
+# `admin` is administrator *of this workspace*: connect and disconnect tenants,
+# edit stored credentials, create resources. It is not the platform Admin
+# Centre, which sees every account on the server and stays behind the separate
+# `users.role` flag. Someone granting "admin" here is sharing their own
+# workspace, not the whole installation.
+ROLE_ADMIN = "admin"
+ROLE_USER = "user"
+ROLES = (ROLE_ADMIN, ROLE_USER)
+
+ROLE_LABEL = {
+    ROLE_ADMIN: "Administrator",
+    ROLE_USER: "User",
+}
+
+
+def normalise_role(role: str | None) -> str:
+    """
+    An unrecognised role becomes the read-only one.
+
+    Failing towards less access is the only safe direction here: a typo that
+    granted administration would be discovered after the damage, and a typo
+    that granted reading is discovered immediately by the person it affects.
+    """
+    value = (role or "").strip().lower()
+    return value if value in ROLES else ROLE_USER
+
 
 def normalise_email(email: str) -> str:
     return (email or "").strip().lower()
@@ -78,11 +106,12 @@ async def list_team(db: aiosqlite.Connection, owner_id: int) -> list[dict]:
     members: list[dict] = []
 
     async with db.execute(
-        "SELECT id, email, name, status, phone, created_at, last_login_at, login_count "
-        "FROM users WHERE owner_id = ? ORDER BY datetime(created_at)",
+        "SELECT id, email, name, status, phone, created_at, last_login_at, login_count, "
+        "workspace_role FROM users WHERE owner_id = ? ORDER BY datetime(created_at)",
         (owner_id,),
     ) as cursor:
         for row in await cursor.fetchall():
+            role = normalise_role(row["workspace_role"])
             members.append({
                 "id": row["id"],
                 "email": row["email"],
@@ -90,6 +119,8 @@ async def list_team(db: aiosqlite.Connection, owner_id: int) -> list[dict]:
                 "phone": row["phone"] or "",
                 "state": STATUS_ACCEPTED,
                 "account_status": row["status"],
+                "role": role,
+                "role_label": ROLE_LABEL[role],
                 "joined_at": row["created_at"],
                 "last_login_at": row["last_login_at"],
                 "login_count": row["login_count"] or 0,
@@ -97,11 +128,12 @@ async def list_team(db: aiosqlite.Connection, owner_id: int) -> list[dict]:
             })
 
     async with db.execute(
-        "SELECT id, email, created_at FROM team_invitations "
+        "SELECT id, email, created_at, role FROM team_invitations "
         "WHERE owner_id = ? AND status = ? ORDER BY datetime(created_at)",
         (owner_id, STATUS_PENDING),
     ) as cursor:
         for row in await cursor.fetchall():
+            role = normalise_role(row["role"])
             members.append({
                 "id": None,
                 "email": row["email"],
@@ -109,6 +141,8 @@ async def list_team(db: aiosqlite.Connection, owner_id: int) -> list[dict]:
                 "phone": "",
                 "state": STATUS_PENDING,
                 "account_status": "",
+                "role": role,
+                "role_label": ROLE_LABEL[role],
                 "joined_at": None,
                 "last_login_at": None,
                 "login_count": 0,
@@ -129,11 +163,13 @@ class TeamError(Exception):
 
 async def invite(
     db: aiosqlite.Connection, owner: aiosqlite.Row, email: str,
+    role: str = ROLE_USER,
 ) -> dict:
-    """Issue an invitation, or explain precisely why it cannot be issued."""
+    """Give someone access at a chosen role, or explain why it cannot be done."""
     email = normalise_email(email)
+    role = normalise_role(role)
     if not email or "@" not in email:
-        raise TeamError(400, "Enter the work email address of the person to invite.")
+        raise TeamError(400, "Pick a person from your directory, or type their work email address.")
 
     if email == normalise_email(owner["email"]):
         raise TeamError(400, "You are already in this workspace.")
@@ -179,21 +215,59 @@ async def invite(
     if existing is not None:
         await db.execute(
             "UPDATE team_invitations SET status = ?, created_at = datetime('now'), "
-            "azure_tenant_id = ?, accepted_at = NULL, accepted_user_id = NULL "
+            "azure_tenant_id = ?, role = ?, accepted_at = NULL, accepted_user_id = NULL "
             "WHERE id = ?",
-            (STATUS_PENDING, owner["azure_tenant_id"] or "", existing["id"]),
+            (STATUS_PENDING, owner["azure_tenant_id"] or "", role, existing["id"]),
         )
         invitation_id = existing["id"]
     else:
         cursor = await db.execute(
-            "INSERT INTO team_invitations (owner_id, email, azure_tenant_id, status) "
-            "VALUES (?, ?, ?, ?)",
-            (owner["id"], email, owner["azure_tenant_id"] or "", STATUS_PENDING),
+            "INSERT INTO team_invitations (owner_id, email, azure_tenant_id, role, status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (owner["id"], email, owner["azure_tenant_id"] or "", role, STATUS_PENDING),
         )
         invitation_id = cursor.lastrowid
 
     await db.commit()
-    return {"invitation_id": invitation_id, "email": email}
+    return {"invitation_id": invitation_id, "email": email, "role": role}
+
+
+async def set_member_role(
+    db: aiosqlite.Connection, owner_id: int, member_id: int, role: str,
+) -> str:
+    """Change what an existing member may do. The owner's own role is not a
+    thing that can be changed: they are the workspace."""
+    role = normalise_role(role)
+    async with db.execute(
+        "SELECT id FROM users WHERE id = ? AND owner_id = ?", (member_id, owner_id)
+    ) as cursor:
+        if await cursor.fetchone() is None:
+            raise TeamError(404, "That person is not on your team.")
+
+    await db.execute(
+        "UPDATE users SET workspace_role = ? WHERE id = ?", (role, member_id)
+    )
+    await db.commit()
+    return role
+
+
+async def set_invitation_role(
+    db: aiosqlite.Connection, owner_id: int, invitation_id: int, role: str,
+) -> str:
+    """Change the role on an invitation that has not been taken up yet."""
+    role = normalise_role(role)
+    async with db.execute(
+        "SELECT id FROM team_invitations WHERE id = ? AND owner_id = ? AND status = ?",
+        (invitation_id, owner_id, STATUS_PENDING),
+    ) as cursor:
+        if await cursor.fetchone() is None:
+            raise TeamError(404, "No such pending invitation.")
+
+    await db.execute(
+        "UPDATE team_invitations SET role = ? WHERE id = ?", (role, invitation_id)
+    )
+    await db.commit()
+    return role
 
 
 async def revoke_invitation(db: aiosqlite.Connection, owner_id: int, invitation_id: int):
@@ -228,7 +302,12 @@ async def remove_member(db: aiosqlite.Connection, owner_id: int, member_id: int)
     if member is None:
         raise TeamError(404, "That person is not on your team.")
 
-    await db.execute("UPDATE users SET owner_id = NULL WHERE id = ?", (member_id,))
+    # The role is cleared with the membership, so re-adding them later starts
+    # from read-only rather than silently restoring administration.
+    await db.execute(
+        "UPDATE users SET owner_id = NULL, workspace_role = ? WHERE id = ?",
+        (ROLE_USER, member_id),
+    )
     await db.execute(
         "UPDATE team_invitations SET status = ? WHERE owner_id = ? AND LOWER(email) = ?",
         (STATUS_REVOKED, owner_id, normalise_email(member["email"])),
@@ -251,7 +330,8 @@ async def accept_pending_invitation(
         return None
 
     async with db.execute(
-        "SELECT i.id, i.owner_id, i.azure_tenant_id, u.azure_tenant_id AS owner_tenant "
+        "SELECT i.id, i.owner_id, i.azure_tenant_id, i.role, "
+        "u.azure_tenant_id AS owner_tenant "
         "FROM team_invitations i JOIN users u ON u.id = i.owner_id "
         "WHERE i.email = ? AND i.status = ? ORDER BY i.id LIMIT 1",
         (email, STATUS_PENDING),
@@ -293,7 +373,8 @@ async def accept_pending_invitation(
         (STATUS_ACCEPTED, user_id, invitation["id"]),
     )
     await db.execute(
-        "UPDATE users SET owner_id = ? WHERE id = ?", (invitation["owner_id"], user_id)
+        "UPDATE users SET owner_id = ?, workspace_role = ? WHERE id = ?",
+        (invitation["owner_id"], normalise_role(invitation["role"]), user_id),
     )
     await db.commit()
     return invitation["owner_id"]

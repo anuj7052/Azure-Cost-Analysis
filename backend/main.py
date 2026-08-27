@@ -206,6 +206,16 @@ async def me(
         # "Standard", whether they own a workspace or were invited into one.
         "access_level": "Administrator" if current_user["role"] == "admin" else "Standard",
         "is_owner": current_user["is_owner"],
+        # What they may do inside *this* workspace. Separate from the two above
+        # on purpose: "administrator of this workspace" and "administrator of
+        # the whole installation" are different powers and must not be read off
+        # the same field.
+        "workspace_role": current_user["workspace_role"],
+        "workspace_access": (
+            "Owner" if current_user["is_owner"]
+            else ("Administrator" if current_user["can_administer"] else "User")
+        ),
+        "can_administer": current_user["can_administer"],
         "owner_email": owner_email,
         "tenant_count": counts.get(current_user["account_id"], 0),
     }
