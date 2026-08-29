@@ -89,6 +89,22 @@ html[data-theme="light"] :is(
   --color-slate-300: #cbd5e1;
 }
 
+/* The same problem, for a surface that is dark in *both* themes.
+
+   A panel painted with its own dark background is not a light surface just
+   because the page is, so the white-to-ink remap turns its heading nearly
+   black on navy. The accent-class rule above cannot catch it, because the
+   background is a gradient rather than one of those utilities. Marking the
+   surface is explicit and cheap, and it fixes every descendant at once. */
+html[data-theme="light"] .aca-on-dark {
+  --color-white: #ffffff;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+}
+
 @layer base {
   * { box-sizing: border-box; }
 
@@ -218,6 +234,24 @@ html[data-theme="light"] .aca-accent-text {
 }
 @keyframes aca-enter {
   from { opacity: 0; transform: translateY(16px) }
+}
+@keyframes aca-aurora {
+  0%   { transform: translate3d(-8%, -6%, 0) rotate(0deg)   scale(1.15) }
+  50%  { transform: translate3d(8%, 6%, 0)   rotate(180deg) scale(1.35) }
+  100% { transform: translate3d(-8%, -6%, 0) rotate(360deg) scale(1.15) }
+}
+@keyframes aca-sweep {
+  from { transform: translateX(-120%) }
+  to   { transform: translateX(220%) }
+}
+
+/* A faint ruled grid, the way a ledger page is ruled. Drawn in CSS so it
+   costs no request and stays crisp at any zoom. */
+.aca-grid-lines {
+  background-image:
+    linear-gradient(to right,  rgb(255 255 255 / 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
 }
 
 @media (prefers-reduced-motion: reduce) {
