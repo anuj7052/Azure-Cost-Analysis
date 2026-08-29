@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider, RequireAuth } from './auth/AuthProvider';
 import Sidebar from './components/Layout/Sidebar';
 import Topbar from './components/Layout/Topbar';
+import AssistantWidget from './components/Assistant/AssistantWidget';
 import { useAppStore } from './store/useAppStore';
 import { useTheme } from './store/useTheme';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
@@ -24,7 +25,6 @@ const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
 const Bandwidth      = lazy(() => import('./pages/Bandwidth'));
 const Boq            = lazy(() => import('./pages/Boq'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
-const Assistant      = lazy(() => import('./pages/Assistant'));
 const Admin          = lazy(() => import('./pages/Admin'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const AccessOptimization = lazy(() => import('./pages/AccessOptimization'));
@@ -163,7 +163,7 @@ function AppShell() {
             <Route path="/bandwidth" element={<Bandwidth />} />
             <Route path="/boq" element={<Boq />} />
             <Route path="/deploy" element={<Deploy />} />
-            <Route path="/assistant" element={<Assistant />} />              <Route path="/estate" element={<Estate />} />
+              <Route path="/estate" element={<Estate />} />
               <Route path="/security" element={<SecurityHome />} />
               <Route path="/account" element={<AccountHome />} />
               <Route path="/apis" element={<ApiCatalog />} />
@@ -182,6 +182,8 @@ function AppShell() {
           </div>
         </main>
       </div>
+      {/* Outside <main> so it stays put while the page behind it scrolls. */}
+      <AssistantWidget />
     </div>
   );
 }

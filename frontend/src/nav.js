@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, ClipboardList, Cpu, FileCode, FolderOpen, Gauge,
-  GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, MessageCircle, Network,
+  GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, Network,
   Plug, Scale,
   Search, Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
   TrendingUp, UserCog, Users, Wallet,
@@ -49,10 +49,6 @@ export const SECTIONS = [
       {
         to: '/boq', label: 'BOQ vs Actual', icon: ClipboardList,
         blurb: 'Your Pricing Calculator estimate against the real bill, line by line.',
-      },
-      {
-        to: '/assistant', label: 'Ask Anything', icon: MessageCircle,
-        blurb: 'Questions about your subscriptions, spend and resources, answered from your own account.',
       },
       {
         to: '/deploy', label: 'Deployment Assistant', icon: FileCode,
