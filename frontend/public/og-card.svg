@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The card people see before they see the product.
+
+  Deliberately typographic. The obvious thing to put on a card for a cost tool
+  is a dashboard with big confident numbers, and every one of those numbers
+  would be invented. This app's whole claim is that it never shows a figure it
+  did not read from your account, and opening with a fabricated chart would
+  contradict that before anyone had even clicked.
+
+  1200x630 is the size LinkedIn and Reddit crop to.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1224"/>
+      <stop offset="55%" stop-color="#040a18"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <radialGradient id="glowBlue" cx="0.12" cy="0.08" r="0.7">
+      <stop offset="0%" stop-color="#2563eb" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#2563eb" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowTeal" cx="0.92" cy="0.95" r="0.7">
+      <stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.26"/>
+      <stop offset="100%" stop-color="#0ea5e9" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2563eb" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#2563eb" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glowBlue)"/>
+  <rect width="1200" height="630" fill="url(#glowTeal)"/>
+
+  <!-- wordmark -->
+  <g transform="translate(80,74)">
+    <rect width="56" height="56" rx="16" fill="#2563eb"/>
+    <path d="M16 34c-3.6 0-6.4-2.9-6.4-6.4 0-3.2 2.4-5.9 5.5-6.3C16 17.7 19.1 15 22.9 15c4.2 0 7.7 3.2 8.1 7.3h.6c3.4 0 6.1 2.7 6.1 6.1 0 3.4-2.7 5.6-6.1 5.6z"
+          fill="#ffffff" transform="translate(1,2)"/>
+    <text x="76" y="38" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+          font-size="27" font-weight="700" letter-spacing="4.5" fill="#e8edf7">CLOUDLEDGER</text>
+  </g>
+
+  <rect x="80" y="164" width="420" height="2" fill="url(#rule)"/>
+
+  <!-- headline: the sentence the product actually answers -->
+  <text x="80" y="268" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="66" font-weight="700" fill="#f5f8ff">Know what Azure is</text>
+  <text x="80" y="344" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="66" font-weight="700" fill="#f5f8ff">costing you, and</text>
+  <text x="80" y="420" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="66" font-weight="700" fill="#7ea8ff">why it moved.</text>
+
+  <text x="80" y="482" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="26" fill="#93a4c4">Read live from your own account, with your own permissions.</text>
+
+  <!-- the three claims that are actually true, and checkable -->
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" fill="#c3d2ee">
+    <g transform="translate(80,536)">
+      <rect width="252" height="52" rx="26" fill="#101c38" stroke="#26365e"/>
+      <text x="26" y="33">Read-only by default</text>
+    </g>
+    <g transform="translate(352,536)">
+      <rect width="290" height="52" rx="26" fill="#101c38" stroke="#26365e"/>
+      <text x="26" y="33">Microsoft Entra sign-in</text>
+    </g>
+    <g transform="translate(662,536)">
+      <rect width="268" height="52" rx="26" fill="#101c38" stroke="#26365e"/>
+      <text x="26" y="33">Nothing estimated</text>
+    </g>
+  </g>
+</svg>
