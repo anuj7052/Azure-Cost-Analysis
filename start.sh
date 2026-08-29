@@ -1,10 +1,10 @@
 #!/bin/bash
-# Azure Cost Analysis — Start Script
+# Cloudledger — Start Script
 # Usage: bash start.sh
 
 BASE="$(cd "$(dirname "$0")" && pwd)"
 
-echo "Starting Azure Cost Analysis..."
+echo "Starting Cloudledger..."
 
 # Kill existing servers
 kill $(lsof -ti:8000 -ti:5173) 2>/dev/null

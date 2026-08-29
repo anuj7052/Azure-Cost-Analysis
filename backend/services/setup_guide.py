@@ -107,7 +107,7 @@ def _chrome(canvas, doc, app_name):
     canvas.restoreState()
 
 
-def build_setup_guide(app_name: str = "Azure Cost Analysis") -> bytes:
+def build_setup_guide(app_name: str = "Cloudledger") -> bytes:
     st = _styles()
     buf = BytesIO()
     doc = SimpleDocTemplate(
@@ -144,7 +144,7 @@ def build_setup_guide(app_name: str = "Azure Cost Analysis") -> bytes:
         "Sign in to the Azure portal at <b>portal.azure.com</b>.",
         "Search for <b>Microsoft Entra ID</b> and open it.",
         "In the left menu choose <b>App registrations</b>, then <b>New registration</b>.",
-        "Name it something recognisable, for example <b>Azure Cost Analysis</b>.",
+        "Name it something recognisable, for example <b>Cloudledger</b>.",
         "Under supported account types keep <b>Accounts in this organizational directory only</b>.",
         "Leave the redirect URI blank and select <b>Register</b>.",
     ], st))

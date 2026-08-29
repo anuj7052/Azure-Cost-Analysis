@@ -199,8 +199,11 @@ html[data-theme="light"] :is(
   color: transparent;
 }
 
+/* The gradient runs across a two-line headline, so the end stop has to carry
+   real weight on white — the tail of the phrase gets it, and a pale cyan
+   leaves the last words looking half-erased. */
 html[data-theme="light"] .aca-accent-text {
-  background-image: linear-gradient(90deg, #2563eb, #0891b2);
+  background-image: linear-gradient(90deg, #1d4ed8, #0e7490);
 }
 
 @keyframes aca-rise  { from { height: 0; opacity: 0 } }

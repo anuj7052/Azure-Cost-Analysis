@@ -252,7 +252,7 @@ export default function Landing() {
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600">
               <Cloud className="h-4.5 w-4.5" />
             </span>
-            <span className="text-sm font-bold tracking-wide">AZURE COST ANALYSIS</span>
+            <span className="text-sm font-bold tracking-wide">CLOUDLEDGER</span>
           </a>
 
           <nav className="hidden items-center gap-7 lg:flex">
@@ -602,7 +602,7 @@ export default function Landing() {
               <Cloud className="h-4 w-4" />
             </span>
             <span className="text-xs font-bold tracking-wide text-slate-400">
-              AZURE COST ANALYSIS
+              CLOUDLEDGER
             </span>
           </div>
 

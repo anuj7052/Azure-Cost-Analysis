@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 MAX_STEPS = 5
 MAX_TOOL_CHARS = 12000
 
-SYSTEM_PROMPT = """You are the Azure Cloud Insight BOQ assistant.
+SYSTEM_PROMPT = """You are the Cloudledger BOQ assistant.
 
 You help a customer turn an Azure Pricing Calculator estimate (a "BOQ") into
 reviewable infrastructure-as-code.

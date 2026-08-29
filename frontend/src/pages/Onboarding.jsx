@@ -146,7 +146,7 @@ export default function Onboarding() {
               </svg>
             </div>
             <div>
-              <p className="text-sm font-semibold text-white leading-tight">Azure Cost Analysis</p>
+              <p className="text-sm font-semibold text-white leading-tight">Cloudledger</p>
               <p className="text-xs text-slate-500">Enterprise cost intelligence</p>
             </div>
           </div>

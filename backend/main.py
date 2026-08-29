@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Azure Control & Intelligence Platform API",
+    title="Cloudledger API",
     version="1.1.0",
     description=(
         "Multi-tenant Azure cost, inventory, change and governance backend.\n\n"

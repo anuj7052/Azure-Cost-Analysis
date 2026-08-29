@@ -220,7 +220,7 @@ export default function Sidebar() {
             : <><PanelLeftClose className="h-4 w-4 shrink-0" /><span>Collapse</span></>}
         </button>
         {!iconOnly && (
-          <p className="px-3 pt-2 text-[11px] text-slate-600">Azure Cost Analysis v1.0</p>
+          <p className="px-3 pt-2 text-[11px] text-slate-600">Cloudledger v1.0</p>
         )}
       </div>
       </aside>

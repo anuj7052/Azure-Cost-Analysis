@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start the Azure Cost Analysis frontend
+# Start the Cloudledger frontend
 cd "$(dirname "$0")/frontend"
 
 if [ ! -f ".env" ]; then

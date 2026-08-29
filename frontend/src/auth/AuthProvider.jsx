@@ -188,7 +188,7 @@ export function LoginScreen() {
             <div>
               <div className="mb-16 flex items-center gap-3 text-sm font-semibold tracking-wide text-blue-100">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15"><Cloud className="h-5 w-5" /></span>
-                AZURE COST ANALYSIS
+                CLOUDLEDGER
               </div>
               <p className="mb-4 max-w-md text-4xl font-semibold leading-tight tracking-tight">Bring every cloud decision into focus.</p>
               <p className="max-w-sm text-sm leading-6 text-blue-100/80">Understand spend, spot anomalies, and move faster across every Azure tenant.</p>
@@ -209,7 +209,7 @@ export function LoginScreen() {
           <div className="w-full p-7 sm:p-12">
             <div className="mb-8 flex items-center gap-3 lg:hidden">
               <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600"><Cloud className="h-5 w-5" /></div>
-              <span className="text-sm font-bold tracking-wide">AZURE COST ANALYSIS</span>
+              <span className="text-sm font-bold tracking-wide">CLOUDLEDGER</span>
             </div>
             <div className="mb-8">
               <p className="mb-3 text-sm font-medium text-blue-400">Welcome back</p>

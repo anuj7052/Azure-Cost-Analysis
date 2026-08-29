@@ -1,6 +1,10 @@
-# Azure Cost Analysis Dashboard
+# Cloudledger
+
+**Know what Azure is costing you, and why it moved.**
 
 A full-stack web app for tracking Azure cloud costs across **multiple tenants and subscriptions** — with 6-month trend analysis, per-service breakdown, anomaly detection, a CSV upload fallback, and a BOQ-to-infrastructure-as-code generator.
+
+Every screen reads. Calls to Azure are made with the signed-in user's own delegated permissions, so the app can never see more than the person using it. The one feature that produces infrastructure writes a template for you to review and run — it holds no write credentials for your subscription.
 
 **Stack**: Python FastAPI + React + Vite + TailwindCSS + Recharts + Azure AD (MSAL)
 
@@ -25,7 +29,7 @@ A full-stack web app for tracking Azure cloud costs across **multiple tenants an
 ### 1. Azure App Registration
 
 1. Go to **Azure Portal** → **Azure Active Directory** → **App registrations** → **New registration**
-2. Name: `Azure Cost Analysis`
+2. Name: `Cloudledger`
 3. Supported account types: **Accounts in any organizational directory (Multi-tenant)**
 4. Redirect URI: **Single-page application (SPA)** → `http://localhost:5173`
 5. After creation, note the **Application (client) ID**

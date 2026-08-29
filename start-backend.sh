@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start the Azure Cost Analysis backend
+# Start the Cloudledger backend
 cd "$(dirname "$0")/backend"
 
 if [ ! -d ".venv" ]; then
