@@ -3,12 +3,12 @@
  *
  * Azure often hands back a directory whose `tenant_name` is simply its GUID.
  * Printing that is technically accurate and completely useless: a business user
- * reading "Showing 99602a89-c774-49bf-9da7-88879da51dc6" learns nothing, and
+ * reading "Showing 8f4c1b2e-0a37-4d19-9c6b-1e5a7d0f3b82" learns nothing, and
  * cannot even tell whether it is the right tenant.
  *
  * The signed-in user's email domain is the one human-readable fact available
  * without another Graph call, so it stands in. It is presented as "My Tenant
- * (foetron.com)" rather than as a directory name, because the domain is a
+ * (contoso.com)" rather than as a directory name, because the domain is a
  * property of the *account*, not of the tenant, and the wording should not
  * claim more than it knows.
  *

@@ -77,14 +77,14 @@ class TestNoToken:
 class TestResolution:
     async def test_returns_names_keyed_by_lowercased_id(self, monkeypatch):
         async def fake(client, token, ids):
-            return [user("AAA-111", "Anuj Singh", "anuj@foetron.com")]
+            return [user("AAA-111", "Dana Shah", "dana@contoso.com")]
 
         monkeypatch.setattr(graph_identity, "_fetch_batch", fake)
         result = await graph_identity.resolve_principals("tok", ["AAA-111"])
 
         assert result["resolved"] is True
         assert result["found"] == 1
-        assert result["principals"]["aaa-111"]["display_name"] == "Anuj Singh"
+        assert result["principals"]["aaa-111"]["display_name"] == "Dana Shah"
         assert result["principals"]["aaa-111"]["type"] == "User"
 
     async def test_ids_graph_does_not_return_are_simply_absent(self, monkeypatch):
@@ -120,7 +120,7 @@ class TestResolution:
 
         async def fake(client, token, ids):
             calls.append(list(ids))
-            return [user("aaa", "Anuj")]
+            return [user("aaa", "Dana")]
 
         monkeypatch.setattr(graph_identity, "_fetch_batch", fake)
         await graph_identity.resolve_principals("tok", ["aaa"], "tenant-1")
@@ -132,7 +132,7 @@ class TestResolution:
 
         async def fake(client, token, ids):
             calls.append(list(ids))
-            return [user("aaa", "Anuj")]
+            return [user("aaa", "Dana")]
 
         monkeypatch.setattr(graph_identity, "_fetch_batch", fake)
         await graph_identity.resolve_principals("tok", ["aaa"], "tenant-1")
@@ -177,10 +177,10 @@ class TestApplyNames:
     def test_writes_name_and_marks_resolved(self):
         rows = [{"principal_id": "AAA", "principal_name": "AAA", "resolved": False}]
         updated = graph_identity.apply_names(
-            rows, {"aaa": {"display_name": "Anuj Singh", "upn": "anuj@x.com", "type": "User"}}
+            rows, {"aaa": {"display_name": "Dana Shah", "upn": "dana@x.com", "type": "User"}}
         )
         assert updated == 1
-        assert rows[0]["principal_name"] == "Anuj Singh"
+        assert rows[0]["principal_name"] == "Dana Shah"
         assert rows[0]["resolved"] is True
         assert rows[0]["principal_type"] == "User"
 

@@ -41,7 +41,7 @@ const REGIONS = [
 // the account you already have, and it builds new things in it.
 const SUGGESTIONS = [
   'Which subscriptions can I see?',
-  'What did vs-anuj-individual cost last month?',
+  'What did my production subscription cost last month?',
   'What is running in that subscription?',
   'Create a small Linux VM for a test API',
   'I need a storage account for backups',

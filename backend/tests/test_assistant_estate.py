@@ -125,9 +125,9 @@ def test_a_bare_long_token_is_also_redacted():
 # ── Reading the account ────────────────────────────────────────────────────
 
 SUBS = [
-    {"subscriptionId": "sub-1", "displayName": "vs-anuj-individual",
+    {"subscriptionId": "sub-1", "displayName": "vs-dev-individual",
      "state": "Enabled", "tenantId": "t1"},
-    {"subscriptionId": "sub-2", "displayName": "Tally - Foetron",
+    {"subscriptionId": "sub-2", "displayName": "Contoso - Finance",
      "state": "Enabled", "tenantId": "t1"},
     {"subscriptionId": "sub-3", "displayName": "Other directory",
      "state": "Enabled", "tenantId": "t2"},
@@ -150,17 +150,17 @@ def tools(monkeypatch):
 async def test_only_the_selected_directorys_subscriptions_are_listed(tools):
     result = await tools.list_subscriptions()
     assert [s["name"] for s in result["subscriptions"]] == [
-        "vs-anuj-individual", "Tally - Foetron",
+        "vs-dev-individual", "Contoso - Finance",
     ]
 
 
 async def test_a_subscription_can_be_named_the_way_a_person_would_say_it(tools, monkeypatch):
-    """People say "anuj", not a GUID."""
+    """People say "dev", not a GUID."""
     async def costs(*_a, **_k):
         return [{"ServiceName": "Virtual Machines", "PreTaxCost": "12.5"}]
     monkeypatch.setattr(estate_tools.cost_client, "query_costs", costs)
 
-    result = await tools.describe_subscription(subscription="anuj")
+    result = await tools.describe_subscription(subscription="dev")
     assert result["subscription"]["id"] == "sub-1"
     assert result["total"] == 12.5
 
@@ -184,7 +184,7 @@ async def test_a_subscription_in_another_directory_is_not_found(tools):
 async def test_an_unknown_name_lists_what_is_actually_available(tools):
     result = await tools.describe_subscription(subscription="nonexistent")
     assert "error" in result
-    assert "vs-anuj-individual" in result["available"]
+    assert "vs-dev-individual" in result["available"]
 
 
 async def test_azure_refusing_costs_reports_not_available_not_zero(tools, monkeypatch):
@@ -193,7 +193,7 @@ async def test_azure_refusing_costs_reports_not_available_not_zero(tools, monkey
         raise HTTPException(status_code=403, detail="Cost access denied")
     monkeypatch.setattr(estate_tools.cost_client, "query_costs", refuse)
 
-    result = await tools.describe_subscription(subscription="anuj")
+    result = await tools.describe_subscription(subscription="dev")
     assert result["cost"] == estate_tools.UNAVAILABLE
     assert "total" not in result
     assert result["reason"]
@@ -204,7 +204,7 @@ async def test_a_subscription_this_account_cannot_read_is_refused(tools, monkeyp
         return []
     monkeypatch.setattr(estate_tools, "authorize_subscriptions", deny)
 
-    result = await tools.describe_subscription(subscription="anuj")
+    result = await tools.describe_subscription(subscription="dev")
     assert result["cost"] == estate_tools.UNAVAILABLE
     assert "cannot read" in result["reason"]
 
@@ -215,7 +215,7 @@ async def test_an_empty_cost_result_is_zero_with_a_note_not_a_failure(tools, mon
         return []
     monkeypatch.setattr(estate_tools.cost_client, "query_costs", none)
 
-    result = await tools.describe_subscription(subscription="anuj")
+    result = await tools.describe_subscription(subscription="dev")
     assert result["total"] == 0.0
     assert "no cost records" in result["note"]
 
@@ -229,7 +229,7 @@ async def test_costs_are_ranked_and_summed_per_service(tools, monkeypatch):
         ]
     monkeypatch.setattr(estate_tools.cost_client, "query_costs", costs)
 
-    result = await tools.subscription_costs(subscription="anuj", months=3)
+    result = await tools.subscription_costs(subscription="dev", months=3)
     assert result["total"] == 17.5
     assert result["breakdown"][0] == {"name": "Virtual Machines", "cost": 10.0}
     assert result["breakdown"][1] == {"name": "Storage", "cost": 7.5}
@@ -243,7 +243,7 @@ async def test_a_silly_month_count_is_clamped_not_rejected(tools, monkeypatch):
         return []
     monkeypatch.setattr(estate_tools.cost_client, "query_costs", costs)
 
-    await tools.subscription_costs(subscription="anuj", months=999)
+    await tools.subscription_costs(subscription="dev", months=999)
     assert seen["months"] == 12
 
 
@@ -257,7 +257,7 @@ async def test_resources_can_be_filtered_by_type(tools, monkeypatch):
         ]
     monkeypatch.setattr(estate_tools.cost_client, "query_active_resources", resources)
 
-    result = await tools.list_resources(subscription="anuj", kind="virtualMachines")
+    result = await tools.list_resources(subscription="dev", kind="virtualMachines")
     assert result["total"] == 1
     assert result["resources"][0]["name"] == "vm-1"
 
@@ -267,7 +267,7 @@ async def test_a_resource_read_that_fails_says_so(tools, monkeypatch):
         raise HTTPException(status_code=403, detail="Reader role required")
     monkeypatch.setattr(estate_tools.cost_client, "query_active_resources", refuse)
 
-    result = await tools.list_resources(subscription="anuj")
+    result = await tools.list_resources(subscription="dev")
     assert result["resources"] == estate_tools.UNAVAILABLE
     assert result["reason"]
 
@@ -281,7 +281,7 @@ async def test_a_huge_estate_is_capped_but_reports_the_real_total(tools, monkeyp
         ]
     monkeypatch.setattr(estate_tools.cost_client, "query_active_resources", many)
 
-    result = await tools.list_resources(subscription="anuj")
+    result = await tools.list_resources(subscription="dev")
     assert result["total"] == 200
     assert result["showing"] == estate_tools.MAX_RESOURCES
     assert len(result["resources"]) == estate_tools.MAX_RESOURCES

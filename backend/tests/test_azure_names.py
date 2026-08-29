@@ -11,7 +11,7 @@ import pytest
 
 from services import azure_names as names
 
-SUB = "9f062503-6f98-4131-aba7-87e29c170d8a"
+SUB = "00000000-0000-0000-0000-000000000001"
 VM_ID = (
     f"/subscriptions/{SUB}/resourceGroups/rg-prod"
     "/providers/Microsoft.Compute/virtualMachines/Production-Web-VM"

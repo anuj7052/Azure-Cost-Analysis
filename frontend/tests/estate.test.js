@@ -36,7 +36,7 @@ const COST = {
 };
 
 const SERVICES = [
-  { name: 'vm-web', type: 'microsoft.compute/virtualMachines', resource_group: 'rg-web', subscription_id: 'sub-a', location: 'centralindia', cost: 6000, tags: { Owner: 'anuj', Environment: 'prod' } },
+  { name: 'vm-web', type: 'microsoft.compute/virtualMachines', resource_group: 'rg-web', subscription_id: 'sub-a', location: 'centralindia', cost: 6000, tags: { Owner: 'dana', Environment: 'prod' } },
   { name: 'disk-old', type: 'microsoft.compute/disks', resource_group: 'rg-web', subscription_id: 'sub-a', location: 'centralindia', cost: 400, tags: {} },
   { name: 'stor01', type: 'microsoft.storage/storageAccounts', resource_group: 'rg-data', subscription_id: 'sub-b', location: 'westeurope', cost: null, tags: { Owner: 'ops' } },
   { name: 'nic-1', type: 'microsoft.network/networkInterfaces', resource_group: 'rg-web', subscription_id: 'sub-a', location: 'centralindia', cost: 0, tags: {} },
@@ -96,7 +96,7 @@ const ORPHANED = {
 
 const ACTIVITY = {
   events: [
-    { id: 'e1', at: '2026-08-25T10:00:00Z', caller: 'anuj@foetron.com', operation: 'Microsoft.Compute/virtualMachines/write', summary: 'VM resized', succeeded: true, status: 'Succeeded', resource_id: '/subscriptions/sub-a/rg/vm-web', subscription_id: 'sub-a' },
+    { id: 'e1', at: '2026-08-25T10:00:00Z', caller: 'dana@contoso.com', operation: 'Microsoft.Compute/virtualMachines/write', summary: 'VM resized', succeeded: true, status: 'Succeeded', resource_id: '/subscriptions/sub-a/rg/vm-web', subscription_id: 'sub-a' },
     { id: 'e2', at: '2026-08-24T09:00:00Z', caller: 'sp-deployer', operation: 'Microsoft.Network/publicIPAddresses/delete', summary: 'Public IP deleted', succeeded: false, status: 'Failed', resource_id: '/subscriptions/sub-b/rg/ip-1', subscription_id: 'sub-b' },
   ],
   total: 2, failed: 1, window_days: 7, errors: [],

@@ -136,7 +136,7 @@ async def authorize_subscriptions(
         # This listing already carries every subscription's display name.
         # Keeping it costs nothing and is the difference between one Azure
         # call and one per finding on the access pages, which would otherwise
-        # have to ask what "9f062503-..." is called each time it printed it.
+        # have to ask what "8f4c1b2e-..." is called each time it printed it.
         azure_names.remember_subscription_names(key, raw)
 
     permitted = [s for s in requested if s in allowed]
