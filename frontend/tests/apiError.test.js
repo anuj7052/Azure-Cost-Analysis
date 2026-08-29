@@ -18,6 +18,7 @@ import {
   errorRequestId,
   isInconclusive,
   isRetryable,
+  friendlyError,
   placeholderForState,
   retryAfterSeconds,
 } from '../src/utils/apiError';
@@ -180,5 +181,39 @@ describe('retry guidance', () => {
 
   it('reports 0 when the wait is unknown rather than guessing', () => {
     expect(retryAfterSeconds(apiError(500, {}))).toBe(0);
+  });
+});
+
+describe('a setup step the user has to take', () => {
+  // The assistant refuses with 409 when the account has no model endpoint of
+  // its own. That message is written to be read: it names the screen, says who
+  // is billed, and says the rest of the app still works. Replacing it with our
+  // own generic wording would throw all three away, so 409 must fall through
+  // to the server's own sentence.
+  const missingEndpoint = {
+    response: {
+      status: 409,
+      data: {
+        detail:
+          'The assistant needs a model endpoint of your own. Add one under '
+          + 'Settings → Integrations: an Azure OpenAI or OpenAI endpoint, its key, '
+          + 'and a daily request limit. Requests are sent to your endpoint and '
+          + 'billed to your account, so nothing here is charged to anyone else. '
+          + 'The rest of the app works without this.',
+      },
+    },
+  };
+
+  it('shows the explanation the server wrote', () => {
+    expect(friendlyError(missingEndpoint)).toContain('Settings → Integrations');
+  });
+
+  it('keeps the part that says who pays', () => {
+    expect(friendlyError(missingEndpoint)).toContain('billed to your account');
+  });
+
+  it('does not present a setup step as a fault', () => {
+    expect(friendlyError(missingEndpoint)).not.toContain('went wrong');
+    expect(friendlyError(missingEndpoint)).not.toContain('try again');
   });
 });

@@ -57,7 +57,10 @@ async def chat(
     current_user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    llm = await integration_service.llm_config(db, current_user["account_id"])
+    try:
+        llm = await integration_service.llm_config(db, current_user["account_id"])
+    except integration_service.NoEndpointConfigured as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     try:
         # Charged before the call, not after: a request the provider billed
         # for and then failed still used the customer's allowance.

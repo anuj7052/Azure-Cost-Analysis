@@ -251,13 +251,43 @@ async def delete_integration(
     return cursor.rowcount > 0
 
 
+class NoEndpointConfigured(Exception):
+    """
+    The account has not connected a model endpoint, and there is none to lend.
+
+    This is a product decision, not a missing feature. Every other part of the
+    app runs on the customer's own Azure credentials and costs the operator
+    nothing; the assistant is the one place where a shared key would mean the
+    operator paying, per message, for everyone who signs up. So the assistant
+    runs on the customer's key too.
+
+    Raised as its own type rather than returning an empty config, because an
+    empty API key produces an authentication error from the provider -- which
+    tells the person their key is wrong, when the truth is they never set one.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The assistant needs a model endpoint of your own. Add one under "
+            "Settings → Integrations: an Azure OpenAI or OpenAI endpoint, its "
+            "key, and a daily request limit. Requests are sent to your "
+            "endpoint and billed to your account, so nothing here is charged "
+            "to anyone else. The rest of the app works without this."
+        )
+
+
 async def llm_config(db: aiosqlite.Connection, user_id: Optional[int]) -> Dict[str, Any]:
     """
     Resolve which model the assistant should use for this account.
 
-    The customer's own enabled endpoint wins; otherwise the deployment-wide
-    settings apply. Returning a dict rather than a client keeps this testable
-    without a network call.
+    The customer's own enabled endpoint is used. A deployment-wide key is only
+    consulted when the operator has deliberately set one, which is the
+    self-hosted case -- where the operator and the users are the same people
+    and a shared key is simply convenient. On the hosted product no such key
+    is set, so this refuses instead.
+
+    Returning a dict rather than a client keeps this testable without a
+    network call.
     """
     row = None
     if user_id is not None:
@@ -272,6 +302,8 @@ async def llm_config(db: aiosqlite.Connection, user_id: Optional[int]) -> Dict[s
             row = await cursor.fetchone()
 
     if row is None:
+        if not settings.OPENAI_API_KEY:
+            raise NoEndpointConfigured()
         return {
             "api_key": settings.OPENAI_API_KEY,
             "base_url": settings.OPENAI_BASE_URL or "",

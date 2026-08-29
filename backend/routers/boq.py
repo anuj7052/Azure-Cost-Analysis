@@ -143,7 +143,12 @@ async def chat_about_boq(
     db: aiosqlite.Connection = Depends(get_db),
 ) -> Dict[str, Any]:
     """Converse about an estimate and generate templates on request."""
-    llm = await integration_service.llm_config(db, current_user["account_id"])
+    try:
+        llm = await integration_service.llm_config(db, current_user["account_id"])
+    except integration_service.NoEndpointConfigured as exc:
+        # 409 rather than 500: nothing is broken, something is unconfigured,
+        # and the message says exactly what to configure.
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     try:
         # The same endpoint and the same invoice as the build assistant, so it
         # draws on the same daily allowance. Two chats sharing a key must not
@@ -169,7 +174,10 @@ async def chat_with_upload(
 ) -> Dict[str, Any]:
     """Upload an estimate and act on it in a single call."""
     boq = await _read_estimate(file)
-    llm = await integration_service.llm_config(db, current_user["account_id"])
+    try:
+        llm = await integration_service.llm_config(db, current_user["account_id"])
+    except integration_service.NoEndpointConfigured as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     try:
         # The same endpoint and the same invoice as the build assistant, so it
         # draws on the same daily allowance. Two chats sharing a key must not
