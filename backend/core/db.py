@@ -554,10 +554,10 @@ async def _init_postgres():
     repair -- carrying those migrations across would be re-enacting the
     history of a file that never existed here.
     """
-    import asyncpg
-    from core import pg
+    import asyncpg  # noqa: F401  (imported so a missing driver fails here, clearly)
+    from core import pg, pg_auth
 
-    conn = await asyncpg.connect(settings.DATABASE_URL)
+    conn = await pg_auth.connect(settings.DATABASE_URL)
     try:
         for name, ddl in _SCHEMAS.items():
             await conn.execute(pg.translate_schema(ddl))
@@ -638,10 +638,9 @@ async def get_db():
     two variables moving at once when something goes wrong.
     """
     if settings.DB_BACKEND == "postgres":
-        import asyncpg
-        from core import pg
+        from core import pg, pg_auth
 
-        raw = await asyncpg.connect(settings.DATABASE_URL)
+        raw = await pg_auth.connect(settings.DATABASE_URL)
         try:
             yield pg.Connection(raw)
         finally:
