@@ -133,7 +133,15 @@ app.add_middleware(
     # X-Graph-Token carries a Microsoft Graph credential used only to look up
     # directory names. Omitting it here makes the browser strip the header on a
     # cross-origin request, and account names silently fall back to object ids.
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Graph-Token"],
+    #
+    # X-Azure-Token carries the delegated ARM credential. Omitting it would be
+    # worse than the Graph case: the browser strips it silently, the request
+    # still authenticates, and every Azure read then fails as though the user
+    # had lost access to their own subscriptions.
+    allow_headers=[
+        "Authorization", "Content-Type", "X-Request-ID",
+        "X-Graph-Token", "X-Azure-Token",
+    ],
     expose_headers=[
         "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After",
     ],

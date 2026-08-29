@@ -47,7 +47,11 @@ async def resolve_tenant_token(
         return row["access_token"]
 
     if tenant_id == current_user.get("tenant_id"):
-        return current_user["token"]
+        # The delegated Azure token, not the one that proved who they are. In
+        # production those are two different tokens with two different
+        # audiences; sending the sign-in token to ARM would fail there and
+        # nowhere else, which is the worst place for a difference to appear.
+        return current_user.get("azure_token") or current_user["token"]
 
     async with db.execute(
         "SELECT client_id, client_secret FROM service_principals "

@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import aiosqlite
 
@@ -12,12 +12,34 @@ bearer_scheme = HTTPBearer()
 
 def _token_claims(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    x_azure_token: str | None = Header(default=None),
 ) -> dict:
-    """Validate the Bearer token and flatten the claims this app cares about."""
+    """
+    Validate the Bearer token and flatten the claims this app cares about.
+
+    Two different tokens arrive here, and conflating them was what kept this
+    app off `ENVIRONMENT=production`.
+
+    `Authorization` answers "who is calling", and must be issued *for this
+    API* -- otherwise a token minted for any other application the user ever
+    consented to could be replayed against us, which is an authentication
+    bypass rather than an inconvenience.
+
+    `X-Azure-Token` answers "what may we do on their behalf in Azure". It is
+    an ARM-audience token, so we cannot and must not validate it as proof of
+    identity -- we only forward it to Azure, which validates it properly. It
+    travels in its own header for exactly the reason the Graph token already
+    does: a credential we merely relay is not a credential we authenticate.
+
+    When the header is absent the bearer is reused, which keeps development --
+    where the frontend still sends one ARM token for everything -- working
+    unchanged.
+    """
     token = credentials.credentials
     claims = validate_azure_token(token)
     return {
         "token": token,
+        "azure_token": x_azure_token or token,
         "user_id": claims.get("oid") or claims.get("sub"),
         "name": claims.get("name", ""),
         "email": claims.get("preferred_username", claims.get("upn", "")),

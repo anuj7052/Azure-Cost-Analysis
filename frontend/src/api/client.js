@@ -245,13 +245,32 @@ api.interceptors.request.use(async (config) => {
   const needsAzure = AZURE_ROUTES.some((r) => url.startsWith(r));
   const localRoute = !needsAzure && LOCAL_ROUTES.some((r) => url.startsWith(r));
   const userInitiated = needsAzure || GESTURE_ROUTES.some((r) => url.startsWith(r));
-  const token = (localRoute ? await getSignInToken() : null)
-    || (await getToken(userInitiated));
 
   if (GRAPH_ROUTES.some((r) => url.startsWith(r))) {
     const graph = await getGraphToken();
     if (graph) config.headers['X-Graph-Token'] = graph;
   }
+
+  // Two tokens, two jobs.
+  //
+  // `Authorization` proves who is calling and must be issued for this app, so
+  // it is always the sign-in token. `X-Azure-Token` is the delegated ARM token
+  // the server forwards to Azure on the caller's behalf; the server never
+  // treats it as proof of identity, because it was minted for Azure and Azure
+  // is the only thing that can properly validate it.
+  //
+  // These used to be the same header, which meant the API accepted an
+  // ARM-audience bearer as authentication -- and therefore would have accepted
+  // a token minted for any other application the user had ever consented to.
+  // That is why this deployment could not be run with ENVIRONMENT=production.
+  const azureToken = localRoute ? null : await getToken(userInitiated);
+  if (azureToken) config.headers['X-Azure-Token'] = azureToken;
+
+  // Fall back to the ARM token as the bearer only if there is no sign-in token
+  // at all. A request with no credential returns a bare "Not authenticated",
+  // which tells the user nothing; a production server will reject the fallback
+  // by audience, which at least fails for a nameable reason.
+  const token = (await getSignInToken()) || azureToken;
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
