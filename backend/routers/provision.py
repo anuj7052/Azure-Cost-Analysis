@@ -84,7 +84,11 @@ async def chat(
             log.warning("Could not resolve a tenant token", exc_info=True)
 
     service = ProvisionChatService(
-        location=body.location, currency=body.currency, llm=llm, estate=estate
+        location=body.location,
+        currency=body.currency,
+        llm=llm,
+        estate=estate,
+        mode=body.mode,
     )
     result = await service.chat(body.message, body.history)
     return {

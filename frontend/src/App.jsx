@@ -24,6 +24,7 @@ const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
 const Bandwidth      = lazy(() => import('./pages/Bandwidth'));
 const Boq            = lazy(() => import('./pages/Boq'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
+const Assistant      = lazy(() => import('./pages/Assistant'));
 const Admin          = lazy(() => import('./pages/Admin'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const AccessOptimization = lazy(() => import('./pages/AccessOptimization'));
@@ -161,7 +162,8 @@ function AppShell() {
             <Route path="/activity" element={<ActivityLog />} />
             <Route path="/bandwidth" element={<Bandwidth />} />
             <Route path="/boq" element={<Boq />} />
-            <Route path="/deploy" element={<Deploy />} />              <Route path="/estate" element={<Estate />} />
+            <Route path="/deploy" element={<Deploy />} />
+            <Route path="/assistant" element={<Assistant />} />              <Route path="/estate" element={<Estate />} />
               <Route path="/security" element={<SecurityHome />} />
               <Route path="/account" element={<AccountHome />} />
               <Route path="/apis" element={<ApiCatalog />} />

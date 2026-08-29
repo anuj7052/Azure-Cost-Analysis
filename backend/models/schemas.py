@@ -174,6 +174,10 @@ class ProvisionChatRequest(BaseModel):
     # Which directory to answer questions about. Optional: without it the
     # assistant can still draft and price, it just cannot see the account.
     tenant_id: str = Field(default="", max_length=64)
+    # "ask" is the read-only assistant; "build" additionally drafts and prices
+    # resources. Anything else is treated as "ask", so a malformed request
+    # cannot widen what the assistant is able to do.
+    mode: str = Field(default="build", max_length=16)
 
 
 class ProvisionChatResponse(BaseModel):

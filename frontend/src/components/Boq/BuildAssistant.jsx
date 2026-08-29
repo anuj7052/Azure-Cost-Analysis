@@ -218,6 +218,9 @@ export default function BuildAssistant() {
         // Lets the assistant read this directory to answer questions about
         // what is already there, rather than only describing what it can build.
         tenant_id: selectedTenantId || '',
+        // The building conversation: catalogue, drafting and pricing on top of
+        // the read-only tools. The read-only assistant lives on its own page.
+        mode: 'build',
       });
       setMessages(m => [...m, { role: 'assistant', content: result.answer }]);
       setDrafts(result.drafts || []);

@@ -1,6 +1,7 @@
 import {
   Activity, AlertTriangle, ClipboardList, Cpu, FileCode, FolderOpen, Gauge,
-  GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, Network, Plug, Scale,
+  GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, MessageCircle, Network,
+  Plug, Scale,
   Search, Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
   TrendingUp, UserCog, Users, Wallet,
 } from 'lucide-react';
@@ -50,8 +51,12 @@ export const SECTIONS = [
         blurb: 'Your Pricing Calculator estimate against the real bill, line by line.',
       },
       {
-        to: '/deploy', label: 'BOQ to Code', icon: FileCode,
-        blurb: 'Turn an estimate into Bicep or Terraform you can review and run yourself.',
+        to: '/assistant', label: 'Ask Anything', icon: MessageCircle,
+        blurb: 'Questions about your subscriptions, spend and resources, answered from your own account.',
+      },
+      {
+        to: '/deploy', label: 'Deployment Assistant', icon: FileCode,
+        blurb: 'Upload a BOQ or describe what you need; it drafts and prices, and you press Create.',
       },
     ],
   },

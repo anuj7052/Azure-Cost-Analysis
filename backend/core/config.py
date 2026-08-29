@@ -46,8 +46,11 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_MAX_TOKENS: int = 1500
     # Only read for classic Azure OpenAI endpoints, where the API version is a
-    # required query parameter rather than an optional refinement.
-    OPENAI_API_VERSION: str = "2024-10-21"
+    # required query parameter rather than an optional refinement. It must be
+    # recent enough to expose /openai/responses, because the reasoning models
+    # Azure now ships are reachable no other way; older versions answer 404
+    # there and the assistant loses its only route to those deployments.
+    OPENAI_API_VERSION: str = "2025-04-01-preview"
 
     @property
     def cors_origins_list(self) -> List[str]:

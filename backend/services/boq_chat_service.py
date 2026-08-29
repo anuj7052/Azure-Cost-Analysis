@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from openai import AsyncOpenAI
 
 from core.config import settings
-from services import iac_service, llm_client, llm_errors
+from services import iac_service, llm_client, llm_dialogue, llm_errors
 
 log = logging.getLogger(__name__)
 
@@ -227,58 +227,49 @@ class BoqChatService:
         messages.append({"role": "user", "content": message})
 
         used: list[str] = []
+        talk = llm_dialogue.Dialogue(
+            client=self.client,
+            model=llm_client.model_for(self.llm),
+            tools=self._tool_schema(),
+            max_tokens=settings.OPENAI_MAX_TOKENS,
+            cache_key=llm_client.cache_key(self.llm),
+        )
+        for entry in messages:
+            talk.add(entry["role"], entry["content"])
+
         for _ in range(MAX_STEPS):
             try:
-                response = await self.client.chat.completions.create(
-                    model=llm_client.model_for(self.llm),
-                    messages=messages,
-                    tools=self._tool_schema(),
-                    tool_choice="auto",
-                    max_tokens=settings.OPENAI_MAX_TOKENS,
-                    temperature=0.1,
-                )
+                turn = await talk.step()
             except HTTPException:
                 raise
             except Exception as exc:  # noqa: BLE001
                 # The provider's reason — wrong key, wrong model name,
                 # unreachable endpoint — is the only useful thing here, and
                 # it used to be swallowed into a generic 500.
-                raise llm_errors.as_http_error(
-                    exc, llm_errors.label_for(self.llm.get("source"))
-                ) from None
-            choice = response.choices[0].message
-            if not choice.tool_calls:
+                raise await llm_client.explain_failure(exc, self.llm) from None
+
+            if not turn.tool_calls:
                 return {
-                    "answer": choice.content or "I could not work that out.",
+                    "answer": turn.text or "I could not work that out.",
                     "used_tools": used,
                     "artifacts": self.artifacts,
                 }
 
-            messages.append(choice.model_dump(exclude_none=True))
-            for call in choice.tool_calls:
-                handler = self._tools.get(call.function.name)
+            for call in turn.tool_calls:
+                handler = self._tools.get(call.name)
                 if handler is None:
                     result: dict[str, Any] = {"error": "unknown tool"}
                 else:
-                    try:
-                        args = json.loads(call.function.arguments or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
+                    args = llm_dialogue.parse_arguments(call.arguments)
                     try:
                         result = await handler(**args)
                     except HTTPException as exc:
                         result = {"error": str(exc.detail)}
                     except Exception as exc:  # noqa: BLE001
-                        log.warning("Tool %s failed", call.function.name, exc_info=True)
+                        log.warning("Tool %s failed", call.name, exc_info=True)
                         result = {"error": f"That step failed: {exc}"}
-                    used.append(call.function.name)
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.id,
-                        "content": json.dumps(result, default=str)[:MAX_TOOL_CHARS],
-                    }
-                )
+                    used.append(call.name)
+                talk.add_tool_result(call, json.dumps(result, default=str)[:MAX_TOOL_CHARS])
 
         return {
             "answer": "I could not finish that within the allowed number of steps.",

@@ -131,6 +131,21 @@ def as_http_error(exc: Exception, endpoint_label: str = "The model endpoint") ->
         )
 
     if name == "BadRequestError" or status == 400:
+        if "unsupported" in detail.lower() or "does not support" in detail.lower():
+            # Reached only when both APIs were refused, so the deployment is
+            # real but cannot do what an assistant needs. Naming the family is
+            # more use than naming the operation.
+            return HTTPException(
+                status_code=400,
+                detail=(
+                    f"{endpoint_label} has that deployment, but the model "
+                    f"behind it does not support the chat and tool-calling "
+                    f"operations this assistant needs. Deploy a chat-capable "
+                    f"model \u2014 for example gpt-5.4 rather than gpt-5.4-pro "
+                    f"\u2014 and put that deployment name in the model box. "
+                    f"The provider said: {detail}"
+                ),
+            )
         return HTTPException(
             status_code=400,
             detail=(
