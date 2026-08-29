@@ -1,7 +1,7 @@
 import { useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { AuthProvider, RequireAuth } from './auth/AuthProvider';
+import { AuthProvider, RequireAuth, LoginScreen } from './auth/AuthProvider';
 import Sidebar from './components/Layout/Sidebar';
 import Topbar from './components/Layout/Topbar';
 import AssistantWidget from './components/Assistant/AssistantWidget';
@@ -38,6 +38,9 @@ const SecurityHome       = lazy(() => import('./pages/SecurityHome'));
 const AccountHome        = lazy(() => import('./pages/AccountHome'));
 const ApiCatalog         = lazy(() => import('./pages/ApiCatalog'));
 const Team               = lazy(() => import('./pages/Team'));
+// Kept out of the authenticated bundle: it is the one page that is only ever
+// seen by people who have not signed in.
+const Landing            = lazy(() => import('./pages/Landing'));
 
 const PageLoader = () => (
   <div className="flex h-[60vh] items-center justify-center">
@@ -188,6 +191,26 @@ function AppShell() {
   );
 }
 
+/**
+ * What an anonymous visitor sees.
+ *
+ * The root is the landing page, because someone arriving at the bare domain
+ * has not decided anything yet and a sign-in form asks them to. Every other
+ * path goes straight to sign-in: a person following a link to /explorer or
+ * /team already knows what this is, and making them read a pitch first would
+ * be an obstacle rather than an introduction.
+ */
+function PublicSite() {
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="*" element={<LoginScreen />} />
+      </Routes>
+    </Suspense>
+  );
+}
+
 export default function App() {
   const theme = useTheme(s => s.theme);
   const light = theme === 'light';
@@ -202,7 +225,7 @@ export default function App() {
               : { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' },
           }}
         />
-        <RequireAuth>
+        <RequireAuth signedOut={<PublicSite />}>
           <AppShell />
         </RequireAuth>
       </BrowserRouter>

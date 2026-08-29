@@ -76,7 +76,7 @@ export function useAccessToken() {
   return { getToken, account: instance.getActiveAccount() || accounts[0] || null };
 }
 
-export function RequireAuth({ children }) {
+export function RequireAuth({ children, signedOut }) {
   const isAuthenticated = useIsAuthenticated();
   const { inProgress, instance } = useMsal();
   const [timedOut, setTimedOut] = useState(false);
@@ -113,13 +113,17 @@ export function RequireAuth({ children }) {
   }
 
   if (!isAuthenticated) {
-    return <LoginScreen />;
+    // The sign-out view is passed in rather than fixed here, because what an
+    // anonymous visitor should see is a product decision (a landing page, a
+    // sign-in form) and this module's job is only to know whether they are
+    // signed in. Defaulting to the form keeps every existing caller working.
+    return signedOut ?? <LoginScreen />;
   }
 
   return children;
 }
 
-function LoginScreen() {
+export function LoginScreen() {
   const { login } = useLogin();
   const { instance } = useMsal();
   const theme = useTheme(s => s.theme);
