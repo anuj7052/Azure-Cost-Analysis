@@ -213,7 +213,8 @@ def _deployment_advice(asked_for: str, names: Optional[List[str]]) -> str:
     more = "" if len(names) <= MAX_LISTED else f", and {len(names) - MAX_LISTED} more"
     return (
         f" This resource has these deployments: {shown}{more}. "
-        f"Put one of those in the model box instead of \u201c{asked_for}\u201d."
+        f"Put one of those in the model box, which currently holds "
+        f"\u201c{asked_for}\u201d."
     )
 
 
@@ -237,7 +238,7 @@ async def explain_failure(exc: Exception, llm: Dict[str, Any]) -> HTTPException:
         # is often the moment someone notices they filled the wrong box.
         return HTTPException(
             status_code=400,
-            detail=f"{error.detail} The name sent was \u201c{asked_for}\u201d.",
+            detail=f"{error.detail} The model box sent \u201c{asked_for}\u201d.",
         )
 
     return error

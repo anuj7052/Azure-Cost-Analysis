@@ -59,11 +59,15 @@ def label_for(source: str | None) -> str:
     These labels open the sentence, so a bare "Test" reads as a broken string
     rather than as the name they chose. Quoting it makes it obviously their
     label and keeps the sentence grammatical whatever they typed.
+
+    "you named" is doing real work: people sometimes put a model name in the
+    Name box, and then a message opening with that string reads as though we
+    are talking about the model. Saying whose name it is settles that.
     """
     name = (source or "").strip()
     if not name or name == "platform":
         return "The model endpoint"
-    return f"The endpoint \u201c{name}\u201d"
+    return f"The endpoint you named \u201c{name}\u201d"
 
 
 def as_http_error(exc: Exception, endpoint_label: str = "The model endpoint") -> HTTPException:
@@ -80,7 +84,7 @@ def as_http_error(exc: Exception, endpoint_label: str = "The model endpoint") ->
 
     # Logged in full (still redacted) because the reader only gets one sentence
     # and whoever operates the server may need the rest.
-    log.warning("Model endpoint %s failed: %s: %s", endpoint_label, name, detail)
+    log.warning("%s failed: %s: %s", endpoint_label, name, detail)
 
     if name == "AuthenticationError" or status == 401:
         return HTTPException(

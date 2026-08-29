@@ -134,7 +134,14 @@ def test_a_whitespace_only_key_counts_as_missing():
 def test_the_customers_own_label_is_quoted_so_the_sentence_reads():
     # "Test could not find that model" reads as a broken string; the quotes
     # make it clear this is the name they gave the endpoint.
-    assert llm_errors.label_for("Test") == "The endpoint \u201cTest\u201d"
+    assert llm_errors.label_for("Test") == "The endpoint you named \u201cTest\u201d"
+
+
+def test_a_model_name_typed_into_the_name_box_is_still_named_as_their_label():
+    # Someone called their endpoint "gpt-5.4-pro". Without "you named", the
+    # message opens with a model name and reads as a complaint about the
+    # model, sending them to fix the wrong box.
+    assert "you named" in llm_errors.label_for("gpt-5.4-pro")
 
 
 def test_the_shared_platform_endpoint_is_not_named_after_an_internal_word():
@@ -151,7 +158,7 @@ def test_the_not_found_message_points_at_the_deployment_name_and_the_url():
     assert "deployment name" in error.detail
     assert "openai.azure.com" in error.detail
     assert "Resource not found" in error.detail
-    assert error.detail.startswith("The endpoint \u201cTest\u201d")
+    assert error.detail.startswith("The endpoint you named \u201cTest\u201d")
 
 
 def _not_found(message: str) -> Exception:

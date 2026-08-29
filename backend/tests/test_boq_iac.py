@@ -168,6 +168,62 @@ async def test_regenerating_the_same_format_replaces_the_artifact(boq):
     assert sorted(a["format"] for a in service.artifacts) == ["bicep", "terraform"]
 
 
+# --- telling the customer what to actually do next --------------------
+
+
+@pytest.mark.asyncio
+async def test_the_template_arrives_with_the_commands_that_run_it(boq):
+    # "Run the template yourself" is where someone who has never used
+    # Terraform gets stuck. The commands are handed over as data so the
+    # model quotes them rather than composing plausible ones.
+    result = await BoqChatService(boq, resource_group="rg-sap")._generate_iac(
+        format="terraform"
+    )
+    assert result["how_to_run"] == [
+        "az login",
+        "terraform init",
+        "terraform plan   # review every resource before applying",
+        "terraform apply",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_bicep_commands_name_the_customers_own_resource_group(boq):
+    result = await BoqChatService(boq, resource_group="rg-sap")._generate_iac(
+        format="bicep"
+    )
+    joined = " ".join(result["how_to_run"])
+    assert "rg-sap" in joined
+    assert "main.bicep" in joined
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_is_offered_before_anything_is_created(boq):
+    # Both paths put a review step in front of the step that spends money.
+    tf = await BoqChatService(boq)._generate_iac(format="terraform")
+    bicep = await BoqChatService(boq)._generate_iac(format="bicep")
+    assert any("terraform plan" in c for c in tf["how_to_run"])
+    assert any("--what-if" in c for c in bicep["how_to_run"])
+
+
+def test_the_assistant_is_told_not_to_repeat_itself_when_asked_again():
+    # "okay implement" after a template already exists used to regenerate the
+    # identical file and return the identical sentence, leaving the customer
+    # in a loop with no next step.
+    from services.boq_chat_service import SYSTEM_PROMPT
+
+    assert "do NOT call generate_iac a second time" in SYSTEM_PROMPT
+    assert "do NOT repeat your previous reply" in SYSTEM_PROMPT.replace("\n  ", " ")
+
+
+def test_uncovered_lines_must_be_explained_not_merely_flagged():
+    from services.boq_chat_service import SYSTEM_PROMPT
+
+    flat = SYSTEM_PROMPT.replace("\n  ", " ")
+    assert "why it could not be represented" in flat
+    assert "how_to_run" in flat
+
+
 @pytest.mark.asyncio
 async def test_chat_refuses_to_run_without_an_api_key(boq, monkeypatch):
     from fastapi import HTTPException
