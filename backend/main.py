@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -122,6 +123,25 @@ app = FastAPI(
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Compress everything worth compressing.
+#
+# App Service does not compress for us, so the SPA was shipping ~600 KB of
+# uncompressed JavaScript on a cold visit. Minified JavaScript is highly
+# repetitive and gzip takes roughly three quarters of it away, which on a
+# phone or a hotel connection is the difference between a page that appears
+# and a page that is still blank when the person gives up.
+#
+# 500 bytes is the floor because below it the gzip header and the CPU cost
+# together make the response *larger*. Level 6 is zlib's default and sits at
+# the knee of the curve -- 9 spends noticeably more CPU per request for about
+# a percent of size, which is a bad trade for a server that also has to answer
+# cost queries.
+#
+# Added after the security and context middleware so that, in Starlette's
+# reverse execution order, compression runs closest to the response and the
+# headers those two set are still applied.
+app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 
 app.add_middleware(
     CORSMiddleware,
