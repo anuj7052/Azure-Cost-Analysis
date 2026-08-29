@@ -21,6 +21,17 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5174,http://127.0.0.1:5174"
     DB_PATH: str = "./data/azure_cost.db"
 
+    # sqlite | postgres. Defaults to sqlite so that nothing changes until the
+    # switch is thrown deliberately, and so that throwing it back is a config
+    # change rather than a redeploy -- which is the difference between a
+    # database migration you can abandon and one you are committed to.
+    DB_BACKEND: str = "sqlite"
+    # Only read when DB_BACKEND is postgres. Empty by default rather than
+    # carrying a localhost fallback: a connection string that silently points
+    # somewhere plausible is how production ends up writing to a developer's
+    # machine.
+    DATABASE_URL: str = ""
+
     # --- API protection ---
     # A token bucket per account. Generous enough that no legitimate page load
     # notices it, low enough that a loop cannot amplify into Azure throttling

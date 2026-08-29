@@ -186,7 +186,7 @@ async def create_integration(
     cursor = await db.execute(
         """INSERT INTO user_integrations
                (user_id, label, kind, base_url, model, api_key, enabled, rate_limit_per_day)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
         (
             user_id,
             data["label"],
@@ -198,8 +198,9 @@ async def create_integration(
             validate_rate_limit(data.get("rate_limit_per_day")),
         ),
     )
+    new_id = (await cursor.fetchone())[0]
     await db.commit()
-    row = await get_integration(db, user_id, cursor.lastrowid)
+    row = await get_integration(db, user_id, new_id)
     return to_public(row)
 
 

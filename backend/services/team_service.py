@@ -223,10 +223,10 @@ async def invite(
     else:
         cursor = await db.execute(
             "INSERT INTO team_invitations (owner_id, email, azure_tenant_id, role, status) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?) RETURNING id",
             (owner["id"], email, owner["azure_tenant_id"] or "", role, STATUS_PENDING),
         )
-        invitation_id = cursor.lastrowid
+        invitation_id = (await cursor.fetchone())[0]
 
     await db.commit()
     return {"invitation_id": invitation_id, "email": email, "role": role}

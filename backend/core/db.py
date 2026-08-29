@@ -543,7 +543,35 @@ async def _add_missing_columns(db: aiosqlite.Connection, table: str, columns: di
             await db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
+async def _init_postgres():
+    """
+    Create the schema on Postgres.
+
+    Notably shorter than the SQLite path, and that is not an oversight. Every
+    `_add_missing_columns` and `_add_owner_column` call below exists to repair
+    a database file that has been in service since before those columns were
+    thought of. A Postgres database starts empty, so there is nothing to
+    repair -- carrying those migrations across would be re-enacting the
+    history of a file that never existed here.
+    """
+    import asyncpg
+    from core import pg
+
+    conn = await asyncpg.connect(settings.DATABASE_URL)
+    try:
+        for name, ddl in _SCHEMAS.items():
+            await conn.execute(pg.translate_schema(ddl))
+        for statement in _INDEXES_USER_SESSIONS + _INDEXES:
+            await conn.execute(statement)
+    finally:
+        await conn.close()
+
+
 async def init_db():
+    if settings.DB_BACKEND == "postgres":
+        await _init_postgres()
+        return
+
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await _add_missing_columns(db, "users", {
@@ -601,6 +629,25 @@ async def init_db():
 
 
 async def get_db():
+    """
+    A connection for one request.
+
+    The two backends are deliberately opened and closed per request rather
+    than pooled. That is what the SQLite code always did, and changing the
+    connection lifetime in the same step as changing the database would mean
+    two variables moving at once when something goes wrong.
+    """
+    if settings.DB_BACKEND == "postgres":
+        import asyncpg
+        from core import pg
+
+        raw = await asyncpg.connect(settings.DATABASE_URL)
+        try:
+            yield pg.Connection(raw)
+        finally:
+            await raw.close()
+        return
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         await db.execute("PRAGMA foreign_keys = ON")

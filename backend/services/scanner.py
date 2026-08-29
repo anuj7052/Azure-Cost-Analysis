@@ -46,11 +46,14 @@ def _sku_of(row: Dict[str, Any]) -> str:
 async def start_scan(db: aiosqlite.Connection, user_id: int, tenant_id: str) -> int:
     """Open a scan row so a failure halfway through is still visible as one."""
     cursor = await db.execute(
-        "INSERT INTO scans (user_id, tenant_id, status) VALUES (?, ?, ?)",
+        "INSERT INTO scans (user_id, tenant_id, status) VALUES (?, ?, ?) RETURNING id",
         (user_id, tenant_id, STATUS_RUNNING),
     )
+    # Read before committing. `lastrowid` is a SQLite-only idea, and on SQLite
+    # the commit can reset the cursor out from under the fetch.
+    scan_id = (await cursor.fetchone())[0]
     await db.commit()
-    return cursor.lastrowid
+    return scan_id
 
 
 async def record_resources(

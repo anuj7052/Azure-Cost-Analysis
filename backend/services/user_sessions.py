@@ -36,6 +36,7 @@ Three rules hold this together:
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiosqlite
@@ -73,6 +74,18 @@ def hash_ip(ip: str) -> str:
     ).hexdigest()[:32]
 
 
+def _cutoff(**delta) -> str:
+    """
+    A timestamp N units ago, formatted the way the columns store them.
+
+    Computed here rather than in SQL because `datetime('now', '-90 days')` is
+    SQLite's spelling and `CURRENT_TIMESTAMP - INTERVAL '90 days'` is
+    Postgres's. A parameter is understood identically by both, and it takes
+    the retention period out of an f-string that was building SQL.
+    """
+    return (datetime.now(timezone.utc) - timedelta(**delta)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 async def has_consented(db: aiosqlite.Connection, user_id: int) -> bool:
     async with db.execute(
         "SELECT profile_consent_at FROM users WHERE id = ?", (user_id,)
@@ -103,9 +116,9 @@ async def record_activity(
     async with db.execute(
         "SELECT id FROM user_sessions "
         "WHERE user_id = ? AND ended_at IS NULL "
-        f"AND last_seen_at > datetime('now', '-{CONTINUATION_MINUTES} minutes') "
+        "AND last_seen_at > ? "
         "ORDER BY id DESC LIMIT 1",
-        (user_id,),
+        (user_id, _cutoff(minutes=CONTINUATION_MINUTES)),
     ) as cursor:
         row = await cursor.fetchone()
 
@@ -118,11 +131,13 @@ async def record_activity(
         return row["id"]
 
     cursor = await db.execute(
-        "INSERT INTO user_sessions (user_id, user_agent, ip_hash) VALUES (?, ?, ?)",
+        "INSERT INTO user_sessions (user_id, user_agent, ip_hash) VALUES (?, ?, ?) "
+        "RETURNING id",
         (user_id, (user_agent or "")[:_UA_MAX], hash_ip(ip)),
     )
+    session_id = (await cursor.fetchone())[0]
     await db.commit()
-    return cursor.lastrowid
+    return session_id
 
 
 async def end_session(db: aiosqlite.Connection, user_id: int) -> None:
@@ -174,7 +189,8 @@ async def purge_expired(db: aiosqlite.Connection) -> int:
     does not exist is a policy that has not been implemented.
     """
     cursor = await db.execute(
-        f"DELETE FROM user_sessions WHERE started_at < datetime('now', '-{RETENTION_DAYS} days')"
+        "DELETE FROM user_sessions WHERE started_at < ?",
+        (_cutoff(days=RETENTION_DAYS),),
     )
     await db.commit()
     return cursor.rowcount or 0

@@ -622,7 +622,7 @@ async def save_snapshot(
         INSERT INTO posture_snapshots
             (user_id, tenant_id, kind, subscriptions, finding_count,
              high_count, summary, findings, errors)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
         """,
         (
             user_id,
@@ -636,8 +636,9 @@ async def save_snapshot(
             json.dumps(errors or []),
         ),
     )
+    snapshot_id = (await cursor.fetchone())[0]
     await db.commit()
-    return cursor.lastrowid
+    return snapshot_id
 
 
 async def recent_snapshots(

@@ -7,7 +7,7 @@ an admin can see *that* a customer connected a tenant and can revoke it, but
 not read their client secret or access token.
 """
 import aiosqlite
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth.dependencies import require_admin
@@ -159,6 +159,12 @@ async def stats(db: aiosqlite.Connection = Depends(get_db)):
         async with db.execute(sql, params) as cursor:
             return (await cursor.fetchone())[0]
 
+    # Computed here rather than written as a SQL interval, because that is
+    # spelled differently by SQLite and Postgres while a parameter is not.
+    thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
     return {
         "total_users": await scalar("SELECT COUNT(*) FROM users"),
         "active_users": await scalar(
@@ -172,14 +178,14 @@ async def stats(db: aiosqlite.Connection = Depends(get_db)):
             + await scalar("SELECT COUNT(*) FROM session_tokens")
         ),
         "new_users_30d": await scalar(
-            "SELECT COUNT(*) FROM users WHERE datetime(created_at) >= datetime('now', '-30 days')"
+            "SELECT COUNT(*) FROM users WHERE created_at >= ?", (thirty_days_ago,)
         ),
         # Someone who has signed in at least once in the last 30 days. This is
         # the closest thing to "actively using it" the app can prove, because
         # only the most recent sign-in is recorded, not a per-day history.
         "active_last_30d": await scalar(
             "SELECT COUNT(*) FROM users WHERE last_login_at IS NOT NULL "
-            "AND datetime(last_login_at) >= datetime('now', '-30 days')"
+            "AND last_login_at >= ?", (thirty_days_ago,)
         ),
         "never_signed_in": await scalar(
             "SELECT COUNT(*) FROM users WHERE last_login_at IS NULL"
