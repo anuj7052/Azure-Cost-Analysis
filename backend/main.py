@@ -359,7 +359,7 @@ async def update_me(
 
     if body.consent is True:
         await db.execute(
-            "UPDATE users SET profile_consent_at = COALESCE(profile_consent_at, datetime('now')) "
+            "UPDATE users SET profile_consent_at = COALESCE(profile_consent_at, CURRENT_TIMESTAMP) "
             "WHERE id = ?",
             (current_user["actor_id"],),
         )

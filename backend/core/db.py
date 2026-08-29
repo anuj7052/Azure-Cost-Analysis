@@ -37,7 +37,7 @@ _SCHEMAS = {
             -- someone "admin of my workspace" and accidentally handing them
             -- everybody else's.
             workspace_role  TEXT    NOT NULL DEFAULT 'user',
-            created_at      TEXT    DEFAULT (datetime('now')),
+            created_at      TEXT    DEFAULT (CURRENT_TIMESTAMP),
             last_login_at   TEXT
         )
     """,
@@ -62,8 +62,8 @@ _SCHEMAS = {
         CREATE TABLE IF NOT EXISTS user_sessions (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            started_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-            last_seen_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            started_at    TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+            last_seen_at  TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
             ended_at      TEXT,
             -- Truncated: enough to say "Chrome on Windows", not enough to be
             -- a fingerprint.
@@ -88,7 +88,7 @@ _SCHEMAS = {
             -- and carried onto their account when they first sign in.
             role             TEXT    NOT NULL DEFAULT 'user',
             status           TEXT    NOT NULL DEFAULT 'pending',
-            created_at       TEXT    DEFAULT (datetime('now')),
+            created_at       TEXT    DEFAULT (CURRENT_TIMESTAMP),
             accepted_at      TEXT,
             accepted_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
             UNIQUE (owner_id, email)
@@ -102,7 +102,7 @@ _SCHEMAS = {
             tenant_name   TEXT    NOT NULL,
             client_id     TEXT    NOT NULL,
             client_secret TEXT    NOT NULL,
-            created_at    TEXT    DEFAULT (datetime('now')),
+            created_at    TEXT    DEFAULT (CURRENT_TIMESTAMP),
             UNIQUE (user_id, tenant_id)
         )
     """,
@@ -115,7 +115,7 @@ _SCHEMAS = {
             access_token TEXT    NOT NULL,
             expires_at   TEXT,
             account      TEXT,
-            created_at   TEXT    DEFAULT (datetime('now')),
+            created_at   TEXT    DEFAULT (CURRENT_TIMESTAMP),
             UNIQUE (user_id, tenant_id)
         )
     """,
@@ -138,7 +138,7 @@ _SCHEMAS = {
             -- charge they only discover afterwards. 0 means "not set yet",
             -- which the API refuses to create.
             rate_limit_per_day INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT    DEFAULT (datetime('now')),
+            created_at TEXT    DEFAULT (CURRENT_TIMESTAMP),
             UNIQUE (user_id, label)
         )
     """,
@@ -173,7 +173,7 @@ _SCHEMAS = {
             resources_json  TEXT    NOT NULL DEFAULT '[]',
             estimated_monthly REAL,
             currency        TEXT    NOT NULL DEFAULT '',
-            created_at      TEXT    DEFAULT (datetime('now')),
+            created_at      TEXT    DEFAULT (CURRENT_TIMESTAMP),
             finished_at     TEXT
         )
     """,
@@ -186,7 +186,7 @@ _SCHEMAS = {
             user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             tenant_id      TEXT    NOT NULL,
             status         TEXT    NOT NULL DEFAULT 'running',
-            started_at     TEXT    DEFAULT (datetime('now')),
+            started_at     TEXT    DEFAULT (CURRENT_TIMESTAMP),
             finished_at    TEXT,
             resource_count INTEGER NOT NULL DEFAULT 0,
             error          TEXT
@@ -242,7 +242,7 @@ _SCHEMAS = {
             retail_price    REAL,
             unit_price      REAL,
             effective_from  TEXT    NOT NULL DEFAULT '',
-            observed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            observed_at     TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
             raw             TEXT    NOT NULL DEFAULT '{}'
         )
     """,
@@ -266,7 +266,7 @@ _SCHEMAS = {
             direction      TEXT    NOT NULL DEFAULT 'flat',
             percent        REAL,
             previous_at    TEXT    NOT NULL DEFAULT '',
-            changed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            changed_at     TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
             effective_from TEXT    NOT NULL DEFAULT ''
         )
     """,
@@ -285,7 +285,7 @@ _SCHEMAS = {
             rate_day TEXT NOT NULL,
             rate     REAL NOT NULL,
             source   TEXT NOT NULL DEFAULT '',
-            fetched_at TEXT DEFAULT (datetime('now')),
+            fetched_at TEXT DEFAULT (CURRENT_TIMESTAMP),
             UNIQUE (base, quote, rate_day)
         )
     """,
@@ -307,7 +307,7 @@ _SCHEMAS = {
             user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             tenant_id     TEXT    NOT NULL,
             kind          TEXT    NOT NULL,
-            captured_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+            captured_at   TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
             subscriptions TEXT    NOT NULL DEFAULT '[]',
             finding_count INTEGER NOT NULL DEFAULT 0,
             high_count    INTEGER NOT NULL DEFAULT 0,
@@ -348,8 +348,8 @@ _SCHEMAS = {
             steps                    TEXT    NOT NULL DEFAULT '[]',
             azure_operation_id       TEXT    NOT NULL DEFAULT '',
             failure_reason           TEXT    NOT NULL DEFAULT '',
-            created_at               TEXT    NOT NULL DEFAULT (datetime('now')),
-            updated_at               TEXT    NOT NULL DEFAULT (datetime('now')),
+            created_at               TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+            updated_at               TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
             completed_at             TEXT
         )
     """,
@@ -389,7 +389,7 @@ _SCHEMAS = {
             failure_reason  TEXT    NOT NULL DEFAULT '',
             azure_operation TEXT    NOT NULL DEFAULT '',
             detail          TEXT    NOT NULL DEFAULT '{}',
-            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            created_at      TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
             completed_at    TEXT
         )
     """,
@@ -409,7 +409,7 @@ _SCHEMAS = {
             resource_name   TEXT    NOT NULL DEFAULT '',
             period          TEXT    NOT NULL DEFAULT '',
             status          TEXT    NOT NULL DEFAULT 'new',
-            updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
             UNIQUE (tenant_id, user_id, anomaly_key)
         )
     """,
@@ -424,7 +424,7 @@ _SCHEMAS = {
             previous_status TEXT    NOT NULL DEFAULT '',
             new_status      TEXT    NOT NULL DEFAULT '',
             comment         TEXT    NOT NULL DEFAULT '',
-            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+            created_at      TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP)
         )
     """,
 }

@@ -122,9 +122,9 @@ async def set_status(
         INSERT INTO anomaly_tracking
             (anomaly_key, user_id, tenant_id, subscription_id, service,
              resource_name, period, status, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT (tenant_id, user_id, anomaly_key)
-        DO UPDATE SET status = excluded.status, updated_at = datetime('now')
+        DO UPDATE SET status = excluded.status, updated_at = CURRENT_TIMESTAMP
         """,
         (
             key, user["account_id"], tenant_id, subscription_id, service,

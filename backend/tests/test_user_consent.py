@@ -32,7 +32,7 @@ async def db(tmp_path, monkeypatch):
 
 
 async def _consent(db):
-    await db.execute("UPDATE users SET profile_consent_at = datetime('now') WHERE id = 1")
+    await db.execute("UPDATE users SET profile_consent_at = CURRENT_TIMESTAMP WHERE id = 1")
     await db.commit()
 
 
@@ -169,7 +169,7 @@ async def test_the_user_agent_is_truncated(db):
 async def test_one_person_never_sees_anothers_sessions(db):
     await db.execute(
         "INSERT INTO users (id, azure_oid, email, profile_consent_at) "
-        "VALUES (2, 'oid-2', 'b@example.com', datetime('now'))"
+        "VALUES (2, 'oid-2', 'b@example.com', CURRENT_TIMESTAMP)"
     )
     await _consent(db)
     await user_sessions.record_activity(db, 1)

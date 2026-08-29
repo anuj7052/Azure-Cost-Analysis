@@ -102,7 +102,7 @@ async def finish_scan(
     await db.execute(
         """
         UPDATE scans
-           SET status = ?, finished_at = datetime('now'),
+           SET status = ?, finished_at = CURRENT_TIMESTAMP,
                resource_count = ?, error = ?
          WHERE id = ?
         """,

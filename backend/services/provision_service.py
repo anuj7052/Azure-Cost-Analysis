@@ -786,7 +786,7 @@ async def set_state(
     db: aiosqlite.Connection, deployment_id: str, state: str,
     message: str = "", resources: Optional[List[Dict[str, str]]] = None,
 ) -> None:
-    finished = "datetime('now')" if state in TERMINAL_STATES else "finished_at"
+    finished = "CURRENT_TIMESTAMP" if state in TERMINAL_STATES else "finished_at"
     await db.execute(
         f"""UPDATE provision_deployments
                SET state = ?, message = ?, resources_json = ?, finished_at = {finished}

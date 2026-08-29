@@ -897,7 +897,7 @@ async def update_operation(
         fields["steps"] = json.dumps(fields["steps"])
     assignments = ", ".join(f"{key} = ?" for key in fields)
     await db.execute(
-        f"UPDATE vm_resize_operations SET {assignments}, updated_at = datetime('now') "
+        f"UPDATE vm_resize_operations SET {assignments}, updated_at = CURRENT_TIMESTAMP "
         f"WHERE operation_id = ?",
         (*fields.values(), operation_id),
     )

@@ -469,7 +469,7 @@ async def close_event(
         """
         UPDATE security_audit
            SET result = ?, failure_reason = ?, azure_operation = ?,
-               completed_at = datetime('now')
+               completed_at = CURRENT_TIMESTAMP
          WHERE event_id = ?
         """,
         (result, failure_reason[:500], azure_operation, event_id),

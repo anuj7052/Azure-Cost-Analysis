@@ -214,7 +214,7 @@ async def invite(
 
     if existing is not None:
         await db.execute(
-            "UPDATE team_invitations SET status = ?, created_at = datetime('now'), "
+            "UPDATE team_invitations SET status = ?, created_at = CURRENT_TIMESTAMP, "
             "azure_tenant_id = ?, role = ?, accepted_at = NULL, accepted_user_id = NULL "
             "WHERE id = ?",
             (STATUS_PENDING, owner["azure_tenant_id"] or "", role, existing["id"]),
@@ -368,7 +368,7 @@ async def accept_pending_invitation(
         return None
 
     await db.execute(
-        "UPDATE team_invitations SET status = ?, accepted_at = datetime('now'), "
+        "UPDATE team_invitations SET status = ?, accepted_at = CURRENT_TIMESTAMP, "
         "accepted_user_id = ? WHERE id = ?",
         (STATUS_ACCEPTED, user_id, invitation["id"]),
     )

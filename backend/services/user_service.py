@@ -64,7 +64,7 @@ async def upsert_user(db: aiosqlite.Connection, claims: dict) -> aiosqlite.Row:
             """
             INSERT INTO users (azure_oid, email, name, azure_tenant_id, role,
                                status, login_count, last_login_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
             """,
             (oid, email, name, azure_tenant_id, role or ROLE_USER, STATUS_ACTIVE),
         )
@@ -94,7 +94,7 @@ async def upsert_user(db: aiosqlite.Connection, claims: dict) -> aiosqlite.Row:
         UPDATE users
            SET email = ?, name = ?, azure_tenant_id = ?, role = ?,
                login_count = COALESCE(login_count, 0) + 1,
-               last_login_at = datetime('now')
+               last_login_at = CURRENT_TIMESTAMP
          WHERE id = ?
         """,
         (email, name, azure_tenant_id, new_role, existing["id"]),

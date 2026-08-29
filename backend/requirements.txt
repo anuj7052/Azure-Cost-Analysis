@@ -21,3 +21,4 @@ reportlab>=4.0
 # SQLite database and the module-level caches are per-process, so a second
 # worker would mean two divergent caches and two writers on one file.
 gunicorn==23.0.0
+asyncpg==0.30.0

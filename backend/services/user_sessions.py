@@ -111,7 +111,7 @@ async def record_activity(
 
     if row:
         await db.execute(
-            "UPDATE user_sessions SET last_seen_at = datetime('now') WHERE id = ?",
+            "UPDATE user_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?",
             (row["id"],),
         )
         await db.commit()
@@ -133,8 +133,8 @@ async def end_session(db: aiosqlite.Connection, user_id: int) -> None:
     on another device is exactly what someone signing out is trying to end.
     """
     await db.execute(
-        "UPDATE user_sessions SET ended_at = datetime('now'), "
-        "last_seen_at = datetime('now') "
+        "UPDATE user_sessions SET ended_at = CURRENT_TIMESTAMP, "
+        "last_seen_at = CURRENT_TIMESTAMP "
         "WHERE user_id = ? AND ended_at IS NULL",
         (user_id,),
     )
