@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Upload, FileCode, Send, Download, AlertTriangle } from 'lucide-react';
 
 import { uploadBoq, planBoq, generateIac, chatAboutBoq } from '../api/client';
+import { errorMessage } from '../utils/apiError';
 import BuildAssistant from '../components/Boq/BuildAssistant';
 
 const SUGGESTIONS = [
@@ -43,7 +44,10 @@ function download(artifact) {
 }
 
 function errorText(err) {
-  return err?.response?.data?.detail || err?.message || 'Something went wrong.';
+  // Through the shared reader: the backend wraps failures in { error: {...} },
+  // and reading `detail` directly collapsed every one of them into the generic
+  // line, hiding the reason the model endpoint actually gave.
+  return errorMessage(err);
 }
 
 function PlanTable({ plan }) {

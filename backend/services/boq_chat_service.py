@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from openai import AsyncOpenAI
 
 from core.config import settings
-from services import iac_service
+from services import iac_service, llm_errors
 
 log = logging.getLogger(__name__)
 
@@ -240,14 +240,24 @@ class BoqChatService:
 
         used: list[str] = []
         for _ in range(MAX_STEPS):
-            response = await self.client.chat.completions.create(
-                model=self.llm.get("model") or settings.OPENAI_MODEL,
-                messages=messages,
-                tools=self._tool_schema(),
-                tool_choice="auto",
-                max_tokens=settings.OPENAI_MAX_TOKENS,
-                temperature=0.1,
-            )
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.llm.get("model") or settings.OPENAI_MODEL,
+                    messages=messages,
+                    tools=self._tool_schema(),
+                    tool_choice="auto",
+                    max_tokens=settings.OPENAI_MAX_TOKENS,
+                    temperature=0.1,
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                # The provider's reason — wrong key, wrong model name,
+                # unreachable endpoint — is the only useful thing here, and
+                # it used to be swallowed into a generic 500.
+                raise llm_errors.as_http_error(
+                    exc, self.llm.get("source") or "your model endpoint"
+                ) from None
             choice = response.choices[0].message
             if not choice.tool_calls:
                 return {
@@ -266,7 +276,13 @@ class BoqChatService:
                         args = json.loads(call.function.arguments or "{}")
                     except json.JSONDecodeError:
                         args = {}
-                    result = await handler(**args)
+                    try:
+                        result = await handler(**args)
+                    except HTTPException as exc:
+                        result = {"error": str(exc.detail)}
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("Tool %s failed", call.function.name, exc_info=True)
+                        result = {"error": f"That step failed: {exc}"}
                     used.append(call.function.name)
                 messages.append(
                     {

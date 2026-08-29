@@ -261,16 +261,39 @@ def test_the_chat_tool_surface_contains_no_way_to_create_anything():
     The load-bearing test in this file.
 
     If a future change adds a deploy tool here, a sentence becomes a spend.
-    The assistant is allowed to read the catalogue, draft and price; nothing
-    else.
+    The assistant may read the catalogue, draft, price, and read the customer's
+    own account. Nothing on this surface writes.
     """
     from services.provision_chat_service import ProvisionChatService
 
-    names = {t["function"]["name"] for t in ProvisionChatService._tool_schema()}
-    assert names == {"list_supported_resources", "draft_resource", "price_draft"}
+    building = {"list_supported_resources", "draft_resource", "price_draft"}
+    reading = {
+        "list_subscriptions", "describe_subscription",
+        "subscription_costs", "list_resources",
+    }
 
-    service = ProvisionChatService()
+    # Without an estate attached the assistant can still draft and price.
+    plain = ProvisionChatService()
+    assert {t["function"]["name"] for t in plain._tool_schema()} == building
+    assert set(plain._tools) == building
+
+    # With one attached it gains reads, and only reads.
+    class Estate:
+        async def list_subscriptions(self, **_): return {}
+        async def describe_subscription(self, **_): return {}
+        async def subscription_costs(self, **_): return {}
+        async def list_resources(self, **_): return {}
+
+    service = ProvisionChatService(estate=Estate())
+    names = {t["function"]["name"] for t in service._tool_schema()}
+    assert names == building | reading
     assert set(service._tools) == names
+
+    # Nothing in the surface is a write, however it came to be named.
+    for name in names:
+        for forbidden in ("deploy", "create", "delete", "resize", "start", "stop", "write"):
+            assert forbidden not in name.lower(), name
+
     for attribute in dir(service):
         assert "deploy" not in attribute.lower()
         assert "create" not in attribute.lower()

@@ -171,6 +171,9 @@ class ProvisionChatRequest(BaseModel):
     history: List[dict] = []
     location: str = Field(default="centralindia", max_length=40)
     currency: str = Field(default="INR", max_length=8)
+    # Which directory to answer questions about. Optional: without it the
+    # assistant can still draft and price, it just cannot see the account.
+    tenant_id: str = Field(default="", max_length=64)
 
 
 class ProvisionChatResponse(BaseModel):

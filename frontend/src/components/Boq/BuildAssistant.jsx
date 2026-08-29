@@ -10,6 +10,7 @@ import {
   startProvisionDeploy,
 } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
+import { errorMessage } from '../../utils/apiError';
 
 /**
  * Build Azure resources by describing them, instead of clicking through the
@@ -36,14 +37,21 @@ const REGIONS = [
   'eastus', 'westeurope', 'uksouth', 'southeastasia',
 ];
 
+// Two kinds of question, because the assistant now does two things: it reads
+// the account you already have, and it builds new things in it.
 const SUGGESTIONS = [
+  'Which subscriptions can I see?',
+  'What did vs-anuj-individual cost last month?',
+  'What is running in that subscription?',
   'Create a small Linux VM for a test API',
   'I need a storage account for backups',
-  'Set up a web app to host a Python service',
 ];
 
 function errText(err) {
-  return err?.response?.data?.detail || err?.message || 'Something went wrong.';
+  // Through the shared reader: the backend wraps failures in { error: {...} },
+  // and reading `detail` directly turned every one of them into the generic
+  // line, hiding the provider's actual reason.
+  return errorMessage(err);
 }
 
 function money(value, currency) {
@@ -185,7 +193,7 @@ export default function BuildAssistant() {
   // timer running against a deployment nobody is watching.
   useEffect(() => () => clearInterval(pollRef.current), []);
 
-  const isOwner = me?.is_owner !== false;
+  const isOwner = me?.can_administer !== false;
   const ready = integrations === null
     ? null
     : integrations.some(i => i.enabled && i.has_key && i.rate_limit_per_day > 0);
@@ -203,7 +211,13 @@ export default function BuildAssistant() {
     setSending(true);
     try {
       const result = await sendProvisionChat({
-        message, history, location, currency: 'INR',
+        message,
+        history,
+        location,
+        currency: 'INR',
+        // Lets the assistant read this directory to answer questions about
+        // what is already there, rather than only describing what it can build.
+        tenant_id: selectedTenantId || '',
       });
       setMessages(m => [...m, { role: 'assistant', content: result.answer }]);
       setDrafts(result.drafts || []);
@@ -285,9 +299,10 @@ export default function BuildAssistant() {
           Build on Azure
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          Describe what you need and the assistant works out the specification.
-          It drafts and prices; you press Create. Azure decides whether your
-          account is allowed to build it.
+          Ask about the subscriptions, spend and resources you already have, or
+          describe something new and the assistant works out the specification.
+          It reads, drafts and prices; you press Create. Azure decides whether
+          your account is allowed to build it.
         </p>
       </div>
 

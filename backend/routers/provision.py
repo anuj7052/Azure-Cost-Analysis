@@ -33,6 +33,7 @@ from models.schemas import (
 )
 from services import integration_service, provision_service
 from services.azure_errors import azure_error
+from services.estate_tools import EstateTools
 from services.provision_chat_service import ProvisionChatService
 from services.token_resolver import resolve_tenant_token
 
@@ -66,8 +67,24 @@ async def chat(
     except integration_service.RateLimitExceeded as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from None
 
+    # Read-only access to the user's own Azure, so the assistant can answer
+    # "what is in this subscription" from the account rather than from memory.
+    # Best effort: if the tenant token cannot be resolved the conversation
+    # still works for drafting, and the assistant is told it cannot see the
+    # account rather than being left to guess what is in it.
+    estate = None
+    tenant_id = (body.tenant_id or current_user.get("tenant_id") or "").strip()
+    if tenant_id:
+        try:
+            token = await resolve_tenant_token(tenant_id, current_user, db)
+            estate = EstateTools(token, tenant_id, currency=body.currency)
+        except HTTPException as exc:
+            log.info("Assistant has no estate access: %s", exc.detail)
+        except Exception:  # noqa: BLE001
+            log.warning("Could not resolve a tenant token", exc_info=True)
+
     service = ProvisionChatService(
-        location=body.location, currency=body.currency, llm=llm
+        location=body.location, currency=body.currency, llm=llm, estate=estate
     )
     result = await service.chat(body.message, body.history)
     return {
