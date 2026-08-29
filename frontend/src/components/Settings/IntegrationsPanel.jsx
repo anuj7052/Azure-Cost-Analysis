@@ -19,8 +19,8 @@ const KINDS = [
   {
     key: 'azure_openai',
     label: 'Azure OpenAI',
-    hint: 'Your Azure OpenAI resource. The model is the deployment name.',
-    urlPlaceholder: 'https://my-resource.openai.azure.com/openai/v1',
+    hint: 'Your Azure OpenAI resource address. The model is the deployment name, not the model name.',
+    urlPlaceholder: 'https://my-resource.openai.azure.com',
     modelPlaceholder: 'my-gpt4o-deployment',
   },
   {

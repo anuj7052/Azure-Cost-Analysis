@@ -275,6 +275,7 @@ async def llm_config(db: aiosqlite.Connection, user_id: Optional[int]) -> Dict[s
             "api_key": settings.OPENAI_API_KEY,
             "base_url": settings.OPENAI_BASE_URL or "",
             "model": settings.OPENAI_MODEL,
+            "kind": "",
             "source": "platform",
             "integration_id": None,
         }
@@ -283,6 +284,9 @@ async def llm_config(db: aiosqlite.Connection, user_id: Optional[int]) -> Dict[s
         "api_key": row["api_key"],
         "base_url": row["base_url"] or "",
         "model": row["model"] or settings.OPENAI_MODEL,
+        # Carried because Azure OpenAI needs a different client, and getting
+        # that wrong surfaces as a misleading "model not found".
+        "kind": row["kind"],
         "source": row["label"],
         # Carried so the caller can spend one unit of this endpoint's daily
         # allowance against the same row that supplied the key.

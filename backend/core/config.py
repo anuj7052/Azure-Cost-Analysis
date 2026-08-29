@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = ""
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_MAX_TOKENS: int = 1500
+    # Only read for classic Azure OpenAI endpoints, where the API version is a
+    # required query parameter rather than an optional refinement.
+    OPENAI_API_VERSION: str = "2024-10-21"
 
     @property
     def cors_origins_list(self) -> List[str]:

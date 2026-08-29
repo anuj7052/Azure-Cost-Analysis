@@ -24,7 +24,7 @@ from fastapi import HTTPException
 from openai import AsyncOpenAI
 
 from core.config import settings
-from services import llm_errors, provision_service
+from services import llm_client, llm_errors, provision_service
 
 log = logging.getLogger(__name__)
 
@@ -103,20 +103,8 @@ class ProvisionChatService:
 
     @property
     def client(self) -> AsyncOpenAI:
-        if not self.llm.get("api_key"):
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "No model endpoint is configured. Add your own endpoint and "
-                    "key under Settings → Integrations, then set a daily "
-                    "request limit for it."
-                ),
-            )
         if self._client is None:
-            self._client = AsyncOpenAI(
-                api_key=self.llm["api_key"],
-                base_url=self.llm.get("base_url") or None,
-            )
+            self._client = llm_client.build_client(self.llm)
         return self._client
 
     # --- tools --------------------------------------------------------
@@ -341,7 +329,7 @@ class ProvisionChatService:
         for _ in range(MAX_STEPS):
             try:
                 response = await self.client.chat.completions.create(
-                    model=self.llm.get("model") or settings.OPENAI_MODEL,
+                    model=llm_client.model_for(self.llm),
                     messages=messages,
                     tools=self._tool_schema(),
                     tool_choice="auto",
@@ -355,7 +343,7 @@ class ProvisionChatService:
                 # name, unreachable endpoint — became a generic 500 and the
                 # person who configured the endpoint had nothing to go on.
                 raise llm_errors.as_http_error(
-                    exc, self.llm.get("source") or "your model endpoint"
+                    exc, llm_errors.label_for(self.llm.get("source"))
                 ) from None
             choice = response.choices[0].message
             if not choice.tool_calls:

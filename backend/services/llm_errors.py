@@ -52,7 +52,21 @@ def _provider_message(exc: Exception) -> str:
     return str(message)
 
 
-def as_http_error(exc: Exception, endpoint_label: str = "your endpoint") -> HTTPException:
+def label_for(source: str | None) -> str:
+    """
+    Name the endpoint the way the customer named it.
+
+    These labels open the sentence, so a bare "Test" reads as a broken string
+    rather than as the name they chose. Quoting it makes it obviously their
+    label and keeps the sentence grammatical whatever they typed.
+    """
+    name = (source or "").strip()
+    if not name or name == "platform":
+        return "The model endpoint"
+    return f"The endpoint \u201c{name}\u201d"
+
+
+def as_http_error(exc: Exception, endpoint_label: str = "The model endpoint") -> HTTPException:
     """
     Map a provider exception onto a status and a sentence that names the fix.
 
@@ -90,9 +104,10 @@ def as_http_error(exc: Exception, endpoint_label: str = "your endpoint") -> HTTP
         return HTTPException(
             status_code=400,
             detail=(
-                f"{endpoint_label} does not have that model. Check the model "
-                f"name, and for Azure OpenAI make sure it is the deployment "
-                f"name rather than the model name. The provider said: {detail}"
+                f"{endpoint_label} could not find that model. For Azure OpenAI "
+                f"the model box must hold the deployment name, and the URL "
+                f"must be the resource address ending in .openai.azure.com. "
+                f"The provider said: {detail}"
             ),
         )
 
