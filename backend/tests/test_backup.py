@@ -139,14 +139,21 @@ async def test_a_failing_backup_does_not_stop_the_loop():
 
     original_make, original_interval = backup.make_backup, backup.INTERVAL_SECONDS
     backup.make_backup, backup.INTERVAL_SECONDS = boom, 0.01
+    task = None
     try:
         task = asyncio.create_task(backup.run_forever("ignored"))
         await asyncio.sleep(0.05)
         assert not task.done()
         assert len(calls) >= 1
-        task.cancel()
     finally:
         backup.make_backup, backup.INTERVAL_SECONDS = original_make, original_interval
+        if task is not None:
+            # Awaited, not merely cancelled. A task left mid-cancellation
+            # outlives the test's event loop and surfaces later as a warning
+            # on some unrelated test, which is how a suite becomes flaky.
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
 
 
 async def test_the_schedule_is_bounded():
