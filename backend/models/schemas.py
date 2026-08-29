@@ -230,6 +230,22 @@ class ProvisionDeployment(BaseModel):
 
 class ProfileUpdate(BaseModel):
     phone: Optional[str] = None
+    company: Optional[str] = None
+    # Whether the person agrees to us keeping the optional details above and a
+    # record of their sessions. Tri-state on purpose: None means "this request
+    # is not about consent", so an ordinary profile edit cannot flip it by
+    # omission, in either direction.
+    consent: Optional[bool] = None
+
+    @field_validator("company")
+    @classmethod
+    def valid_company(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if len(v) > 120:
+            raise ValueError("Company name is too long.")
+        return v
 
     @field_validator("phone")
     @classmethod

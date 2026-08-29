@@ -5,6 +5,7 @@ import { useAppStore } from '../store/useAppStore';
 import { deleteTenant, downloadSetupGuide, uploadCSV } from '../api/client';
 import AddTenantModal from '../components/TenantManager/AddTenantModal';
 import IntegrationsPanel from '../components/Settings/IntegrationsPanel';
+import YourDataPanel from '../components/Settings/YourDataPanel';
 import AddSessionTokenModal from '../components/TenantManager/AddSessionTokenModal';
 import PortalGuide, { EXPORT_GUIDE } from '../components/Common/PortalGuide';
 import CurrencyApiBar from '../components/Common/CurrencyApiBar';
@@ -97,6 +98,8 @@ export default function Settings() {
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-slate-400 text-sm mt-1">Manage tenants, subscriptions, and data sources</p>
       </div>
+
+      <YourDataPanel />
 
       {/* Tenants */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">

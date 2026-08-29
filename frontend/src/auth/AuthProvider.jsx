@@ -3,6 +3,7 @@ import { InteractionStatus } from '@azure/msal-browser';
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, Cloud, Lock, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { msalInstance, loginRequest, managementRequest } from './msalConfig';
+import { endMySession } from '../api/client';
 import { useTheme } from '../store/useTheme';
 
 export function AuthProvider({ children }) {
@@ -50,7 +51,19 @@ export function useLogin() {
    * local account entry behind, which is what makes the next visit log the
    * previous person straight back in.
    */
-  const logout = () => {
+  const logout = async () => {
+    // Close the session record first, while the token is still valid. After
+    // `clearCache` there is nothing left to authenticate with, so the sign-out
+    // time would never be recorded and every session would read as still open.
+    //
+    // A failure here is swallowed on purpose: nobody should be held inside an
+    // app because a bookkeeping write did not land. The session simply stays
+    // open, which is the honest outcome and is what `last_seen_at` is for.
+    try {
+      await endMySession();
+    } catch {
+      /* Sign out regardless. */
+    }
     instance.clearCache();
     instance.logoutRedirect();
   };

@@ -21,6 +21,14 @@ _SCHEMAS = {
             -- Contact number for the account. Entra sign-in tokens do not
             -- carry one, so this is only ever what the person typed in.
             phone           TEXT    NOT NULL DEFAULT '',
+            -- Likewise the employer. Entra has a company name field, but we
+            -- do not hold the directory consent to read it, and inferring it
+            -- from the email domain would be a guess printed as a fact.
+            company         TEXT    NOT NULL DEFAULT '',
+            -- When this person agreed to us keeping the details above and a
+            -- record of their sessions. NULL means they have not, and nothing
+            -- optional may be stored until they do.
+            profile_consent_at TEXT,
             login_count     INTEGER NOT NULL DEFAULT 0,
             -- What this person may do inside the workspace they were added to.
             -- Deliberately separate from `role` above: that one is the
@@ -33,6 +41,37 @@ _SCHEMAS = {
             last_login_at   TEXT
         )
     """,
+    # When each person was signed in, and when they stopped.
+    #
+    # This is the record behind "who was using the app, and when". It is
+    # deliberately thin. There is no page-by-page trail, because the stated
+    # purpose is account security and support -- "was that sign-in me?" -- and
+    # anything beyond what that question needs would be collected without a
+    # purpose, which is the thing data-protection law actually prohibits.
+    #
+    # The address is stored as a keyed hash, never in the clear. It is still
+    # personal data, so this is not anonymisation; it is pseudonymisation, and
+    # it means a leak of this table does not hand anyone a list of the places
+    # our customers work from, while still letting somebody recognise "this is
+    # the same network as last time".
+    #
+    # `ended_at` NULL means the session is open. A session that is never
+    # closed -- browser shut, laptop lid down -- stays open, so `last_seen_at`
+    # is what any honest "still active" answer has to be based on.
+    "user_sessions": """
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            started_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            last_seen_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            ended_at      TEXT,
+            -- Truncated: enough to say "Chrome on Windows", not enough to be
+            -- a fingerprint.
+            user_agent    TEXT    NOT NULL DEFAULT '',
+            ip_hash       TEXT    NOT NULL DEFAULT ''
+        )
+    """,
+
     # People an owner has invited into their workspace. The row is created
     # before the invitee has ever signed in, so it is keyed by email rather
     # than by user id, and holds the Entra tenant the invite was issued from.
@@ -392,6 +431,17 @@ _SCHEMAS = {
 
 # Search runs against name_lower across every scan the user owns, so without
 # these it degrades to a full table scan once a few scans have accumulated.
+# Kept out of `_INDEXES` because the table they belong to is created in the
+# users block at the top of `init_db`, before that list is applied.
+_INDEXES_USER_SESSIONS = [
+    # Every read is "this person's sessions, newest first".
+    "CREATE INDEX IF NOT EXISTS idx_user_sessions_person "
+    "ON user_sessions (user_id, id DESC)",
+    # The retention sweep scans by age across everyone.
+    "CREATE INDEX IF NOT EXISTS idx_user_sessions_age "
+    "ON user_sessions (started_at)",
+]
+
 _INDEXES = [
     # Status is always read for one tenant's worth of anomalies at a time, and
     # the history for one anomaly newest-first.
@@ -501,8 +551,13 @@ async def init_db():
             "phone": "TEXT NOT NULL DEFAULT ''",
             "login_count": "INTEGER NOT NULL DEFAULT 0",
             "workspace_role": "TEXT NOT NULL DEFAULT 'user'",
+            "company": "TEXT NOT NULL DEFAULT ''",
+            "profile_consent_at": "TEXT",
         })
         await db.execute(_SCHEMAS["users"])
+        await db.execute(_SCHEMAS["user_sessions"])
+        for statement in _INDEXES_USER_SESSIONS:
+            await db.execute(statement)
         await db.execute(_SCHEMAS["team_invitations"])
         await _add_missing_columns(
             db, "team_invitations", {"role": "TEXT NOT NULL DEFAULT 'user'"}

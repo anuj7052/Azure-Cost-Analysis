@@ -383,8 +383,24 @@ api.interceptors.response.use(
 
 export const fetchMe = () => api.get('/me').then(r => r.data);
 
-/** Only the phone number is editable: everything else comes from Entra. */
+/**
+ * Phone, company and consent. Everything else comes from Entra and is
+ * refreshed from the token on every request, so editing it here would be
+ * silently overwritten.
+ *
+ * Send `{ consent: false }` on its own to withdraw: the API treats that as an
+ * erasure of everything consent was covering, not as a flag being flipped.
+ */
 export const updateProfile = (body) => api.patch('/me', body).then(r => r.data);
+
+/** This person's own sign-in history. */
+export const fetchMySessions = () => api.get('/me/sessions').then(r => r.data);
+
+/** Everything held about the signed-in person, for them to keep. */
+export const exportMyData = () => api.get('/me/export').then(r => r.data);
+
+/** Close this person's open sessions before the Microsoft sign-out redirect. */
+export const endMySession = () => api.post('/me/sign-out').then(r => r.data);
 
 // Team seats. Every write returns the whole team back, so the caller never has
 // to guess what the seat counts became after an invite or a removal.

@@ -5,6 +5,7 @@ Composition only: configuration, cross-cutting middleware, error handling and
 route mounting. Domain logic lives in `services/`, HTTP surfaces in `routers/`.
 """
 import logging
+import asyncio
 
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from core.middleware import (
 from core.versioning import API_V1_PREFIX, LEGACY_SUNSET, register_routers
 from auth.dependencies import get_current_user
 from services.user_service import tenant_counts
+from services import user_sessions
+from services import backup
 from models.schemas import ProfileUpdate
 from routers import (
     admin, tenants, subscriptions, costs, services, upload, bandwidth, boq,
@@ -95,8 +98,40 @@ async def lifespan(app: FastAPI):
     configure_logging(json_output=settings.is_production)
     _verify_production_config()
     await init_db()
+
+    # Enforce the session retention policy on the way up.
+    #
+    # There is no scheduler in this deployment, and a retention period that
+    # depends on infrastructure which does not exist has not actually been
+    # implemented -- it has been described. Startup is not a perfect trigger,
+    # but it is a real one, and it runs on every deploy and every restart.
+    try:
+        async with aiosqlite.connect(settings.DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            removed = await user_sessions.purge_expired(db)
+        if removed:
+            log.info(
+                "expired session records deleted",
+                extra={"count": removed, "retention_days": user_sessions.RETENTION_DAYS},
+            )
+    except Exception:
+        # A failed sweep must not stop the app from serving. It is logged so
+        # it can be noticed, rather than swallowed so it cannot.
+        log.exception("session retention sweep failed")
+
     log.info("api started", extra={"environment": settings.ENVIRONMENT})
-    yield
+
+    # Keep a copy of the database. Until this ran, the entire application
+    # state was one file on one instance with no second copy anywhere.
+    #
+    # A background task rather than an external scheduler because this
+    # deployment has none, and a backup policy that depends on infrastructure
+    # which does not exist has been described rather than implemented.
+    backup_task = asyncio.create_task(backup.run_forever(settings.DB_PATH))
+    try:
+        yield
+    finally:
+        backup_task.cancel()
 
 
 app = FastAPI(
@@ -194,6 +229,7 @@ async def mark_legacy_api(request: Request, call_next):
 @app.get("/api/me", tags=["account"])
 @app.get(f"{API_V1_PREFIX}/me", tags=["account"])
 async def me(
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
@@ -203,10 +239,46 @@ async def me(
     Drives the admin navigation and decides whether to show onboarding, so it
     also reports how many tenants this account has connected. That count is
     scoped to the account — nobody sees a number that includes someone else's.
+
+    This is also where a session is noted, rather than on every request. The
+    client calls it on load and on return to the tab, which is the shape of a
+    visit; writing a row on every API call would turn a readable history into
+    noise and put a database write in front of every cost query.
+
+    `record_activity` writes nothing without consent, and is not asked to.
+    Keeping that check inside it means the one place someone forgets to ask is
+    not the place we keep data we were not allowed to keep.
+    """
+    await user_sessions.record_activity(
+        db,
+        current_user["actor_id"],
+        # Behind App Service the socket address is the load balancer, so the
+        # forwarded header is the only thing that identifies the caller's
+        # network. It is client-supplied and therefore untrusted -- which is
+        # acceptable here precisely because it is hashed and only ever used to
+        # show somebody their own history, never to make a decision.
+        ip=(request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or (request.client.host if request.client else "")),
+        user_agent=request.headers.get("user-agent", ""),
+    )
+
+    return await _account_payload(current_user, db)
+
+
+async def _account_payload(current_user: dict, db: aiosqlite.Connection) -> dict:
+    """
+    The account as the interface sees it.
+
+    Separate from the route so that updating the profile can return the fresh
+    state without pretending to be a fresh visit -- calling the route handler
+    would have recorded a session every time somebody edited their phone
+    number.
     """
     counts = await tenant_counts(db)
     async with db.execute(
-        "SELECT phone, login_count FROM users WHERE id = ?", (current_user["actor_id"],)
+        "SELECT phone, company, login_count, last_login_at, profile_consent_at "
+        "FROM users WHERE id = ?",
+        (current_user["actor_id"],),
     ) as cursor:
         profile = await cursor.fetchone()
 
@@ -224,7 +296,14 @@ async def me(
         "email": current_user["email"],
         "name": current_user["name"],
         "phone": (profile["phone"] if profile else "") or "",
+        "company": (profile["company"] if profile else "") or "",
         "login_count": (profile["login_count"] if profile else 0) or 0,
+        "last_login_at": (profile["last_login_at"] if profile else None),
+        # Drives the consent prompt. Reported rather than assumed, so the
+        # interface never has to guess whether it is allowed to ask.
+        "profile_consent_at": (profile["profile_consent_at"] if profile else None),
+        "has_consented": bool(profile and profile["profile_consent_at"]),
+        "session_retention_days": user_sessions.RETENTION_DAYS,
         "role": current_user["role"],
         "status": current_user["status"],
         "created_at": current_user["created_at"],
@@ -261,18 +340,101 @@ async def update_me(
 
     Name, email and tenant come from Entra and are refreshed from the token on
     every request, so they are deliberately not editable here -- an edit would
-    be silently overwritten on the next call. The phone number has no source
-    other than the person themselves.
+    be silently overwritten on the next call. The phone number and the employer
+    have no source other than the person themselves.
+
+    Consent is handled in the same request because the two are inseparable: the
+    optional details may not be stored without it, and withdrawing it has to
+    erase what it was covering rather than merely stop future writes.
     """
-    if body.phone is None:
+    if body.phone is None and body.company is None and body.consent is None:
         raise HTTPException(status_code=400, detail="Nothing to update.")
 
-    await db.execute(
-        "UPDATE users SET phone = ? WHERE id = ?",
-        (body.phone, current_user["actor_id"]),
-    )
+    if body.consent is False:
+        # Withdrawal wins outright, and is not combined with the rest of the
+        # request. Accepting a phone number in the same breath as "stop
+        # keeping my details" would honour the letter and invert the meaning.
+        await user_sessions.forget_optional_data(db, current_user["actor_id"])
+        return await _account_payload(current_user, db)
+
+    if body.consent is True:
+        await db.execute(
+            "UPDATE users SET profile_consent_at = COALESCE(profile_consent_at, datetime('now')) "
+            "WHERE id = ?",
+            (current_user["actor_id"],),
+        )
+
+    # Optional details are only accepted once consent exists -- including the
+    # consent just granted above, which is why this check runs after it.
+    if body.phone is not None or body.company is not None:
+        if not await user_sessions.has_consented(db, current_user["actor_id"]):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "These details are only stored with your agreement. "
+                    "Accept the data notice first, or leave them blank."
+                ),
+            )
+        if body.phone is not None:
+            await db.execute(
+                "UPDATE users SET phone = ? WHERE id = ?",
+                (body.phone, current_user["actor_id"]),
+            )
+        if body.company is not None:
+            await db.execute(
+                "UPDATE users SET company = ? WHERE id = ?",
+                (body.company, current_user["actor_id"]),
+            )
+
     await db.commit()
-    return await me(current_user=current_user, db=db)
+    return await _account_payload(current_user, db)
+
+
+@app.get("/api/me/sessions", tags=["account"])
+@app.get(f"{API_V1_PREFIX}/me/sessions", tags=["account"])
+async def my_sessions(
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    This person's own sign-in history.
+
+    Shown to them, not only kept about them. A security record the subject
+    cannot read is of no use to the person it is meant to protect, and is the
+    difference between an audit trail and surveillance.
+    """
+    return {
+        "sessions": await user_sessions.list_sessions(db, current_user["actor_id"]),
+        "retention_days": user_sessions.RETENTION_DAYS,
+    }
+
+
+@app.post("/api/me/sign-out", tags=["account"])
+@app.post(f"{API_V1_PREFIX}/me/sign-out", tags=["account"])
+async def sign_out(
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Close this person's open sessions, on every device."""
+    await user_sessions.end_session(db, current_user["actor_id"])
+    return {"status": "signed_out"}
+
+
+@app.get("/api/me/export", tags=["account"])
+@app.get(f"{API_V1_PREFIX}/me/export", tags=["account"])
+async def export_my_data(
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Everything held about the signed-in person.
+
+    A right that exists only on paper is not a right, so it is a route rather
+    than a support process. It returns what the interface calls things, not
+    raw columns -- a database dump is not an answer to "what do you know about
+    me".
+    """
+    return await user_sessions.export_for(db, current_user["actor_id"])
 
 
 @app.get("/api/health", tags=["system"])
