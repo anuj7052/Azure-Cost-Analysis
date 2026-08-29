@@ -554,7 +554,7 @@ export default function Compare() {
       );
     }
     if (rowsLoading) {
-      return <Empty title="Reading your billing months…" body="Pulling per-meter costs from Azure. This can take a moment the first time." />;
+      return <Empty busy title="Reading your billing months…" body="Pulling per-meter costs from Azure. This can take a moment the first time." />;
     }
     if (rowsError) {
       return <Empty title="Could not load cost detail" body={rowsError} />;
@@ -768,6 +768,7 @@ export default function Compare() {
            who just picked two is how a working page reads as broken. */
         chosen ? (
           <Empty
+            busy={rowsLoading}
             title={rowsLoading ? 'Reading those two months…' : 'No charges in those months'}
             body={rowsLoading
               ? `Pulling per-meter costs for ${draftPrev} and ${draftCurr}.`
@@ -970,14 +971,38 @@ function MonthPicker({ label, value, options, labels, onChange, placeholder }) {
   );
 }
 
-function Empty({ title, body, action }) {
+/**
+ * The page's stand-in panel, for both "there is nothing" and "there is
+ * nothing *yet*".
+ *
+ * `busy` matters more than it looks. Without it this panel showed an upload
+ * icon and a "Go to import" button while a cost query was still running, so a
+ * page that was working perfectly read as a page that had failed and was
+ * asking the user to go and fetch the data themselves. When something is in
+ * flight the icon spins, the CTA is withheld, and the title carries a live
+ * region so a screen reader announces the wait instead of silence.
+ */
+function Empty({ title, body, action, busy = false }) {
   return (
     <div className="p-6">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center max-w-xl mx-auto">
-        <Upload className="w-8 h-8 text-slate-600 mx-auto mb-3" />
+      <div
+        className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center max-w-xl mx-auto"
+        aria-busy={busy || undefined}
+        aria-live={busy ? 'polite' : undefined}
+      >
+        {busy ? (
+          <div
+            className="w-8 h-8 mx-auto mb-3 rounded-full border-[3px] border-blue-500"
+            style={{ borderTopColor: 'transparent', animation: 'aca-spin .8s linear infinite' }}
+            role="status"
+            aria-label="Loading"
+          />
+        ) : (
+          <Upload className="w-8 h-8 text-slate-600 mx-auto mb-3" />
+        )}
         <h2 className="text-sm font-semibold text-white">{title}</h2>
         <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">{body}</p>
-        {action || (
+        {busy ? null : action || (
           <Link
             to="/settings"
             className="inline-block mt-4 bg-blue-600 hover:bg-blue-500 text-[#fff] text-sm font-medium px-4 py-2 rounded-xl transition"

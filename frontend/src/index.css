@@ -235,6 +235,12 @@ html[data-theme="light"] .aca-accent-text {
 @keyframes aca-enter {
   from { opacity: 0; transform: translateY(16px) }
 }
+/* Named here rather than declared inline next to each spinner, because a
+   `spin` defined inside one component's <style> block is global anyway and
+   silently collides with the next one. */
+@keyframes aca-spin {
+  to { transform: rotate(360deg) }
+}
 @keyframes aca-aurora {
   0%   { transform: translate3d(-8%, -6%, 0) rotate(0deg)   scale(1.15) }
   50%  { transform: translate3d(8%, 6%, 0)   rotate(180deg) scale(1.35) }
