@@ -179,6 +179,52 @@ html[data-theme="light"] :is(
 @utility elevated-lg { box-shadow: var(--shadow-raised); }
 @utility elevated-xl { box-shadow: var(--shadow-overlay); }
 
+/* ----------------------------------------------------------------------------
+   Signed-out surfaces: the landing page and the sign-in screen.
+
+   Shared here rather than duplicated in each file because these two screens
+   are the same piece of design and must stay in step — a visitor moves from
+   one to the other in a single click, and a mismatch reads as a broken link.
+
+   The accent gradient is defined per theme rather than with Tailwind stops.
+   The light theme deliberately remaps `--color-white` to ink so that headings
+   authored as white stay readable, but a gradient clipped to text is painting
+   the *background*, so that remap cannot help it: a pale cyan stop chosen for
+   a near-black page is close to invisible on a near-white one.
+   ------------------------------------------------------------------------- */
+.aca-accent-text {
+  background-image: linear-gradient(90deg, #60a5fa, #67e8f9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+html[data-theme="light"] .aca-accent-text {
+  background-image: linear-gradient(90deg, #2563eb, #0891b2);
+}
+
+@keyframes aca-rise  { from { height: 0; opacity: 0 } }
+@keyframes aca-grow  { from { width: 0 } }
+@keyframes aca-float {
+  0%, 100% { transform: translateY(0) }
+  50%      { transform: translateY(-14px) }
+}
+@keyframes aca-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1) }
+  50%      { transform: translate3d(24px, -18px, 0) scale(1.08) }
+}
+@keyframes aca-enter {
+  from { opacity: 0; transform: translateY(16px) }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aca-motion *,
+  .aca-motion {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 9999px; }

@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight, Check, Cloud, Code2, Database, FileCode, Lock,
-  MessageCircle, Menu, ShieldCheck, Sparkles, X,
+  MessageCircle, Menu, Moon, ShieldCheck, Sparkles, Sun, X,
 } from 'lucide-react';
 import { SECTIONS } from '../nav';
+import { useTheme } from '../store/useTheme';
 
 /**
  * The public front door.
@@ -157,7 +158,7 @@ function ProductMock() {
   const bars = [38, 62, 45, 78, 55, 88, 70, 96, 64, 82, 58, 91];
 
   return (
-    <div className="relative rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-2xl shadow-blue-950/40 backdrop-blur-xl sm:p-5">
+    <div className="relative rounded-2xl border border-slate-800 bg-slate-900/90 p-4 elevated-xl backdrop-blur-xl sm:p-5">
       <div className="mb-4 flex items-center gap-2">
         <span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" />
         <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
@@ -176,7 +177,7 @@ function ProductMock() {
                 className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400"
                 style={{
                   width: `${[72, 48, 33][i]}%`,
-                  animation: `acaGrow .9s cubic-bezier(.22,1,.36,1) ${200 + i * 120}ms both`,
+                  animation: `aca-grow .9s cubic-bezier(.22,1,.36,1) ${200 + i * 120}ms both`,
                 }}
               />
             </div>
@@ -191,7 +192,7 @@ function ProductMock() {
             className="flex-1 rounded-t bg-gradient-to-t from-blue-600/40 to-cyan-400/80"
             style={{
               height: `${h}%`,
-              animation: `acaRise .8s cubic-bezier(.22,1,.36,1) ${i * 55}ms both`,
+              animation: `aca-rise .8s cubic-bezier(.22,1,.36,1) ${i * 55}ms both`,
             }}
           />
         ))}
@@ -211,6 +212,8 @@ export default function Landing() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const theme = useTheme((s) => s.theme);
+  const toggleTheme = useTheme((s) => s.toggleTheme);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);
@@ -221,23 +224,21 @@ export default function Landing() {
 
   const signIn = () => navigate('/login');
 
+  const themeToggle = (
+    <button
+      onClick={toggleTheme}
+      aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 text-slate-400 transition-colors hover:border-slate-700 hover:text-slate-200"
+    >
+      {theme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+    </button>
+  );
+
   return (
-    <div className="min-h-screen scroll-smooth bg-slate-950 text-white">
+    <div className="aca-motion min-h-screen scroll-smooth bg-slate-950 text-white">
       <style>{`
-        @keyframes acaRise { from { height: 0; opacity: 0 } }
-        @keyframes acaGrow { from { width: 0 } }
-        @keyframes acaFloat {
-          0%, 100% { transform: translateY(0) }
-          50% { transform: translateY(-14px) }
-        }
-        @keyframes acaDrift {
-          0%, 100% { transform: translate3d(0,0,0) scale(1) }
-          50% { transform: translate3d(24px,-18px,0) scale(1.08) }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          * { animation: none !important; transition: none !important; }
-          html { scroll-behavior: auto; }
-        }
+        @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
       `}</style>
 
       {/* --- header ------------------------------------------------ */}
@@ -267,6 +268,7 @@ export default function Landing() {
           </nav>
 
           <div className="flex items-center gap-2">
+            {themeToggle}
             <button
               onClick={signIn}
               className="hidden rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold transition hover:bg-blue-500 sm:block"
@@ -310,15 +312,14 @@ export default function Landing() {
       <section id="top" className="relative overflow-hidden px-5 pb-20 pt-28 sm:px-8 sm:pt-36">
         <div
           className="pointer-events-none absolute -left-40 -top-40 h-[34rem] w-[34rem] rounded-full bg-blue-600/20 blur-3xl"
-          style={{ animation: 'acaDrift 18s ease-in-out infinite' }}
+          style={{ animation: 'aca-drift 18s ease-in-out infinite' }}
         />
         <div
           className="pointer-events-none absolute -right-32 top-32 h-[28rem] w-[28rem] rounded-full bg-cyan-400/10 blur-3xl"
-          style={{ animation: 'acaDrift 22s ease-in-out infinite reverse' }}
+          style={{ animation: 'aca-drift 22s ease-in-out infinite reverse' }}
         />
 
-        <div className="relative mx-auto grid max-w-6xl items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">
-          <Reveal>
+        <div className="relative mx-auto grid max-w-6xl items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">          <Reveal>
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3.5 py-1.5 text-xs font-medium text-blue-300">
               <ShieldCheck className="h-3.5 w-3.5" />
               Read-only by default · Microsoft Entra sign-in
@@ -326,9 +327,7 @@ export default function Landing() {
 
             <h1 className="mt-6 text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
               Know what Azure is costing you,
-              <span className="bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
-                {' '}and why it moved.
-              </span>
+              <span className="aca-accent-text"> and why it moved.</span>
             </h1>
 
             <p className="mt-6 max-w-xl text-base leading-7 text-slate-400">
@@ -359,7 +358,7 @@ export default function Landing() {
           </Reveal>
 
           <Reveal delay={140}>
-            <div style={{ animation: 'acaFloat 7s ease-in-out infinite' }}>
+            <div style={{ animation: 'aca-float 7s ease-in-out infinite' }}>
               <ProductMock />
             </div>
           </Reveal>
@@ -367,7 +366,7 @@ export default function Landing() {
       </section>
 
       {/* --- features --------------------------------------------- */}
-      <section id="features" className="border-t border-slate-900 scroll-mt-16 px-5 py-24 sm:px-8">
+      <section id="features" className="border-t border-slate-800 scroll-mt-16 px-5 py-24 sm:px-8">
         <div className="mx-auto max-w-6xl">
           <Reveal>
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -398,7 +397,7 @@ export default function Landing() {
                     .map((item) => (
                       <div
                         key={item.to}
-                        className="group rounded-2xl border border-slate-800 bg-slate-900/40 p-5 transition-colors hover:border-slate-700 hover:bg-slate-900/70"
+                        className="group rounded-2xl border border-slate-800 bg-slate-900/70 p-5 transition-colors hover:border-slate-700 hover:bg-slate-900/70"
                       >
                         <item.icon className="h-5 w-5 text-slate-500 transition-colors group-hover:text-blue-400" />
                         <p className="mt-3.5 text-sm font-semibold">{item.label}</p>
@@ -413,7 +412,7 @@ export default function Landing() {
       </section>
 
       {/* --- how it works ----------------------------------------- */}
-      <section id="how" className="border-t border-slate-900 scroll-mt-16 px-5 py-24 sm:px-8">
+      <section id="how" className="border-t border-slate-800 scroll-mt-16 px-5 py-24 sm:px-8">
         <div className="mx-auto max-w-6xl">
           <Reveal>
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -428,7 +427,7 @@ export default function Landing() {
           <div className="mt-14 grid gap-5 md:grid-cols-3">
             {STEPS.map((step, i) => (
               <Reveal key={step.title} delay={i * 90}>
-                <div className="h-full rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
+                <div className="h-full rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600/15 text-sm font-bold text-blue-300">
                     {i + 1}
                   </span>
@@ -442,7 +441,7 @@ export default function Landing() {
       </section>
 
       {/* --- assistants ------------------------------------------- */}
-      <section id="assistants" className="border-t border-slate-900 scroll-mt-16 px-5 py-24 sm:px-8">
+      <section id="assistants" className="border-t border-slate-800 scroll-mt-16 px-5 py-24 sm:px-8">
         <div className="mx-auto max-w-6xl">
           <Reveal>
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -457,7 +456,7 @@ export default function Landing() {
 
           <div className="mt-12 grid gap-5 lg:grid-cols-2">
             <Reveal>
-              <div className="h-full rounded-2xl border border-slate-800 bg-slate-900/40 p-7">
+              <div className="h-full rounded-2xl border border-slate-800 bg-slate-900/70 p-7">
                 <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-sky-600/15 text-sky-300">
                   <MessageCircle className="h-5 w-5" />
                 </span>
@@ -483,7 +482,7 @@ export default function Landing() {
             </Reveal>
 
             <Reveal delay={90}>
-              <div className="h-full rounded-2xl border border-slate-800 bg-slate-900/40 p-7">
+              <div className="h-full rounded-2xl border border-slate-800 bg-slate-900/70 p-7">
                 <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600/15 text-violet-300">
                   <FileCode className="h-5 w-5" />
                 </span>
@@ -512,7 +511,7 @@ export default function Landing() {
       </section>
 
       {/* --- security --------------------------------------------- */}
-      <section id="security" className="border-t border-slate-900 scroll-mt-16 px-5 py-24 sm:px-8">
+      <section id="security" className="border-t border-slate-800 scroll-mt-16 px-5 py-24 sm:px-8">
         <div className="mx-auto max-w-6xl">
           <Reveal>
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -527,7 +526,7 @@ export default function Landing() {
           <div className="mt-12 grid gap-5 md:grid-cols-2">
             {SECURITY.map((s, i) => (
               <Reveal key={s.title} delay={i * 70}>
-                <div className="h-full rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
+                <div className="h-full rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
                     <s.icon className="h-5 w-5" />
                   </span>
@@ -541,7 +540,7 @@ export default function Landing() {
       </section>
 
       {/* --- faq --------------------------------------------------- */}
-      <section id="faq" className="border-t border-slate-900 scroll-mt-16 px-5 py-24 sm:px-8">
+      <section id="faq" className="border-t border-slate-800 scroll-mt-16 px-5 py-24 sm:px-8">
         <div className="mx-auto max-w-3xl">
           <Reveal>
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -575,7 +574,7 @@ export default function Landing() {
           <div className="relative mx-auto max-w-6xl overflow-hidden rounded-3xl border border-blue-500/20 bg-gradient-to-br from-blue-600/15 via-slate-900 to-slate-900 px-7 py-16 text-center sm:px-12">
             <div
               className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl"
-              style={{ animation: 'acaDrift 20s ease-in-out infinite' }}
+              style={{ animation: 'aca-drift 20s ease-in-out infinite' }}
             />
             <h2 className="relative text-3xl font-semibold tracking-tight sm:text-4xl">
               See your own numbers
@@ -596,7 +595,7 @@ export default function Landing() {
       </section>
 
       {/* --- footer ------------------------------------------------ */}
-      <footer className="border-t border-slate-900 px-5 py-10 sm:px-8">
+      <footer className="border-t border-slate-800 px-5 py-10 sm:px-8">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-5 sm:flex-row">
           <div className="flex items-center gap-2.5">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">

@@ -1,7 +1,7 @@
 import { MsalProvider, useMsal, useIsAuthenticated } from '@azure/msal-react';
 import { InteractionStatus } from '@azure/msal-browser';
 import { useEffect, useState } from 'react';
-import { ArrowRight, Building2, CheckCircle2, Cloud, Moon, ShieldCheck, Sun } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Building2, CheckCircle2, Cloud, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { msalInstance, loginRequest, managementRequest } from './msalConfig';
 import { useTheme } from '../store/useTheme';
 
@@ -149,19 +149,41 @@ export function LoginScreen() {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 px-6 py-8 text-white sm:px-10">
-      <div className="pointer-events-none absolute -left-32 -top-40 h-[32rem] w-[32rem] rounded-full bg-blue-600/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-48 -right-20 h-[30rem] w-[30rem] rounded-full bg-cyan-400/10 blur-3xl" />
+    <div className="aca-motion relative min-h-screen overflow-hidden bg-slate-950 px-6 py-8 text-white sm:px-10">
+      <div
+        className="pointer-events-none absolute -left-32 -top-40 h-[32rem] w-[32rem] rounded-full bg-blue-600/20 blur-3xl"
+        style={{ animation: 'aca-drift 18s ease-in-out infinite' }}
+      />
+      <div
+        className="pointer-events-none absolute -bottom-48 -right-20 h-[30rem] w-[30rem] rounded-full bg-cyan-400/10 blur-3xl"
+        style={{ animation: 'aca-drift 22s ease-in-out infinite reverse' }}
+      />
+
+      {/* Somebody who arrived here by mistake, or who wants to know what this
+          is before handing over an account, needs a way back that is not the
+          browser button. */}
+      <a
+        href="/"
+        className="absolute left-5 top-5 z-10 inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2 text-xs font-medium text-slate-400 backdrop-blur transition-colors hover:text-slate-200"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back
+      </a>
+
       <button
         onClick={toggleTheme}
         aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        className="absolute right-5 top-5 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/80 text-slate-300 transition-colors hover:bg-slate-800"
+        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        className="absolute right-5 top-5 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900/70 text-slate-300 backdrop-blur transition-colors hover:bg-slate-800"
       >
         {theme === 'dark' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
       </button>
 
       <div className="relative mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center justify-center">
-        <div className="grid w-full overflow-hidden rounded-[2rem] border border-slate-800 bg-slate-900/75 shadow-2xl shadow-blue-950/30 backdrop-blur-xl lg:grid-cols-[1.05fr_0.95fr]">
+        <div
+          className="grid w-full overflow-hidden rounded-[2rem] border border-slate-800 bg-slate-900/75 elevated-xl backdrop-blur-xl lg:grid-cols-[1.05fr_0.95fr]"
+          style={{ animation: 'aca-enter .7s cubic-bezier(.22,1,.36,1) both' }}
+        >
           <div className="hidden flex-col justify-between bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-900 p-10 lg:flex">
             <div>
               <div className="mb-16 flex items-center gap-3 text-sm font-semibold tracking-wide text-blue-100">
@@ -172,9 +194,15 @@ export function LoginScreen() {
               <p className="max-w-sm text-sm leading-6 text-blue-100/80">Understand spend, spot anomalies, and move faster across every Azure tenant.</p>
             </div>
             <div className="space-y-4 text-sm text-blue-100/90">
-              <p className="flex items-center gap-3"><CheckCircle2 className="h-4 w-4" /> Multi-tenant visibility</p>
-              <p className="flex items-center gap-3"><CheckCircle2 className="h-4 w-4" /> Intelligent cost insights</p>
-              <p className="flex items-center gap-3"><CheckCircle2 className="h-4 w-4" /> Secure Microsoft sign-in</p>
+              {['Multi-tenant visibility', 'Intelligent cost insights', 'Secure Microsoft sign-in'].map((t, i) => (
+                <p
+                  key={t}
+                  className="flex items-center gap-3"
+                  style={{ animation: `aca-enter .6s cubic-bezier(.22,1,.36,1) ${260 + i * 110}ms both` }}
+                >
+                  <CheckCircle2 className="h-4 w-4" /> {t}
+                </p>
+              ))}
             </div>
           </div>
 
