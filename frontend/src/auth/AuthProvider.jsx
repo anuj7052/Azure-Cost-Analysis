@@ -1,7 +1,7 @@
 import { MsalProvider, useMsal, useIsAuthenticated } from '@azure/msal-react';
 import { InteractionStatus } from '@azure/msal-browser';
 import { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, Building2, CheckCircle2, Cloud, Lock, Moon, ShieldCheck, Sun } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, Cloud, Lock, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { msalInstance, loginRequest, managementRequest } from './msalConfig';
 import { useTheme } from '../store/useTheme';
 
@@ -193,13 +193,17 @@ export function LoginScreen() {
   const { instance } = useMsal();
   const theme = useTheme(s => s.theme);
   const toggleTheme = useTheme(s => s.toggleTheme);
-  const [tenant, setTenant] = useState(() => localStorage.getItem('azure-login-tenant') || '');
 
-  const submit = (event) => {
-    event.preventDefault();
-    localStorage.setItem('azure-login-tenant', tenant.trim());
-    login(tenant);
-  };
+  /**
+   * There is no email or tenant box here on purpose.
+   *
+   * Whatever someone types into it, Microsoft asks them again on the next
+   * screen -- so the field only ever added a step, and a chance to mistype a
+   * directory name and land on an error they cannot read. `login('')` falls
+   * through to the multi-tenant authority with the account chooser, which is
+   * the same outcome the field was trying to produce.
+   */
+  const signIn = () => login('');
 
   /**
    * Registering is a different intent to signing in: the person is here to
@@ -208,9 +212,8 @@ export function LoginScreen() {
    * chooser stops a stale session from silently logging the previous user in.
    */
   const register = () => {
-    localStorage.setItem('azure-login-tenant', tenant.trim());
     instance.clearCache();
-    login(tenant, { prompt: 'select_account' });
+    login('', { prompt: 'select_account' });
   };
 
   return (
@@ -319,42 +322,22 @@ export function LoginScreen() {
                 Sign in to your workspace
               </h1>
               <p className="mt-2.5 text-sm leading-6 text-slate-400">
-                Use the work account you already have. There is no separate password to remember.
+                Use the work account you already have. There is no separate password to remember,
+                and nothing to fill in here — Microsoft will ask which account you want.
               </p>
             </div>
 
-            <form onSubmit={submit}>
-              <label htmlFor="tenant" className="mb-2 block text-[13px] font-medium text-slate-300">
-                Work email or tenant
-                <span className="ml-1.5 font-normal text-slate-500">· optional</span>
-              </label>
-              <div className="group relative mb-3">
-                <Building2 className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500 transition-colors group-focus-within:text-blue-400" />
-                <input
-                  id="tenant"
-                  type="text"
-                  value={tenant}
-                  onChange={(event) => setTenant(event.target.value)}
-                  placeholder="you@company.com"
-                  autoComplete="username"
-                  className="h-14 w-full rounded-xl border border-slate-700 bg-slate-950/60 pl-12 pr-4 text-sm text-white outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15"
-                />
-              </div>
-              <p className="mb-7 text-xs leading-5 text-slate-500">
-                Leave it blank to pick from the accounts you are already signed in to.
-              </p>
-
-              <button
-                type="submit"
-                className="group flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-blue-600 font-semibold text-white elevated-lg transition hover:bg-blue-500"
-              >
-                <span className="flex h-5 w-5 items-center justify-center rounded bg-white/95">
-                  <MicrosoftMark className="h-3.5 w-3.5" />
-                </span>
-                Continue with Microsoft
-                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-              </button>
-            </form>
+            <button
+              type="button"
+              onClick={signIn}
+              className="group flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-blue-600 font-semibold text-white elevated-lg transition hover:bg-blue-500"
+            >
+              <span className="flex h-5 w-5 items-center justify-center rounded bg-white/95">
+                <MicrosoftMark className="h-3.5 w-3.5" />
+              </span>
+              Continue with Microsoft
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+            </button>
 
             <div className="my-7 flex items-center gap-3 text-xs text-slate-500">
               <span className="h-px flex-1 bg-slate-800" />
