@@ -1,13 +1,17 @@
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import { addTenant } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import Modal from '../Common/Modal';
+import PermissionsPanel from '../Common/PermissionsPanel';
 import toast from 'react-hot-toast';
+
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function AddTenantModal({ onClose }) {
   const [form, setForm] = useState({ tenant_id: '', tenant_name: '', client_id: '', client_secret: '' });
   const [saving, setSaving] = useState(false);
+  const [showPerms, setShowPerms] = useState(false);
   const addTenantToList = useAppStore(s => s.addTenantToList);
 
   const onChange = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -60,9 +64,32 @@ export default function AddTenantModal({ onClose }) {
         <Field label="Client ID (App / Service Principal)" value={form.client_id} onChange={v => onChange('client_id', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
         <Field label="Client Secret" value={form.client_secret} onChange={v => onChange('client_secret', v)} type="password" placeholder="Enter client secret" />
 
-        <p className="text-xs text-slate-500 bg-slate-800 rounded-lg p-3 leading-relaxed">
-          The service principal needs <span className="text-slate-300 font-medium">Reader</span> and <span className="text-slate-300 font-medium">Cost Management Reader</span> roles on the target subscriptions.
-        </p>
+        <div className="rounded-lg bg-slate-800 p-3">
+          <p className="text-xs leading-relaxed text-slate-500">
+            At minimum the service principal needs{' '}
+            <span className="font-medium text-slate-300">Reader</span> and{' '}
+            <span className="font-medium text-slate-300">Cost Management Reader</span>{' '}
+            on the target subscriptions. Several pages need more than that, and
+            the ones that change anything in Azure need more still.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowPerms(v => !v)}
+            className="mt-2 inline-flex items-center gap-1 text-xs text-blue-400 transition hover:text-blue-300"
+          >
+            {showPerms
+              ? <ChevronDown className="h-3.5 w-3.5" />
+              : <ChevronRight className="h-3.5 w-3.5" />}
+            {showPerms ? 'Hide the full list' : 'See the full list, and what each one unlocks'}
+          </button>
+        </div>
+
+        {showPerms && (
+          <PermissionsPanel
+            compact
+            tenantId={GUID.test(form.tenant_id.trim()) ? form.tenant_id.trim() : undefined}
+          />
+        )}
       </form>
     </Modal>
   );

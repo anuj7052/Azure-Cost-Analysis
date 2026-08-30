@@ -250,3 +250,144 @@ export function filtersFromParams(search) {
   }
   return out;
 }
+
+/* ---------------------------------------------------------------------------
+ * Choosing the period being analysed.
+ *
+ * The period lives in the global store (the Topbar date pill writes it), but a
+ * reader on this page is asking "did last month spike?" and should not have to
+ * discover that the answer is controlled by a header control two sections
+ * away. These helpers back an on-page picker that writes to the *same* store,
+ * so the two controls cannot disagree.
+ *
+ * Dates are assembled as strings rather than via `new Date('2026-08-01')`,
+ * which parses as UTC midnight and can land on the previous month once a
+ * local timezone west of UTC is applied — an off-by-one month on a billing
+ * page is not a cosmetic bug.
+ * ------------------------------------------------------------------------ */
+
+export const ROLLING_MONTHS = [3, 6, 12];
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+const pad = (n) => String(n).padStart(2, '0');
+
+/** Days in a month, honouring leap years. `month` is 1-based. */
+export function daysInMonth(year, month) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * The last `count` months, most recent first, as 'YYYY-MM'.
+ *
+ * `today` is injected so the list is testable; a helper that reads the clock
+ * internally can only be tested by mocking time.
+ */
+export function monthOptions(today = new Date(), count = 12) {
+  const out = [];
+  let year = today.getFullYear();
+  let month = today.getMonth() + 1; // 1-based
+  for (let i = 0; i < count; i += 1) {
+    out.push({ value: `${year}-${pad(month)}`, label: `${MONTH_NAMES[month - 1]} ${year}` });
+    month -= 1;
+    if (month === 0) { month = 12; year -= 1; }
+  }
+  return out;
+}
+
+/** 'YYYY-MM' -> the inclusive first and last day of that month. */
+export function monthBounds(value) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(value || ''));
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  return {
+    from: `${year}-${pad(month)}-01`,
+    to: `${year}-${pad(month)}-${pad(daysInMonth(year, month))}`,
+  };
+}
+
+/** The reverse: a from/to pair that spans exactly one whole month, or null. */
+export function monthOf(fromDate, toDate) {
+  const f = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(fromDate || ''));
+  if (!f || f[3] !== '01') return null;
+  const value = `${f[1]}-${f[2]}`;
+  const bounds = monthBounds(value);
+  // A range starting on the 1st but ending mid-month is a custom range, not a
+  // month — labelling it "August 2026" would overstate what is being compared.
+  return bounds && bounds.to === toDate ? value : null;
+}
+
+/**
+ * The value the on-page picker should show for the current store state.
+ *
+ * Returns `rolling:N`, `month:YYYY-MM`, or `custom` for a hand-picked range
+ * that is not a whole month. `custom` is reported rather than silently
+ * snapped to the nearest month so the picker never misdescribes the figures.
+ */
+export function periodValue(dateMode, months, fromDate, toDate) {
+  if (dateMode !== 'custom') return `rolling:${months}`;
+  const month = monthOf(fromDate, toDate);
+  return month ? `month:${month}` : 'custom';
+}
+
+/** Plain-language description of the same state, for the picker's summary. */
+export function periodLabel(dateMode, months, fromDate, toDate) {
+  const value = periodValue(dateMode, months, fromDate, toDate);
+  if (value.startsWith('rolling:')) {
+    const n = Number(value.slice(8));
+    return `Last ${n} months`;
+  }
+  if (value.startsWith('month:')) {
+    const opt = monthBounds(value.slice(6));
+    const [y, m] = value.slice(6).split('-');
+    return opt ? `${MONTH_NAMES[Number(m) - 1]} ${y}` : 'Custom range';
+  }
+  return fromDate && toDate ? `${fromDate} to ${toDate}` : 'Custom range';
+}
+
+/* ---------------------------------------------------------------------------
+ * A hand-picked from/to range.
+ *
+ * Validated before it is applied rather than after. An invalid range sent to
+ * Cost Management comes back either as an error the reader has to decode or,
+ * worse, as an empty result that looks like "no anomalies" — which is the one
+ * answer this page must never give by accident.
+ * ------------------------------------------------------------------------ */
+
+/** Today as 'YYYY-MM-DD' in the reader's own timezone, for the `max` attribute. */
+export function todayIso(today = new Date()) {
+  return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Why a from/to pair cannot be used, or null when it is fine.
+ *
+ * The message is what the reader sees, so it says what to do rather than
+ * naming the rule that failed.
+ */
+export function rangeError(fromDate, toDate, today = new Date()) {
+  if (!fromDate || !toDate) return 'Pick both a start and an end date.';
+  if (!ISO_DATE.test(fromDate) || !ISO_DATE.test(toDate)) return 'Use a valid date.';
+  if (fromDate > toDate) return 'The start date is after the end date.';
+  // Only the *start* has to be in the past. An end date beyond today is normal
+  // — picking the current month means asking for a month that is still
+  // running — and Azure simply returns data up to the last billed day, which
+  // the page already labels as a partial period. Rejecting it here would make
+  // the month presets fail their own validation.
+  if (fromDate > todayIso(today)) {
+    return 'The start date is in the future — there is no billing data yet.';
+  }
+  return null;
+}
+
+/** Whether a from/to pair is safe to apply. */
+export function rangeUsable(fromDate, toDate, today = new Date()) {
+  return rangeError(fromDate, toDate, today) === null;
+}

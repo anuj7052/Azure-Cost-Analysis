@@ -78,8 +78,7 @@ const QUICK_ACTIONS = [
   { to: '/advisor', label: 'Azure Advisor', icon: Lightbulb },
   { to: '/defender', label: 'Microsoft Defender', icon: Shield },
   { to: '/policy', label: 'Policy Governance', icon: ShieldCheck },
-  { to: '/access-optimization', label: 'Access Optimization', icon: Boxes },
-  { to: '/role-assignments', label: 'Role Assignments', icon: Users },
+  { to: '/access-identity', label: 'Access & Identity', icon: Boxes },
 ];
 
 const isNumLike = (v) => typeof v === 'number' && Number.isFinite(v);

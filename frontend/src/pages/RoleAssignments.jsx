@@ -454,7 +454,7 @@ export default function RoleAssignments() {
             Showing one account only, opened from an access finding.
           </p>
           <Link
-            to="/role-assignments"
+            to="/access-identity?view=assignments"
             className="text-xs font-medium text-blue-300 underline underline-offset-2"
           >
             Show all accounts

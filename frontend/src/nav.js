@@ -1,7 +1,7 @@
 import {
-  Activity, AlertTriangle, ClipboardList, Cpu, FileCode, FolderOpen, Gauge,
+  Activity, AlertTriangle, Boxes, ClipboardList, Cpu, FileCode, FolderOpen, Gauge,
   GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, Network,
-  Plug, Scale,
+  PiggyBank, Plug, Scale,
   Search, Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
   TrendingUp, UserCog, Users, Wallet,
 } from 'lucide-react';
@@ -45,6 +45,10 @@ export const SECTIONS = [
       {
         to: '/bandwidth', label: 'Bandwidth', icon: Network,
         blurb: 'Data transfer costs by resource, with the egress meters that caused them.',
+      },
+      {
+        to: '/commitments', label: 'Commitments', icon: PiggyBank,
+        blurb: 'Reservations and savings plans: how much of what you bought is being used, what lapses soon, and what Azure suggests buying.',
       },
       {
         to: '/boq', label: 'BOQ vs Actual', icon: ClipboardList,
@@ -91,6 +95,10 @@ export const SECTIONS = [
         to: '/resource-groups', label: 'Resource Groups', icon: FolderOpen,
         blurb: 'Spend by resource group, for chargeback and ownership questions.',
       },
+      {
+        to: '/provision', label: 'Build', icon: Boxes,
+        blurb: 'Create a VM, storage account, virtual network or web app from a form, in one deployment.',
+      },
     ],
   },
   {
@@ -105,12 +113,8 @@ export const SECTIONS = [
         blurb: 'Everything in this section, and what each page is for.',
       },
       {
-        to: '/access-optimization', label: 'Access Optimization', icon: KeyRound,
-        blurb: 'Access that looks unused, stale, over-privileged or duplicated \u2014 each with the evidence behind it.',
-      },
-      {
-        to: '/role-assignments', label: 'Role Assignments', icon: UserCog,
-        blurb: 'Start from a person and see every resource they can reach, ranked by risk.',
+        to: '/access-identity', label: 'Access & Identity', icon: KeyRound,
+        blurb: 'Grants that look unused, stale, over-privileged or duplicated \u2014 and, for any account, everything it can reach.',
       },
       {
         to: '/advisor', label: 'Azure Advisor', icon: Lightbulb,
@@ -123,6 +127,10 @@ export const SECTIONS = [
       {
         to: '/policy', label: 'Policy Governance', icon: Scale,
         blurb: 'Compliance, policy assignments and exemption expiry, tracked scan over scan.',
+      },
+      {
+        to: '/network', label: 'Network Visualizer', icon: Network,
+        blurb: 'Virtual networks, peerings, gateways and the security groups and route tables attached to each subnet.',
       },
     ],
   },

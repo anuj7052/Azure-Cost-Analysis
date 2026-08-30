@@ -883,7 +883,7 @@ export function securitySnapshot({ defender, policy, advisor, access, roles } = 
     {
       key: 'access',
       title: 'Access optimisation',
-      to: '/access-optimization',
+      to: '/access-identity?view=optimization',
       state: access ? 'loaded' : 'not_loaded',
       // Access findings carry their own severity axis, not Defender's.
       counts: null,
@@ -900,7 +900,7 @@ export function securitySnapshot({ defender, policy, advisor, access, roles } = 
     {
       key: 'roles',
       title: 'Role assignments',
-      to: '/role-assignments',
+      to: '/access-identity?view=assignments',
       state: roles ? 'loaded' : 'not_loaded',
       counts: null,
       rbac: roles?.totals
@@ -1358,7 +1358,7 @@ export function attentionFindings({
       impact: null,
       impactLabel: NO_COST,
       action: 'Review whether this grant is still needed',
-      to: '/access-optimization',
+      to: '/access-identity?view=optimization',
       cta: 'Open Access Optimization',
     });
   }

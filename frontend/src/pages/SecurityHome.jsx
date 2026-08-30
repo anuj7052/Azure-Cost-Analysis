@@ -44,7 +44,7 @@ const SNAPSHOT_SOURCES = [
   { kind: 'advisor', label: 'Advisor', icon: Lightbulb, to: '/advisor' },
   { kind: 'defender', label: 'Defender', icon: ShieldAlert, to: '/defender' },
   { kind: 'policy', label: 'Policy', icon: Scale, to: '/policy' },
-  { kind: 'rbac', label: 'Role assignments', icon: ShieldCheck, to: '/role-assignments' },
+  { kind: 'rbac', label: 'Role assignments', icon: ShieldCheck, to: '/access-identity?view=assignments' },
 ];
 
 const SEVERITY_STYLE = {

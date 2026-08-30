@@ -17,6 +17,7 @@ const Compare        = lazy(() => import('./pages/Compare'));
 const Anomalies      = lazy(() => import('./pages/Anomalies'));
 const Settings       = lazy(() => import('./pages/Settings'));
 const ResourceGroups = lazy(() => import('./pages/ResourceGroups'));
+const Provision = lazy(() => import('./pages/Provision'));
 const Orphaned       = lazy(() => import('./pages/Orphaned'));
 const Compute        = lazy(() => import('./pages/Compute'));
 const GlobalSearch   = lazy(() => import('./pages/GlobalSearch'));
@@ -24,11 +25,12 @@ const Changes        = lazy(() => import('./pages/Changes'));
 const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
 const Bandwidth      = lazy(() => import('./pages/Bandwidth'));
 const Boq            = lazy(() => import('./pages/Boq'));
+const Commitments    = lazy(() => import('./pages/Commitments'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
 const Admin          = lazy(() => import('./pages/Admin'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
-const AccessOptimization = lazy(() => import('./pages/AccessOptimization'));
-const RoleAssignments    = lazy(() => import('./pages/RoleAssignments'));
+const AccessIdentity     = lazy(() => import('./pages/AccessIdentity'));
+const NetworkVisualizer  = lazy(() => import('./pages/NetworkVisualizer'));
 const AccessHistory      = lazy(() => import('./pages/AccessHistory'));
 const Advisor            = lazy(() => import('./pages/Advisor'));
 const Defender           = lazy(() => import('./pages/Defender'));
@@ -41,6 +43,20 @@ const Team               = lazy(() => import('./pages/Team'));
 // Kept out of the authenticated bundle: it is the one page that is only ever
 // seen by people who have not signed in.
 const Landing            = lazy(() => import('./pages/Landing'));
+
+/**
+ * Send an old access URL to the merged page, keeping whatever it was pointing at.
+ *
+ * A bare `<Navigate>` would drop the query string, which is where the
+ * interesting part of these links lives: `?principal=<id>` is the whole reason
+ * somebody was sent the link in the first place.
+ */
+function LegacyAccessRedirect({ view }) {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  params.set('view', view);
+  return <Navigate to={`/access-identity?${params}`} replace />;
+}
 
 const PageLoader = () => (
   <div className="flex h-[60vh] items-center justify-center">
@@ -158,6 +174,7 @@ function AppShell() {
             <Route path="/compare" element={<Compare />} />
             <Route path="/anomalies" element={<Anomalies />} />
             <Route path="/resource-groups" element={<ResourceGroups />} />
+            <Route path="/provision" element={<Provision />} />
             <Route path="/orphaned" element={<Orphaned />} />
             <Route path="/compute" element={<Compute />} />
             <Route path="/search" element={<GlobalSearch />} />
@@ -165,13 +182,22 @@ function AppShell() {
             <Route path="/activity" element={<ActivityLog />} />
             <Route path="/bandwidth" element={<Bandwidth />} />
             <Route path="/boq" element={<Boq />} />
+            <Route path="/commitments" element={<Commitments />} />
             <Route path="/deploy" element={<Deploy />} />
               <Route path="/estate" element={<Estate />} />
               <Route path="/security" element={<SecurityHome />} />
               <Route path="/account" element={<AccountHome />} />
               <Route path="/apis" element={<ApiCatalog />} />
-              <Route path="/access-optimization" element={<AccessOptimization />} />
-              <Route path="/role-assignments" element={<RoleAssignments />} />
+              <Route path="/access-identity" element={<AccessIdentity />} />
+              <Route path="/network" element={<NetworkVisualizer />} />
+              {/* The two pages these paths used to serve are now tabs. The
+                  redirects stay because links to them exist outside this app --
+                  in bookmarks, in tickets, in messages -- and those should not
+                  break just because the navigation was reorganised. The query
+                  string is preserved so `?principal=...` still lands on the
+                  right account. */}
+              <Route path="/access-optimization" element={<LegacyAccessRedirect view="optimization" />} />
+              <Route path="/role-assignments" element={<LegacyAccessRedirect view="assignments" />} />
               <Route path="/access-history" element={<AccessHistory />} />
               <Route path="/advisor" element={<Advisor />} />
               <Route path="/defender" element={<Defender />} />

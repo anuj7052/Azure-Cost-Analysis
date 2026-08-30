@@ -32,8 +32,8 @@ export const SOURCE = {
 
 /** The six modules, in navigation order, with the routes findings link to. */
 export const MODULE_ROUTE = {
-  access: '/access-optimization',
-  rbac: '/role-assignments',
+  access: '/access-identity?view=optimization',
+  rbac: '/access-identity?view=assignments',
   advisor: '/advisor',
   defender: '/defender',
   policy: '/policy',

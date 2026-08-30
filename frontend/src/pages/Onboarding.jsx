@@ -5,8 +5,9 @@ import {
   Building2, Fingerprint, Lock, ExternalLink, LogOut,
 } from 'lucide-react';
 import { addTenant, downloadSetupGuide } from '../api/client';
-import { useLogin } from '../auth/AuthProvider';
+import { useLogin } from '../auth/hooks';
 import { useAppStore } from '../store/useAppStore';
+import PermissionsPanel from '../components/Common/PermissionsPanel';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -20,8 +21,8 @@ const STEPS = [
     body: 'Under Certificates & secrets, add a secret and copy its Value — not the Secret ID. It is shown only once.',
   },
   {
-    title: 'Grant read-only access',
-    body: 'On each subscription, assign the Reader and Cost Management Reader roles to that application.',
+    title: 'Assign the roles you are comfortable with',
+    body: 'On each subscription, assign at least Reader and Cost Management Reader. The full list, and what each one unlocks, is below.',
   },
   {
     title: 'Paste the details here',
@@ -171,7 +172,7 @@ export default function Onboarding() {
           <div>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-medium mb-4">
               <ShieldCheck className="w-3.5 h-3.5" />
-              Read-only access
+              Read-only unless you grant more
             </span>
 
             <h1 className="text-3xl sm:text-4xl font-semibold text-white leading-tight">
@@ -225,6 +226,10 @@ export default function Onboarding() {
               Not the person who administers Azure? Send them the PDF — it contains everything
               they need and nothing specific to your account.
             </p>
+
+            <div className="mt-10">
+              <PermissionsPanel />
+            </div>
           </div>
 
           {/* ── Right: the form ── */}

@@ -6,7 +6,8 @@ import HeroCard from '../components/Cards/HeroCard';
 import DataQuality from '../components/Common/DataQuality';
 import PricingSection from '../components/Cards/PricingSection';
 import DetailPanel, { DetailStat } from '../components/Common/DetailPanel';
-import PortalGuide, { COST_GUIDE } from '../components/Common/PortalGuide';
+import PortalGuide from '../components/Common/PortalGuide';
+import { COST_GUIDE } from '../components/Common/portalGuides';
 import AnomalyCard from '../components/Cards/AnomalyCard';
 import CostTrendChart from '../components/Charts/CostTrendChart';
 import ServicePieChart from '../components/Charts/ServicePieChart';
@@ -23,11 +24,38 @@ export default function Dashboard() {
     subscriptions,
     bandwidthData: bw, bandwidthLoading: bwLoading, loadBandwidth,
     pricingData, pricingLoading, pricingError, loadPricing,
+    computeData, computeLoading, loadCompute,
+    orphanedData, orphanedLoading, loadOrphaned,
+    activityData, activityLoading, activityError, loadActivity,
     imported, boqs,
   } = useAppStore();
 
   const navigate = useNavigate();
   const [detail, setDetail] = useState(null);
+
+  // The savings and activity panels are not loaded with the page.
+  //
+  // Between them they are the three most expensive calls in the app: /compute
+  // alone fans out to Resource Graph, Cost Management, Azure Monitor and Retail
+  // Prices, at roughly two Monitor requests per virtual machine. Firing them on
+  // every dashboard visit tripled the Azure traffic of the page people open
+  // first, and Monitor throttles — so the cost of the tile was paid by the
+  // Compute page, which then had to report "Not enough data".
+  //
+  // They still appear immediately when the store already holds an answer,
+  // which it does after visiting those pages or from the cache on this device.
+  // Otherwise they are one click away, and the click is the person saying the
+  // findings are worth the wait.
+  const haveExtras = Boolean(computeData || orphanedData || activityData);
+  const loadingExtras = computeLoading || orphanedLoading || activityLoading;
+  const loadExtras = () => {
+    // Sequential, heaviest last, for the same reason the page's own loads are
+    // staged: three fan-outs at once is what gets a tenant throttled.
+    (async () => {
+      await Promise.allSettled([loadOrphaned(), loadActivity()]);
+      await loadCompute();
+    })();
+  };
 
   useEffect(() => {
     if (!(imported || (selectedTenantId && selectedSubscriptionIds.length > 0))) return undefined;
@@ -92,6 +120,66 @@ export default function Dashboard() {
   // comparing a part-month to a whole one.
   const currentMonthKey = new Date().toISOString().slice(0, 7);
   const latestIsPartial = Boolean(latest) && latest.month.startsWith(currentMonthKey);
+
+  // ── Savings opportunities ────────────────────────────────────────────────
+  // Assembled from two endpoints that already exist rather than a new one, and
+  // deliberately not summed into a single headline figure. A right-sizing
+  // saving is modelled from thirty days of telemetry; an orphaned resource's
+  // figure is what Azure has already charged for something nothing is attached
+  // to. Adding them together would present a forecast and a fact as one number.
+  const savingsGroups = useMemo(() => {
+    const groups = [];
+    const vms = computeData?.vms || [];
+    const buckets = [
+      ['IDLE', 'Idle VMs', 'idle'],
+      ['OVERSIZED', 'Right-size VMs', 'can be downsized'],
+      ['DEALLOCATE', 'Stopped but billing', 'stopped and still billing'],
+    ];
+    for (const [status, title, phrase] of buckets) {
+      const rows = vms.filter(v => v.right_sizing?.status === status);
+      if (!rows.length) continue;
+      const priced = rows.filter(v => typeof v.savings?.monthly === 'number');
+      groups.push({
+        key: status,
+        title,
+        detail: `${rows.length} ${rows.length === 1 ? 'machine' : 'machines'} ${phrase}`,
+        // null rather than 0. A machine whose replacement size Azure would not
+        // quote has an unknown saving, not an absent one, and a zero here would
+        // read as "nothing to gain".
+        monthly: priced.length ? priced.reduce((s, v) => s + v.savings.monthly, 0) : null,
+        unpriced: rows.length - priced.length,
+        to: '/compute',
+      });
+    }
+    for (const c of orphanedData?.categories || []) {
+      if (!c.count) continue;
+      groups.push({
+        key: c.key,
+        title: c.title,
+        detail: `${c.count} found · ${c.severity === 'certain' ? 'certainly unused' : 'likely unused'}`,
+        monthly: typeof c.monthly_cost === 'number' ? c.monthly_cost : null,
+        unpriced: 0,
+        to: '/orphaned',
+      });
+    }
+    return groups.sort((a, b) => (b.monthly ?? -1) - (a.monthly ?? -1));
+  }, [computeData, orphanedData]);
+
+  // Savings rolled up per subscription. Neither endpoint returns this, so it is
+  // summed here from rows that each carry their own subscription_id — derived
+  // from real figures, not estimated.
+  const savingsBySub = useMemo(() => {
+    const out = {};
+    const add = (id, amount) => {
+      if (!id || typeof amount !== 'number') return;
+      out[id] = (out[id] || 0) + amount;
+    };
+    for (const v of computeData?.vms || []) add(v.subscription_id, v.savings?.monthly);
+    for (const c of orphanedData?.categories || []) {
+      for (const it of c.items || []) add(it.subscription_id, it.monthly_cost);
+    }
+    return out;
+  }, [computeData, orphanedData]);
 
   /** Every hero tile declares how its drill-down renders. */
   const HEROES = useMemo(() => ({
@@ -417,28 +505,93 @@ export default function Dashboard() {
         });
         const entries = Object.entries(subTotals).sort((a, b) => b[1] - a[1]);
         if (!entries.length) return null;
+        const lastMonth = latest?.by_subscription || {};
+        const prevMonth = previous?.by_subscription || {};
+        // Only claim a month-over-month move when there is a previous month to
+        // move from. A subscription that first appears this month has no
+        // change; showing +100% would invent a trend out of a single point.
+        const changeFor = (id) => {
+          const now = lastMonth[id];
+          const before = prevMonth[id];
+          if (typeof now !== 'number' || typeof before !== 'number' || before === 0) return null;
+          return ((now - before) / before) * 100;
+        };
+        // Savings arrive from two slower endpoints. Until they land, the column
+        // says so rather than showing a dash that reads as "nothing to save".
+        const savingsPending = computeLoading || orphanedLoading;
         return (
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-            <h2 className="text-sm font-semibold text-slate-300 mb-1">Cost by Subscription</h2>
-            <p className="text-xs text-slate-500 mb-4">Total spend per subscription over the {periodLong}</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {entries.map(([subId, cost]) => {
-                const name = subMap[subId] || subId;
-                const pct  = costData.total_6m > 0 ? (cost / costData.total_6m * 100).toFixed(1) : 0;
-                return (
-                  <div key={subId} className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-                    <p className="text-xs text-slate-400 truncate mb-2" title={name}>{name}</p>
-                    <p className="text-xl font-bold text-white">{fmt(cost)}</p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <div className="flex-1 bg-slate-700 rounded-full h-1.5">
-                        <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="text-xs text-slate-400">{pct}%</span>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex items-center justify-between gap-3 mb-1">
+              <h2 className="text-sm font-semibold text-slate-300">Subscription Summary</h2>
+              <span className="text-xs text-slate-500">
+                {entries.length} of {subscriptions?.length || entries.length} subscriptions
+              </span>
             </div>
+            <p className="text-xs text-slate-500 mb-4">Spend per subscription over the {periodLong}</p>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[46rem] text-sm">
+                <thead>
+                  <tr className="text-left text-slate-500 border-b border-slate-800">
+                    <th className="pb-2 font-medium">Subscription</th>
+                    <th className="pb-2 font-medium text-right">Total Cost</th>
+                    <th className="pb-2 font-medium text-right">Share</th>
+                    <th className="pb-2 font-medium text-right">Latest Month</th>
+                    <th className="pb-2 font-medium text-right">Cost Change</th>
+                    <th className="pb-2 font-medium text-right">Savings Potential</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map(([subId, cost]) => {
+                    const name = subMap[subId] || subId;
+                    const pct = costData.total_6m > 0 ? (cost / costData.total_6m * 100) : 0;
+                    const change = changeFor(subId);
+                    const saving = savingsBySub[subId];
+                    return (
+                      <tr key={subId} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                        <td className="py-3 text-slate-200 max-w-[16rem] truncate" title={name}>{name}</td>
+                        <td className="py-3 text-right text-white font-medium">
+                          <Amount value={cost} currency={currency} />
+                        </td>
+                        <td className="py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-16 bg-slate-700 rounded-full h-1.5">
+                              <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="text-xs text-slate-400 tabular-nums w-10 text-right">
+                              {pct.toFixed(1)}%
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 text-right text-slate-300">
+                          {typeof lastMonth[subId] === 'number'
+                            ? <Amount value={lastMonth[subId]} currency={currency} />
+                            : <span className="text-slate-500">—</span>}
+                        </td>
+                        <td className="py-3 text-right">
+                          {change == null ? <span className="text-slate-500">—</span> : (
+                            <span className={`font-semibold ${change > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                              {change > 0 ? '▲' : '▼'} {Math.abs(change).toFixed(1)}%
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 text-right">
+                          {typeof saving === 'number'
+                            ? <span className="text-emerald-400 font-medium">{fmt(saving)} /mo</span>
+                            : <span className="text-slate-500 text-xs">
+                                {savingsPending ? 'Checking…' : haveExtras ? 'Not available' : 'Not loaded'}
+                              </span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-slate-600 mt-3">
+              Savings potential is this subscription&rsquo;s share of the right-sizing and unused-resource
+              findings. Azure does not report a resource count or a health score per subscription,
+              so neither is shown.
+            </p>
           </div>
         );
       })()}
@@ -499,6 +652,128 @@ export default function Dashboard() {
         </div>
       )}
 
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div className="flex items-center justify-between gap-3 mb-1">
+            <h2 className="text-sm font-semibold text-slate-300">Savings Opportunities</h2>
+            <button
+              type="button"
+              onClick={() => navigate('/compute')}
+              className="text-xs text-blue-400 hover:text-blue-300"
+            >
+              View all →
+            </button>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">
+            Right-sizing findings and resources nothing is attached to
+          </p>
+          {(computeLoading || orphanedLoading) && !savingsGroups.length ? (
+            <div className="space-y-2">
+              {[...Array(3)].map((_, i) => <div key={i} className="h-14 bg-slate-800 rounded-xl animate-pulse" />)}
+            </div>
+          ) : !haveExtras ? (
+            <NotLoadedYet
+              onLoad={loadExtras}
+              busy={loadingExtras}
+              label="Find savings"
+              note="Reads your VMs' utilization and looks for unattached resources. Several Azure queries, so it is not run automatically."
+            />
+          ) : !savingsGroups.length ? (
+            <p className="text-slate-500 text-sm text-center py-6">
+              Nothing found to reclaim in the selected subscriptions.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {savingsGroups.slice(0, 5).map(g => (
+                <button
+                  key={g.key}
+                  type="button"
+                  onClick={() => navigate(g.to)}
+                  className="w-full flex items-center justify-between gap-3 bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/40 rounded-xl px-4 py-3 text-left transition"
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm text-slate-200 truncate">{g.title}</span>
+                    <span className="block text-xs text-slate-500 truncate">
+                      {g.detail}
+                      {g.unpriced > 0 && ` · ${g.unpriced} without a published price`}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-sm font-semibold">
+                    {g.monthly == null
+                      ? <span className="text-slate-500 text-xs">Not available</span>
+                      : <span className="text-emerald-400">{fmt(g.monthly)} /mo</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="text-[11px] text-slate-600 mt-3">
+            Right-sizing figures are modelled from 30 days of telemetry. Unused-resource figures
+            are what Azure already billed. They are listed separately rather than added up.
+          </p>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div className="flex items-center justify-between gap-3 mb-1">
+            <h2 className="text-sm font-semibold text-slate-300">Recent Activity</h2>
+            <button
+              type="button"
+              onClick={() => navigate('/activity')}
+              className="text-xs text-blue-400 hover:text-blue-300"
+            >
+              View all →
+            </button>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">Changes made in the last 7 days, from the Activity Log</p>
+          {activityLoading && !activityData ? (
+            <div className="space-y-2">
+              {[...Array(4)].map((_, i) => <div key={i} className="h-12 bg-slate-800 rounded-xl animate-pulse" />)}
+            </div>
+          ) : activityError ? (
+            // Named rather than left blank. An empty feed and a refused read
+            // look identical, and only one of them means the estate is quiet.
+            <p className="text-slate-500 text-sm py-6">
+              The Activity Log could not be read. {activityError}
+            </p>
+          ) : !activityData?.events?.length ? (
+            activityData ? (
+              <p className="text-slate-500 text-sm text-center py-6">
+                No changes recorded in this window.
+              </p>
+            ) : (
+              <NotLoadedYet
+                onLoad={loadExtras}
+                busy={loadingExtras}
+                label="Load recent activity"
+                note="Reads the Activity Log for each selected subscription."
+              />
+            )
+          ) : (
+            <ul className="space-y-1">
+              {activityData.events.slice(0, 6).map(ev => (
+                <li key={ev.id} className="flex items-start gap-3 px-2 py-2.5 rounded-lg hover:bg-slate-800/40">
+                  <span
+                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                      ev.succeeded ? 'bg-emerald-400' : 'bg-red-400'
+                    }`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm text-slate-200 truncate">
+                      {ev.summary || ev.operation}
+                    </span>
+                    <span className="block text-xs text-slate-500 truncate">
+                      {resourceName(ev.resource_id) || ev.resource_group || '—'}
+                      {ev.caller && ` · ${ev.caller}`}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-slate-500">{relativeTime(ev.at)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
       <PortalGuide {...COST_GUIDE} />
 
       <DetailPanel
@@ -532,6 +807,57 @@ export default function Dashboard() {
           </>
         )}
       </DetailPanel>
+    </div>
+  );
+}
+
+/** Last segment of an Azure resource id, which is the part a person recognises. */
+function resourceName(resourceId) {
+  if (!resourceId) return '';
+  const parts = String(resourceId).split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+}
+
+/**
+ * "2h ago" from an ISO timestamp.
+ *
+ * Returns the raw string when it cannot be parsed rather than the usual
+ * "Invalid Date", and never rounds up past the window: anything a week or
+ * older is shown as a date, because "8d ago" is harder to place than 21 Aug.
+ */
+function relativeTime(iso) {
+  if (!iso) return '';
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return String(iso);
+  const seconds = Math.round((Date.now() - then.getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return then.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+/**
+ * A panel that has not been fetched, saying so and offering to fetch it.
+ *
+ * Deliberately not an empty state. "Nothing found" and "never looked" are
+ * different answers, and only one of them means the estate is clean.
+ */
+function NotLoadedYet({ onLoad, busy, label, note }) {
+  return (
+    <div className="text-center py-6">
+      <button
+        type="button"
+        onClick={onLoad}
+        disabled={busy}
+        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-medium transition"
+      >
+        {busy ? 'Reading Azure…' : label}
+      </button>
+      <p className="text-xs text-slate-500 mt-3 max-w-sm mx-auto">{note}</p>
     </div>
   );
 }

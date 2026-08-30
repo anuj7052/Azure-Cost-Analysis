@@ -78,7 +78,7 @@ describe('sectionForPath', () => {
   });
 
   it('resolves each security page to Access & Security', () => {
-    for (const path of ['/access-optimization', '/role-assignments', '/advisor', '/defender', '/policy']) {
+    for (const path of ['/access-identity', '/advisor', '/defender', '/policy']) {
       expect(sectionForPath(path).key).toBe('security');
     }
   });

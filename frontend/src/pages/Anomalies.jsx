@@ -14,6 +14,8 @@ import {
   severityLabel, severityHint, directionLabel, filtersToParams, filtersFromParams,
   DEFAULT_FILTERS, SEVERITIES, STATUSES,
   SORT_IMPACT, SORT_PCT, SORT_CURRENT, SORT_SERVICE,
+  ROLLING_MONTHS, monthOptions, monthBounds, periodValue, periodLabel,
+  todayIso, rangeError,
 } from '../utils/anomalyView';
 
 const PAGE_SIZE = 25;
@@ -71,7 +73,10 @@ function Kpi({ label, value, sub, tone = 'text-white' }) {
 }
 
 export default function Anomalies() {
-  const { selectedTenantId, selectedSubscriptionIds, dateMode, fromDate, toDate, dateKey } = useAppStore();
+  const {
+    selectedTenantId, selectedSubscriptionIds, dateMode, fromDate, toDate, dateKey,
+    months, setMonths, setCustomDateRange,
+  } = useAppStore();
 
   const [comparison, setComparison] = useState('previous_month');
   const [data, setData] = useState(null);
@@ -205,6 +210,34 @@ export default function Anomalies() {
 
   const exportCsv = () => downloadCsv(toExportRows(sorted, currency), timestampedName('cost-changes'));
 
+  /* The period picker writes to the same store the Topbar date pill does, so
+     the two controls can never describe different figures. */
+  const period = periodValue(dateMode, months, fromDate, toDate);
+  const months12 = useMemo(() => monthOptions(new Date(), 12), []);
+
+  /* The from/to boxes are a draft until applied. Refetching on every keystroke
+     would fire a Cost Management query for half-typed years like 0202. */
+  const [showRange, setShowRange] = useState(period === 'custom');
+  const [draftFrom, setDraftFrom] = useState(fromDate || '');
+  const [draftTo, setDraftTo] = useState(toDate || '');
+  const maxDate = todayIso();
+  const draftError = rangeError(draftFrom, draftTo);
+
+  const onPeriodChange = (value) => {
+    if (value === 'range') { setShowRange(true); return; }
+    setShowRange(false);
+    if (value.startsWith('rolling:')) { setMonths(Number(value.slice(8))); return; }
+    if (value.startsWith('month:')) {
+      const bounds = monthBounds(value.slice(6));
+      if (bounds) setCustomDateRange(bounds.from, bounds.to);
+    }
+  };
+
+  const applyRange = () => {
+    if (draftError) return;
+    setCustomDateRange(draftFrom, draftTo);
+  };
+
   const window_ = data?.window;
   const errors = data?.coverage?.errors || [];
   const noSelection = !selectedTenantId || selectedSubscriptionIds.length === 0;
@@ -234,8 +267,29 @@ export default function Anomalies() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select
+            value={showRange ? 'range' : period}
+            onChange={(e) => onPeriodChange(e.target.value)}
+            title="Which period is analysed. Shared with the date filter in the header."
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
+          >
+            <optgroup label="Rolling">
+              {ROLLING_MONTHS.map((n) => (
+                <option key={n} value={`rolling:${n}`}>Period: Last {n} months</option>
+              ))}
+            </optgroup>
+            <optgroup label="A single month">
+              {months12.map((m) => (
+                <option key={m.value} value={`month:${m.value}`}>Period: {m.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Exact dates">
+              <option value="range">Period: Custom date range…</option>
+            </optgroup>
+          </select>
+          <select
             value={comparison}
             onChange={(e) => setComparison(e.target.value)}
+            title="What that period is measured against."
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
           >
             {COMPARISONS.map((c) => <option key={c.value} value={c.value}>Compare with: {c.label}</option>)}
@@ -244,9 +298,11 @@ export default function Anomalies() {
             type="button"
             onClick={exportCsv}
             disabled={!sorted.length}
+            title="Downloads a CSV of the rows currently listed below, in the order shown — your search, severity and status filters are applied."
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-white disabled:opacity-40"
           >
-            <Download className="h-3.5 w-3.5" /> Export what I am looking at
+            <Download className="h-3.5 w-3.5" />
+            Download CSV{sorted.length ? ` (${sorted.length})` : ''}
           </button>
           <button
             type="button"
@@ -258,6 +314,55 @@ export default function Anomalies() {
           </button>
         </div>
       </header>
+
+      {showRange && (
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-medium text-slate-400">From</span>
+              <input
+                type="date"
+                value={draftFrom}
+                max={draftTo || maxDate}
+                onChange={(e) => setDraftFrom(e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-medium text-slate-400">To</span>
+              <input
+                type="date"
+                value={draftTo}
+                min={draftFrom || undefined}
+                /* Capped at today for typing, because today is the most data
+                   there is. The month presets may still end later than this
+                   when the current month is only part way through. */
+                max={maxDate}
+                onChange={(e) => setDraftTo(e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={applyRange}
+              disabled={!!draftError}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40"
+            >
+              Apply range
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowRange(false); setMonths(months); }}
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:border-slate-600 hover:text-white"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className={`mt-2 text-[11px] ${draftError ? 'text-amber-300' : 'text-slate-500'}`}>
+            {draftError || `Both dates are included. Currently showing ${periodLabel(dateMode, months, fromDate, toDate)}.`}
+          </p>
+        </div>
+      )}
 
       {/* Freshness. Stated always, because a figure with no time on it is a
           figure the reader has to guess the age of. */}

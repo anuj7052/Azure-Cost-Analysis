@@ -24,6 +24,9 @@ const api = axios.create({
 const SLOW_ROUTES = [
   '/costs', '/bandwidth', '/orphaned', '/scans', '/changes',
   '/services', '/activity', '/subscriptions', '/security', '/anomalies',
+  // One Resource Graph query across every selected subscription, projecting
+  // full `properties`. On a large estate it is the slowest read in the app.
+  '/network/topology', '/commitments',
 ];
 const SLOW_TIMEOUT = 120000;
 
@@ -159,6 +162,7 @@ const GRAPH_ROUTES = [
   '/security/access-review',
   '/security/access/grant/preview',
   '/security/access/revoke/preview',
+  '/security/access/downgrade/preview',
   // Looking people up by name is a directory read like any other.
   '/team/directory',
 ];
@@ -439,6 +443,16 @@ export const downloadSetupGuide = async () => {
   URL.revokeObjectURL(url);
 };
 
+/**
+ * The permission list, plus a consent link for the given tenant.
+ *
+ * `tenantId` is optional — the API falls back to the caller's own directory,
+ * which is the right default for somebody onboarding their own company.
+ */
+export const fetchPermissions = (tenantId) =>
+  api.get('/guide/permissions', { params: tenantId ? { tenant_id: tenantId } : {} })
+    .then(r => r.data);
+
 export const fetchAdminUsers = (params = {}) =>
   api.get('/admin/users', { params }).then(r => r.data);
 export const fetchAdminStats = () => api.get('/admin/stats').then(r => r.data);
@@ -517,6 +531,16 @@ export const fetchPricingModel = (body) =>
   api.post('/costs/pricing-model', body).then(r => r.data);
 
 /**
+ * Reservations and savings plans: what is committed, how much of it is being
+ * used, what lapses soon, and what Azure suggests buying.
+ *
+ * One call rather than four because the page is meaningless in pieces -- a
+ * utilisation figure without the cost beside it cannot be acted on.
+ */
+export const fetchCommitments = (body) =>
+  api.post('/commitments', body).then(r => r.data);
+
+/**
  * Which public IPs and resource groups produced the data-transfer charge.
  *
  * Joins the Resource Manager address inventory to Cost Management charges. The
@@ -559,6 +583,34 @@ export const fetchAccessReview = (body) =>
 export const fetchAdvisor = (body) =>
   api.post('/security/advisor', body).then(r => r.data);
 
+/**
+ * The management group hierarchy this account can see.
+ *
+ * Tenant-wide rather than subscription-scoped, because the point of it is to
+ * see the levels *above* whatever subscriptions happen to be ticked.
+ */
+export const fetchManagementGroups = (body) =>
+  api.post('/security/management-groups', body).then(r => r.data);
+
+/** Access findings this workspace has already reviewed and accepted. */
+export const fetchAccessIgnores = (tenantId) =>
+  api.get('/security/access-ignores', { params: { tenant_id: tenantId } }).then(r => r.data);
+
+/**
+ * Accept a finding, or a whole principal when `finding_key` is empty.
+ *
+ * Nothing in Azure changes — this only affects what this workspace sees by
+ * default, and it is always reversible.
+ */
+export const acceptAccessFinding = (body) =>
+  api.post('/security/access-ignores', body).then(r => r.data);
+
+/** Put an accepted finding back in the list. */
+export const restoreAccessFinding = (tenantId, principalId, findingKey = '') =>
+  api.delete('/security/access-ignores', {
+    params: { tenant_id: tenantId, principal_id: principalId, finding_key: findingKey },
+  }).then(r => r.data);
+
 /** Defender assessments, alerts and secure score. */
 export const fetchDefender = (body) =>
   api.post('/security/defender', body).then(r => r.data);
@@ -582,6 +634,16 @@ export const fetchPostureSnapshots = (params) =>
 export const fetchAssignableRoles = (body) =>
   api.post('/security/access/roles', body).then(r => r.data);
 
+/**
+ * The virtual networks in the selected subscriptions, and how they connect.
+ *
+ * One large Resource Graph query rather than a request per network: peerings
+ * are only discoverable from each network's own configuration, so the whole set
+ * has to be in hand before any line can be drawn.
+ */
+export const fetchNetworkTopology = (body) =>
+  api.post('/network/topology', body).then(r => r.data);
+
 export const previewGrantAccess = (body) =>
   api.post('/security/access/grant/preview', body).then(r => r.data);
 
@@ -593,6 +655,19 @@ export const previewRevokeAccess = (body) =>
 
 export const revokeAccess = (body) =>
   api.post('/security/access/revoke', body).then(r => r.data);
+
+/**
+ * Replacing a role with a smaller one.
+ *
+ * Two Azure operations behind one call, and the order is the point: the
+ * narrower role is granted before the wider one is removed, so a failure
+ * part-way leaves too much access rather than none at all.
+ */
+export const previewDowngradeAccess = (body) =>
+  api.post('/security/access/downgrade/preview', body).then(r => r.data);
+
+export const downgradeAccess = (body) =>
+  api.post('/security/access/downgrade', body).then(r => r.data);
 
 /** What this account has changed about access in this tenant. */
 export const fetchAccessHistory = (params) =>
@@ -632,7 +707,7 @@ export const fetchReservedDetail = (body) =>
  *
  * Accepts a date range (how people actually ask) or an explicit scan pair.
  */
-export const fetchChanges = (tenantId, { before, after, from_date, to_date } = {}) =>
+export const fetchChanges = (tenantId, { before, after, from_date, to_date, group_by, show_ignored } = {}) =>
   api.get('/changes', {
     params: {
       tenant_id: tenantId,
@@ -640,6 +715,8 @@ export const fetchChanges = (tenantId, { before, after, from_date, to_date } = {
       ...(to_date ? { to_date } : {}),
       ...(before ? { before } : {}),
       ...(after ? { after } : {}),
+      ...(group_by ? { group_by } : {}),
+      ...(show_ignored ? { show_ignored: true } : {}),
     },
   }).then(r => r.data);
 
@@ -647,6 +724,25 @@ export const fetchChanges = (tenantId, { before, after, from_date, to_date } = {
 export const fetchEntityHistory = (tenantId, resourceId) =>
   api.get('/changes/history', {
     params: { tenant_id: tenantId, resource_id: resourceId },
+  }).then(r => r.data);
+
+/** Which changes are currently being suppressed, and who suppressed them. */
+export const fetchIgnores = (tenantId) =>
+  api.get('/changes/ignores', { params: { tenant_id: tenantId } }).then(r => r.data);
+
+/**
+ * Mark a change as expected.
+ *
+ * An empty `field` silences the whole resource; naming one silences only that
+ * property, which is usually what people mean.
+ */
+export const ignoreChange = (body) =>
+  api.post('/changes/ignores', body).then(r => r.data);
+
+/** Stop suppressing a change. */
+export const unignoreChange = (tenantId, resourceId, field = '') =>
+  api.delete('/changes/ignores', {
+    params: { tenant_id: tenantId, resource_id: resourceId, field },
   }).then(r => r.data);
 
 /**
@@ -749,6 +845,38 @@ export const fetchResizeOperation = (operationId) =>
 export const fetchResizeHistory = (tenantId) =>
   api.get('/compute/resize/history', { params: { tenant_id: tenantId } })
     .then(r => r.data);
+
+/**
+ * What this platform is able to change in Azure.
+ *
+ * Served by the backend rather than hard-coded here, so the list cannot drift
+ * from what the server will actually accept. Includes actions that are
+ * switched off, with `enabled: false` — a capability that exists and is
+ * disabled is more useful to show than to hide.
+ */
+export const fetchActionCatalogue = () =>
+  api.get('/actions').then(r => r.data);
+
+/** Every change this workspace has made to one tenant, failures included. */
+export const fetchActionHistory = (tenantId, limit = 50) =>
+  api.get('/actions/history', { params: { tenant_id: tenantId, limit } })
+    .then(r => r.data);
+
+export const fetchAction = (actionId) =>
+  api.get(`/actions/${actionId}`).then(r => r.data);
+
+/**
+ * Merge tags onto a resource.
+ *
+ * The idempotency key is generated per call rather than taken from the caller
+ * so that a retry inside axios, a flaky connection or an impatient second
+ * click cannot become a second write. It is the request that is identified,
+ * not the intent: asking again later is a new key and a new change.
+ */
+export const applyTags = (body) =>
+  api.post('/actions/tag', { ...body, confirmation: true }, {
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  }).then(r => r.data);
 
 export const fetchServices = (tenantId, subscriptionIds, months = 1, range = {}) =>
   api.get('/services', {
