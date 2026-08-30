@@ -50,6 +50,137 @@ ADDED = "added"
 REMOVED = "removed"
 MODIFIED = "modified"
 
+# Property paths that change on their own and mean nothing to a reader.
+#
+# Azure rewrites these without anybody touching the resource: timestamps tick,
+# etags are regenerated on any internal write, provisioning state settles from
+# Updating to Succeeded, and lease or health fields reflect the moment the scan
+# ran rather than a decision someone made. Reporting them turns every scan into
+# a wall of changes and trains people to ignore the page.
+#
+# Matched on the last segment of the path, case-insensitively, so it applies at
+# any depth without listing every provider's nesting.
+NOISE_KEYS = frozenset({
+    "etag",
+    "timecreated",
+    "lastmodifiedtime",
+    "lastmodifiedat",
+    "changedtime",
+    "provisioningstate",
+    "leasestatus",
+    "diskstate",
+    "uniqueid",
+    "resourceguid",
+    "lastkeyrotationtimestamp",
+    "creationdata",
+    "healthstatus",
+    "statuses",
+})
+
+# How deep a configuration bag is walked, and how many differences are kept.
+#
+# Both are guards against one pathological resource. A Data Factory pipeline or
+# a large NSG can nest a long way and produce thousands of differences; without
+# a limit, one such resource would dominate the response and the page.
+MAX_PROPERTY_DEPTH = 6
+MAX_PROPERTY_CHANGES = 40
+
+
+def _parse_properties(raw: Any) -> Optional[Dict[str, Any]]:
+    """
+    The stored configuration bag, or None when there is nothing to compare.
+
+    None and `{}` mean different things here. None means the bag was never
+    captured — the resource has none, it was too large to store, or the
+    snapshot predates the column. `{}` would mean Azure genuinely reported an
+    empty bag. Collapsing the two would make every old snapshot look as though
+    every property had just been deleted.
+    """
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _readable(value: Any) -> str:
+    """One line describing a value, for a table cell."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float, str)):
+        return str(value)
+    try:
+        return json.dumps(value, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _walk(old: Any, new: Any, path: str, depth: int, out: List[Dict[str, Any]]):
+    """Collect leaf differences between two configuration bags."""
+    if len(out) >= MAX_PROPERTY_CHANGES:
+        return
+
+    last = path.rsplit(".", 1)[-1].lower()
+    if last in NOISE_KEYS:
+        return
+
+    if isinstance(old, dict) and isinstance(new, dict) and depth < MAX_PROPERTY_DEPTH:
+        for key in sorted(old.keys() | new.keys()):
+            _walk(old.get(key), new.get(key), f"{path}.{key}" if path else key,
+                  depth + 1, out)
+        return
+
+    if old == new:
+        return
+
+    # Lists are compared whole rather than element by element. Azure reorders
+    # them freely, so positional matching invents changes; and a person reading
+    # "the firewall rules changed" alongside both versions is better served
+    # than by a list of index numbers that may not correspond to anything.
+    out.append({
+        "field": path,
+        "label": path,
+        "from": _readable(old),
+        "to": _readable(new),
+    })
+
+
+def compare_properties(before: Any, after: Any) -> List[Dict[str, Any]]:
+    """
+    Differences inside the provider's configuration bag.
+
+    This is where the interesting changes live — public network access turned
+    on, TLS minimum lowered, a backup policy removed. None of it is visible in
+    the flattened columns, which can only ever say that a resource exists.
+    """
+    old, new = _parse_properties(before), _parse_properties(after)
+
+    # Either side missing means there is nothing trustworthy to compare. Saying
+    # nothing is correct; inventing a change from absent data is not.
+    if old is None or new is None:
+        return []
+
+    out: List[Dict[str, Any]] = []
+    _walk(old, new, "", 0, out)
+    return out
+
+
+def _row_value(row: Any, column: str) -> Any:
+    """
+    Read a column that may not exist on this row.
+
+    Snapshots taken before a column was added still have to be readable, and
+    sqlite3.Row raises rather than returning None for an unknown key.
+    """
+    try:
+        return row[column]
+    except (IndexError, KeyError):
+        return None
+
 
 def _parse_tags(raw: str) -> Dict[str, str]:
     try:
@@ -92,6 +223,7 @@ def _row_to_resource(row: aiosqlite.Row) -> Dict[str, Any]:
         "location": row["location"],
         "sku": row["sku"],
         "tags": _parse_tags(row["tags"]),
+        "properties": _parse_properties(_row_value(row, "properties")),
     }
 
 
@@ -135,6 +267,179 @@ def diff_rows(
     }
 
 
+# ── ignoring expected changes ───────────────────────────────────────────────
+#
+# A rule with an empty `field` silences the whole resource. A rule naming a
+# field silences only that one, which is the common case: a pipeline that
+# rewrites `tags` nightly should not also hide the day someone deletes the
+# resource.
+
+WHOLE_RESOURCE = ""
+
+
+async def list_ignores(
+    db: aiosqlite.Connection,
+    user_id: int,
+    tenant_id: str,
+) -> List[aiosqlite.Row]:
+    async with db.execute(
+        """
+        SELECT * FROM change_ignores
+         WHERE user_id = ? AND tenant_id = ?
+         ORDER BY id DESC
+        """,
+        (user_id, tenant_id),
+    ) as cursor:
+        return await cursor.fetchall()
+
+
+async def add_ignore(
+    db: aiosqlite.Connection,
+    user_id: int,
+    tenant_id: str,
+    resource_id: str,
+    field: str = WHOLE_RESOURCE,
+    note: str = "",
+    created_by: str = "",
+) -> None:
+    """
+    Record that a change is expected.
+
+    Re-ignoring something already ignored is not an error — the person is
+    asking for a state, not queuing an event — so a repeat updates the note
+    instead of failing.
+    """
+    await db.execute(
+        """
+        INSERT INTO change_ignores (user_id, tenant_id, resource_id, field, note, created_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, tenant_id, resource_id, field)
+        DO UPDATE SET note = excluded.note
+        """,
+        (user_id, tenant_id, resource_id.lower(), field, note[:300], created_by),
+    )
+    await db.commit()
+
+
+async def remove_ignore(
+    db: aiosqlite.Connection,
+    user_id: int,
+    tenant_id: str,
+    resource_id: str,
+    field: str = WHOLE_RESOURCE,
+) -> int:
+    cursor = await db.execute(
+        """
+        DELETE FROM change_ignores
+         WHERE user_id = ? AND tenant_id = ? AND resource_id = ? AND field = ?
+        """,
+        (user_id, tenant_id, resource_id.lower(), field),
+    )
+    await db.commit()
+    return cursor.rowcount or 0
+
+
+def _ignore_index(rules: List[aiosqlite.Row]) -> Dict[str, set]:
+    index: Dict[str, set] = {}
+    for rule in rules:
+        index.setdefault(rule["resource_id"].lower(), set()).add(rule["field"])
+    return index
+
+
+def apply_ignores(
+    diff: Dict[str, Any],
+    rules: List[aiosqlite.Row],
+    show_ignored: bool = False,
+) -> Dict[str, Any]:
+    """
+    Mark, and optionally hide, changes the owner has said are expected.
+
+    Every entry is labelled `ignored` whether or not it is being shown, so the
+    UI can grey out a suppressed row rather than making it vanish with no
+    explanation. Counts are recomputed from what survives, because a headline
+    of 40 changes above a list of 3 is worse than no headline.
+    """
+    index = _ignore_index(rules)
+    result = dict(diff)
+    ignored_total = 0
+
+    for bucket in (ADDED, REMOVED, MODIFIED):
+        kept = []
+        for entry in diff.get(bucket, []):
+            fields = index.get(entry["resource_id"].lower(), set())
+            entry = dict(entry)
+
+            if WHOLE_RESOURCE in fields:
+                entry["ignored"] = True
+            elif bucket == MODIFIED and fields:
+                # A partly-ignored resource is not an ignored resource. Drop the
+                # silenced fields; if anything is left, it is still a change.
+                surviving = [c for c in entry.get("changes", [])
+                             if c["field"] not in fields]
+                entry["ignored"] = not surviving
+                if surviving:
+                    entry["changes"] = surviving
+            else:
+                entry["ignored"] = False
+
+            if entry["ignored"]:
+                ignored_total += 1
+                if not show_ignored:
+                    continue
+            kept.append(entry)
+
+        result[bucket] = kept
+
+    visible = {b: [e for e in result[b] if not e.get("ignored")]
+               for b in (ADDED, REMOVED, MODIFIED)}
+    result["added_count"] = len(visible[ADDED])
+    result["removed_count"] = len(visible[REMOVED])
+    result["modified_count"] = len(visible[MODIFIED])
+    result["total_changes"] = sum(len(v) for v in visible.values())
+    result["ignored_count"] = ignored_total
+    return result
+
+
+# ── grouping ────────────────────────────────────────────────────────────────
+
+GROUP_KEYS = {
+    "subscription": "subscription_id",
+    "resource_group": "resource_group",
+    "type": "type",
+    "location": "location",
+}
+
+
+def group_counts(diff: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+    """
+    Added, removed and modified counts per subscription, group, type or region.
+
+    Computed here rather than in the browser so the numbers on the page and the
+    numbers in an export are the same numbers, and so a large estate does not
+    have to ship every resource just to render a summary.
+    """
+    column = GROUP_KEYS.get(key)
+    if not column:
+        return []
+
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for bucket in (ADDED, REMOVED, MODIFIED):
+        for entry in diff.get(bucket, []):
+            if entry.get("ignored"):
+                continue
+            name = entry.get(column) or "Unassigned"
+            row = buckets.setdefault(
+                name, {"key": name, "added": 0, "removed": 0, "modified": 0}
+            )
+            row[bucket] += 1
+
+    rows = list(buckets.values())
+    for row in rows:
+        row["total"] = row["added"] + row["removed"] + row["modified"]
+    rows.sort(key=lambda r: (-r["total"], r["key"].lower()))
+    return rows
+
+
 def compare_resource(before: aiosqlite.Row, after: aiosqlite.Row) -> List[Dict[str, Any]]:
     """Field-level changes between two captures of the same resource."""
     changes: List[Dict[str, Any]] = []
@@ -159,6 +464,13 @@ def compare_resource(before: aiosqlite.Row, after: aiosqlite.Row) -> List[Dict[s
                 "from": old,
                 "to": new,
             })
+
+    # Appended after the tracked columns, never before: a person scanning the
+    # list should see "Region" and "SKU / size" first, because those are the
+    # ones they can name. The property paths are the detail underneath.
+    changes.extend(compare_properties(
+        _row_value(before, "properties"), _row_value(after, "properties")
+    ))
 
     return changes
 

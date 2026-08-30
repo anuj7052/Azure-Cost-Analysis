@@ -65,6 +65,22 @@ REDUNDANT = "redundant"
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
+# The Activity Log names an operation as `Provider/type/verb`. Only the verb
+# carries meaning for a review, and there are four of them plus the special case
+# of touching RBAC itself. Counting them separately is what turns "54 operations"
+# -- a number that supports no decision -- into "0 creates, 33 updates, 0
+# deletes", which supports several.
+OPERATION_VERBS = ("create", "write", "delete", "action")
+
+# `write` is Azure's verb; "Update" is what it means to anybody reading a report.
+VERB_LABEL = {
+    "create": "Create",
+    "write": "Update",
+    "delete": "Delete",
+    "action": "Action",
+    "rbac": "RBAC",
+}
+
 # ---------------------------------------------------------------------------
 # The least-privilege ladder
 #
@@ -404,7 +420,9 @@ def index_activity(events: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]
             "count": 0,
             "write_count": 0,
             "rbac_count": 0,
+            "operations": {verb: 0 for verb in OPERATION_VERBS},
             "last_at": "",
+            "rbac_last_at": "",
             "scopes": set(),
             "subscriptions": set(),
         })
@@ -414,10 +432,21 @@ def index_activity(events: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]
             entry["write_count"] += 1
 
         operation = _lower(event.get("operation"))
-        if any(op in operation for op in RBAC_OPERATIONS):
-            entry["rbac_count"] += 1
+        # Matched on the last path segment. `write` appears inside plenty of
+        # resource type names -- `Microsoft.Network/networkWatchers` is not a
+        # write -- and matching the whole string counts those as changes.
+        verb = operation.rsplit("/", 1)[-1]
+        for known in OPERATION_VERBS:
+            if known in verb:
+                entry["operations"][known] += 1
+                break
 
         at = _text(event.get("at"))
+        if any(op in operation for op in RBAC_OPERATIONS):
+            entry["rbac_count"] += 1
+            if at > entry["rbac_last_at"]:
+                entry["rbac_last_at"] = at
+
         if at > entry["last_at"]:
             entry["last_at"] = at
 
@@ -681,6 +710,21 @@ def review_access(
     findings.extend(_sprawl_findings(assignments))
     findings.extend(_redundancy_findings(assignments))
 
+    # Measured usage and a right-sizing verdict are attached to every finding
+    # here rather than inside each builder. Sprawl and redundancy cards used to
+    # carry neither, so the same person could appear twice on one screen — once
+    # with "54 operations, last used July 22" and once with nothing at all —
+    # which reads as missing data rather than as a different kind of finding.
+    by_assignment = {item.get("id", ""): item for item in assignments if item.get("id")}
+    for finding in findings:
+        source = by_assignment.get(finding.get("assignment_id", ""))
+        usage = _usage_for(source, activity) if source else None
+        finding["window_days"] = window_days
+        finding["usage"] = usage_fields(usage if has_evidence else None, window_days, now_iso)
+        finding["recommendation"] = (
+            recommend_role(source, usage, window_days, has_evidence) if source else None
+        )
+
     findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 3), -f.get("weight", 0)))
 
     # Right-sizing runs over every assignment, not only the ones that produced a
@@ -871,6 +915,63 @@ def _identity_fields(item: Dict[str, Any]) -> Dict[str, Any]:
         "resource_group": item.get("resource_group", ""),
         "subscription_id": item["subscription_id"],
         "subscription_name": item.get("subscription_name", ""),
+        # Where in the hierarchy, when the grant was made at or above a
+        # management group. Empty for a subscription-scoped grant, which is the
+        # honest answer: the card should say nothing rather than invent a group.
+        "management_group": item.get("management_group", "") or item.get("management_group_name", ""),
+        "is_custom": bool(item.get("is_custom")),
+        # When the grant was made, and by whom. Azure returns both on every
+        # assignment and neither was carried onto findings before, which is why
+        # a card could describe access as long-unused without ever saying how
+        # long it had existed -- the one number that decides whether "unused for
+        # 30 days" is alarming or simply new.
+        "assigned_at": item.get("created_at", ""),
+        "assigned_by": item.get("created_by", ""),
+    }
+
+
+def usage_fields(
+    usage: Optional[Dict[str, Any]],
+    window_days: int,
+    now_iso: str = "",
+) -> Dict[str, Any]:
+    """
+    The measured half of a finding: what this principal was actually seen doing.
+
+    Every value here distinguishes *zero* from *unknown*, and the distinction is
+    load-bearing. `activity_count: 0` means the log was read and held nothing;
+    `activity_count: None` means the log was not read at all. Collapsing the two
+    into 0 would let a page with usage disabled recommend revoking everybody's
+    access on the strength of evidence it never gathered.
+    """
+    if usage is None:
+        return {
+            "last_used": "",
+            "days_inactive": None,
+            "activity_count": None,
+            "operations": {},
+            "write_count": None,
+            "rbac_count": None,
+            "rbac_last_used": "",
+            "rbac_inactive": None,
+        }
+
+    operations = dict(usage.get("operations") or {})
+    operations["rbac"] = usage.get("rbac_count", 0)
+
+    return {
+        "last_used": usage.get("last_at", ""),
+        "days_inactive": _days_since(usage.get("last_at", ""), now_iso) if now_iso else None,
+        "activity_count": usage.get("count", 0),
+        "operations": operations,
+        "write_count": usage.get("write_count", 0),
+        "rbac_count": usage.get("rbac_count", 0),
+        "rbac_last_used": usage.get("rbac_last_at", ""),
+        # True only when we looked and found nothing. A principal that never
+        # touched RBAC while holding Owner is the headline of the
+        # over-privileged finding, so it is stated as its own field rather than
+        # left to be re-derived from a count on the other side of the wire.
+        "rbac_inactive": usage.get("rbac_count", 0) == 0,
     }
 
 

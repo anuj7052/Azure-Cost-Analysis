@@ -25,6 +25,40 @@ STATUS_RUNNING = "running"
 STATUS_COMPLETE = "complete"
 STATUS_FAILED = "failed"
 
+# Largest configuration bag stored per resource, in characters.
+#
+# A snapshot multiplies: every resource, every scan, kept forever. Most
+# properties bags are two or three kilobytes, but a few resource types -- large
+# network security groups, App Service site configs, Data Factory pipelines --
+# run to hundreds. Those are the ones that would quietly turn a snapshot table
+# into the largest thing in the database.
+#
+# An oversized bag is dropped rather than truncated. Truncated JSON does not
+# parse, and a half-stored bag would diff against the next scan's full one and
+# report a change that did not happen. Storing nothing is visibly nothing.
+MAX_PROPERTIES_CHARS = 32_000
+
+
+def _properties_of(row: Dict[str, Any]) -> str:
+    """
+    The provider's configuration bag, as JSON text, ready to store.
+
+    Kept verbatim rather than filtered. Noisy keys are excluded when a diff is
+    computed, not here: what is stored is what Azure reported, so the raw view
+    stays trustworthy and the definition of "noise" can change later without
+    reducing history that was already captured.
+    """
+    value = row.get("properties")
+    if not isinstance(value, dict) or not value:
+        return ""
+
+    try:
+        text = json.dumps(value, sort_keys=True)
+    except (TypeError, ValueError):
+        return ""
+
+    return "" if len(text) > MAX_PROPERTIES_CHARS else text
+
 
 def _sku_of(row: Dict[str, Any]) -> str:
     """
@@ -74,6 +108,7 @@ async def record_resources(
             r.get("location") or "",
             _sku_of(r),
             json.dumps(r.get("tags") or {}),
+            _properties_of(r),
         )
         for r in resources
         # A resource with no id cannot be matched against another scan, so it
@@ -87,8 +122,8 @@ async def record_resources(
             """
             INSERT INTO scan_resources (
                 scan_id, resource_id, name, name_lower, type,
-                resource_group, subscription_id, location, sku, tags
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                resource_group, subscription_id, location, sku, tags, properties
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )

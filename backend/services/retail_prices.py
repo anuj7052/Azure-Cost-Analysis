@@ -25,6 +25,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 
+from services import azure_retry
+
 PRICES_URL = "https://prices.azure.com/api/retail/prices"
 
 # The preview version is backward compatible and is the only one that returns
@@ -254,7 +256,13 @@ async def fetch_raw_prices(
         pages = 0
 
         while url and pages < max_pages:
-            response = await client.get(url, params=params if pages == 0 else None)
+            # The Retail Prices API is public and unauthenticated, which makes
+            # it throttled by source address: every region queried in parallel
+            # shares one budget.
+            page_url, page_params = url, (params if pages == 0 else None)
+            response = await azure_retry.send_with_retry(
+                lambda: client.get(page_url, params=page_params)
+            )
             response.raise_for_status()
             payload = response.json()
 

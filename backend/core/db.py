@@ -209,7 +209,65 @@ _SCHEMAS = {
             subscription_id TEXT    NOT NULL DEFAULT '',
             location        TEXT    NOT NULL DEFAULT '',
             sku             TEXT    NOT NULL DEFAULT '',
-            tags            TEXT    NOT NULL DEFAULT '{}'
+            tags            TEXT    NOT NULL DEFAULT '{}',
+            -- The provider's own configuration bag, verbatim, as JSON.
+            --
+            -- Empty when the resource has none, when Azure returned something
+            -- unparseable, or when the bag was too large to be worth keeping
+            -- (see scanner.MAX_PROPERTIES_CHARS). Empty therefore means "not
+            -- captured", which is why a diff must never read it as "became
+            -- empty" and report every property as deleted.
+            properties      TEXT    NOT NULL DEFAULT ''
+        )
+    """,
+    # A change the owner has decided is not worth seeing again.
+    #
+    # Change tracking is only useful if the list is short enough to read. A
+    # deployment pipeline that rewrites the same tag every night will bury
+    # everything else within a week, so there has to be a way to say "this one
+    # is expected" without switching the whole feature off.
+    #
+    # Ignoring hides, it never deletes: the underlying snapshots are untouched
+    # and the rule can be lifted, because an audit that cannot see what was
+    # suppressed is not an audit.
+    "change_ignores": """
+        CREATE TABLE IF NOT EXISTS change_ignores (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id   TEXT    NOT NULL,
+            resource_id TEXT    NOT NULL,
+            field       TEXT    NOT NULL DEFAULT '',
+            note        TEXT    NOT NULL DEFAULT '',
+            created_by  TEXT    NOT NULL DEFAULT '',
+            created_at  TEXT    DEFAULT (CURRENT_TIMESTAMP),
+            UNIQUE (user_id, tenant_id, resource_id, field)
+        )
+    """,
+    # An access finding, or a whole principal, that the owner has reviewed and
+    # accepted.
+    #
+    # An access review is only completed if it can be finished. A break-glass
+    # account is meant to be unused; a quarterly billing job is meant to look
+    # dormant for eighty-nine days. Without somewhere to record "we looked at
+    # this and it is fine", the same false positives are re-read by a different
+    # person every quarter and the real findings are the ones that get skipped.
+    #
+    # `finding_key` empty means the whole principal is accepted -- the "Hide
+    # Principal" action -- and a specific key accepts one finding about it. The
+    # note is kept because an acceptance without a reason is worthless to the
+    # next reviewer, and hidden findings are always counted and can always be
+    # shown again.
+    "access_ignores": """
+        CREATE TABLE IF NOT EXISTS access_ignores (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id    TEXT    NOT NULL,
+            principal_id TEXT    NOT NULL,
+            finding_key  TEXT    NOT NULL DEFAULT '',
+            note         TEXT    NOT NULL DEFAULT '',
+            created_by   TEXT    NOT NULL DEFAULT '',
+            created_at   TEXT    DEFAULT (CURRENT_TIMESTAMP),
+            UNIQUE (user_id, tenant_id, principal_id, finding_key)
         )
     """,
     # Every published price this app has ever read from Microsoft, kept verbatim.
@@ -393,6 +451,58 @@ _SCHEMAS = {
             completed_at    TEXT
         )
     """,
+    # Every change this application makes to Azure, in one table.
+    #
+    # The three write features that came before this one each grew their own
+    # record: `vm_resize_operations`, `security_audit`, `provision_deployments`.
+    # That was reasonable for the first of them and is not reasonable for the
+    # fourth: it means a new action cannot be added without a schema change,
+    # and it means the question "what has this workspace changed in Azure?"
+    # has to be asked three times and merged. This table is the answer to that
+    # question for every action added from here on.
+    #
+    # `state` is opened before the Azure call and closed after it, so a process
+    # that dies mid-flight still leaves a row saying what was attempted. A
+    # failure is kept, not deleted -- a refused attempt to delete a production
+    # disk is exactly the record an investigation needs.
+    #
+    # `idempotency_key` is what makes a retried request safe. It is unique per
+    # workspace rather than globally, because two customers picking the same
+    # key is a coincidence, not a duplicate.
+    #
+    # `actor_id` is the person and `user_id` is the workspace that owns the
+    # tenant. Both are kept: attributing a team member's deletion to the owner
+    # would make the trail useless for exactly the case it exists for.
+    #
+    # Request and state columns hold JSON text rather than ids so the row stays
+    # readable after the resource it describes has been deleted from Azure --
+    # which, for a delete action, is always.
+    "resource_actions": """
+        CREATE TABLE IF NOT EXISTS resource_actions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_id       TEXT    NOT NULL UNIQUE,
+            idempotency_key TEXT,
+            user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            actor_id        INTEGER,
+            actor_name      TEXT    NOT NULL DEFAULT '',
+            actor_email     TEXT    NOT NULL DEFAULT '',
+            tenant_id       TEXT    NOT NULL,
+            action          TEXT    NOT NULL,
+            subscription_id TEXT    NOT NULL DEFAULT '',
+            resource_id     TEXT    NOT NULL DEFAULT '',
+            resource_name   TEXT    NOT NULL DEFAULT '',
+            resource_kind   TEXT    NOT NULL DEFAULT '',
+            request         TEXT    NOT NULL DEFAULT '{}',
+            previous_state  TEXT    NOT NULL DEFAULT '{}',
+            new_state       TEXT    NOT NULL DEFAULT '{}',
+            state           TEXT    NOT NULL DEFAULT 'PENDING',
+            azure_operation TEXT    NOT NULL DEFAULT '',
+            failure_reason  TEXT    NOT NULL DEFAULT '',
+            created_at      TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+            updated_at      TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+            completed_at    TEXT
+        )
+    """,
     "anomaly_tracking": """
         CREATE TABLE IF NOT EXISTS anomaly_tracking (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -453,6 +563,10 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_scan_resources_scan ON scan_resources (scan_id)",
     "CREATE INDEX IF NOT EXISTS idx_scan_resources_name ON scan_resources (name_lower)",
     "CREATE INDEX IF NOT EXISTS idx_scan_resources_rid ON scan_resources (resource_id)",
+    "CREATE INDEX IF NOT EXISTS idx_change_ignores_owner "
+    "ON change_ignores (user_id, tenant_id)",
+    "CREATE INDEX IF NOT EXISTS idx_access_ignores_owner "
+    "ON access_ignores (user_id, tenant_id)",
     # Price lookups are always "this meter, this currency, most recent first":
     # either the latest reading to diff against, or the series to chart.
     "CREATE INDEX IF NOT EXISTS idx_price_snapshots_meter "
@@ -478,6 +592,18 @@ _INDEXES = [
     # ownership columns lead the index because they lead the WHERE clause.
     "CREATE INDEX IF NOT EXISTS idx_security_audit_owner "
     "ON security_audit (user_id, tenant_id, id DESC)",
+    # Actions are read three ways: "what has this workspace changed", "is
+    # anything already running against this exact resource" (the duplicate
+    # guard, which deliberately ignores who started it), and "have I seen this
+    # idempotency key before". The last is UNIQUE rather than a plain index:
+    # two concurrent retries must collide in the database, not in a check that
+    # one of them can win a race against.
+    "CREATE INDEX IF NOT EXISTS idx_resource_actions_owner "
+    "ON resource_actions (user_id, tenant_id, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_resource_actions_resource "
+    "ON resource_actions (resource_id, id DESC)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_actions_idempotency "
+    "ON resource_actions (user_id, idempotency_key)",
     # Invitations are read two ways: "who is on my team" and, on every first
     # sign-in, "is there anything pending for this email".
     "CREATE INDEX IF NOT EXISTS idx_invitations_owner "
@@ -615,12 +741,21 @@ async def init_db():
         await db.execute(_SCHEMAS["provision_deployments"])
         await db.execute(_SCHEMAS["scans"])
         await db.execute(_SCHEMAS["scan_resources"])
+        # Snapshots taken before this column existed have no configuration bag.
+        # They stay comparable for the fields they did capture; the deep diff
+        # treats a missing bag as "not captured" rather than as "emptied".
+        await _add_missing_columns(
+            db, "scan_resources", {"properties": "TEXT NOT NULL DEFAULT ''"}
+        )
+        await db.execute(_SCHEMAS["change_ignores"])
+        await db.execute(_SCHEMAS["access_ignores"])
         await db.execute(_SCHEMAS["price_snapshots"])
         await db.execute(_SCHEMAS["price_changes"])
         await db.execute(_SCHEMAS["fx_rates"])
         await db.execute(_SCHEMAS["posture_snapshots"])
         await db.execute(_SCHEMAS["vm_resize_operations"])
         await db.execute(_SCHEMAS["security_audit"])
+        await db.execute(_SCHEMAS["resource_actions"])
         await db.execute(_SCHEMAS["anomaly_tracking"])
         await db.execute(_SCHEMAS["anomaly_events"])
         for statement in _INDEXES:

@@ -161,6 +161,43 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         },
         "deploy_only_fields": [],
     },
+    "virtual_network": {
+        "label": "Virtual network",
+        "summary": (
+            "A virtual network with one subnet. Nothing runs in it until "
+            "something is placed there, and Azure does not charge for the "
+            "network itself."
+        ),
+        "fields": {
+            "name": {
+                "label": "Network name",
+                "required": True,
+                "help": "2-64 characters: letters, numbers, hyphens, underscores and dots.",
+            },
+            "address_space": {
+                "label": "Address space",
+                "required": False,
+                "suggest": "10.0.0.0/16",
+                "help": (
+                    "The whole range this network owns, as CIDR. Pick a range "
+                    "that does not overlap any network you might later peer "
+                    "with -- overlapping ranges cannot be joined afterwards."
+                ),
+            },
+            "subnet_name": {
+                "label": "Subnet name",
+                "required": False,
+                "suggest": "default",
+            },
+            "subnet_prefix": {
+                "label": "Subnet range",
+                "required": False,
+                "suggest": "10.0.1.0/24",
+                "help": "Must sit inside the address space above.",
+            },
+        },
+        "deploy_only_fields": [],
+    },
     "web_app": {
         "label": "Web app",
         "summary": "A Linux App Service plan and a web app running on it, with HTTPS enforced.",
@@ -217,6 +254,7 @@ def describe_catalog() -> List[Dict[str, Any]]:
 _VM_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,13}[a-zA-Z0-9]$")
 _STORAGE_NAME = re.compile(r"^[a-z0-9]{3,24}$")
 _APP_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{1,58}[a-zA-Z0-9]$")
+_VNET_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}[a-zA-Z0-9_]$")
 _RG_NAME = re.compile(r"^[a-zA-Z0-9._()-]{1,90}$")
 _LOCATION = re.compile(r"^[a-z0-9]{2,40}$")
 _CIDR = re.compile(r"^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$")
@@ -249,6 +287,11 @@ def _require_name(kind: str, name: str) -> str:
         raise ProvisionError(
             f"'{name}' is not a valid web app name. Use 3-60 characters: "
             f"letters, numbers and hyphens."
+        )
+    if kind == "virtual_network" and not _VNET_NAME.match(name):
+        raise ProvisionError(
+            f"'{name}' is not a valid virtual network name. Use 2-64 "
+            f"characters: letters, numbers, hyphens, underscores and dots."
         )
     return name
 
@@ -385,6 +428,20 @@ async def estimate_monthly(
                 "monthly": round(row["retail_price"] * HOURS_PER_MONTH, 2),
                 "currency": currency,
                 "basis": f"App Service {sku} at {HOURS_PER_MONTH} hours/month",
+            }
+
+        if kind == "virtual_network":
+            # Azure does not charge for a virtual network or its subnets. This
+            # is a real zero rather than a missing price, and saying "Not
+            # available" here would make a free thing look unpriced.
+            return {
+                "monthly": 0.0,
+                "currency": currency,
+                "basis": "Virtual networks and subnets are not charged for",
+                "note": (
+                    "Traffic leaving the network, and anything placed inside "
+                    "it, is charged separately."
+                ),
             }
 
         if kind == "storage_account":
@@ -542,6 +599,59 @@ def _storage_resources(f: Dict[str, Any], location: str) -> List[Dict[str, Any]]
     }]
 
 
+def _vnet_resources(f: Dict[str, Any], location: str) -> List[Dict[str, Any]]:
+    """A standalone virtual network with one subnet.
+
+    Separate from the VNet the VM builds for itself, which is fixed at
+    10.20.0.0/16 because nobody is asked about it. Here the caller chooses,
+    and the choice is checked: an address space that overlaps a network they
+    later want to peer with cannot be changed afterwards without rebuilding
+    everything inside it, so a typo here is expensive much later.
+    """
+    address_space = str(f.get("address_space") or "10.0.0.0/16")
+    subnet_prefix = str(f.get("subnet_prefix") or "10.0.1.0/24")
+    subnet_name = str(f.get("subnet_name") or "default")
+
+    for label, value in (("address space", address_space), ("subnet range", subnet_prefix)):
+        if not _CIDR.match(value):
+            raise ProvisionError(f"'{value}' is not a valid {label}. Use CIDR, such as 10.0.0.0/16.")
+
+    if not _cidr_contains(address_space, subnet_prefix):
+        raise ProvisionError(
+            f"The subnet {subnet_prefix} does not sit inside the address space "
+            f"{address_space}. Azure would refuse this deployment."
+        )
+
+    return [{
+        "type": "Microsoft.Network/virtualNetworks", "apiVersion": "2023-11-01",
+        "name": f["name"], "location": location,
+        "properties": {
+            "addressSpace": {"addressPrefixes": [address_space]},
+            "subnets": [{
+                "name": subnet_name,
+                "properties": {"addressPrefix": subnet_prefix},
+            }],
+        },
+    }]
+
+
+def _cidr_contains(outer: str, inner: str) -> bool:
+    """Is `inner` entirely within `outer`?
+
+    Checked here rather than left to ARM so the person gets a sentence naming
+    both ranges instead of a deployment that fails several seconds later with
+    an error mentioning neither.
+    """
+    import ipaddress
+
+    try:
+        return ipaddress.ip_network(inner, strict=False).subnet_of(
+            ipaddress.ip_network(outer, strict=False)
+        )
+    except ValueError:
+        return False
+
+
 def _web_app_resources(f: Dict[str, Any], location: str) -> List[Dict[str, Any]]:
     name = f["name"]
     plan = f"{name}-plan"
@@ -597,6 +707,8 @@ def build_template(
             resources += _vm_resources(fields, location, ssh_key.strip())
         elif kind == "storage_account":
             resources += _storage_resources(fields, location)
+        elif kind == "virtual_network":
+            resources += _vnet_resources(fields, location)
         elif kind == "web_app":
             resources += _web_app_resources(fields, location)
         else:

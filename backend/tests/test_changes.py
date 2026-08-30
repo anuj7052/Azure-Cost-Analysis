@@ -394,3 +394,99 @@ async def test_one_customer_cannot_compare_anothers_estate_by_date(db):
     result = await diff_by_date(db, intruder["id"], "t1", "2026-08-01", "2026-08-05")
 
     assert result["comparable"] is False
+
+
+# ── ignoring expected changes, end to end ───────────────────────────────────
+#
+# These go through the database rather than the pure functions, because the
+# thing worth pinning is that one customer's suppression cannot silence
+# another's audit trail.
+
+
+@pytest.mark.asyncio
+async def test_an_ignore_survives_being_set_twice(db):
+    """Ignoring is a state, not an event. Asking for it twice is not an error."""
+    from services import changes as svc
+
+    user = await user_service.upsert_user(db, claims("oid-i1"))
+    await svc.add_ignore(db, user["id"], "t1", "/sub/a", note="expected")
+    await svc.add_ignore(db, user["id"], "t1", "/sub/a", note="still expected")
+
+    rules = await svc.list_ignores(db, user["id"], "t1")
+    assert len(rules) == 1
+    assert rules[0]["note"] == "still expected"
+
+
+@pytest.mark.asyncio
+async def test_one_account_cannot_see_or_lift_anothers_ignores(db):
+    from services import changes as svc
+
+    mine = await user_service.upsert_user(db, claims("oid-i2", "me@x.com"))
+    theirs = await user_service.upsert_user(db, claims("oid-i3", "them@x.com"))
+
+    await svc.add_ignore(db, mine["id"], "t1", "/sub/a")
+
+    assert await svc.list_ignores(db, theirs["id"], "t1") == []
+    assert await svc.remove_ignore(db, theirs["id"], "t1", "/sub/a") == 0
+    assert len(await svc.list_ignores(db, mine["id"], "t1")) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_ignore_is_scoped_to_one_tenant(db):
+    """The same resource id can exist in two connected tenants."""
+    from services import changes as svc
+
+    user = await user_service.upsert_user(db, claims("oid-i4"))
+    await svc.add_ignore(db, user["id"], "t1", "/sub/a")
+
+    assert await svc.list_ignores(db, user["id"], "t2") == []
+
+
+@pytest.mark.asyncio
+async def test_lifting_an_ignore_that_was_never_set_is_not_an_error(db):
+    from services import changes as svc
+
+    user = await user_service.upsert_user(db, claims("oid-i5"))
+    assert await svc.remove_ignore(db, user["id"], "t1", "/sub/nothing") == 0
+
+
+@pytest.mark.asyncio
+async def test_a_lifted_ignore_stops_hiding_the_change(db):
+    from services import changes as svc
+
+    user = await user_service.upsert_user(db, claims("oid-i6"))
+    await scan(db, user["id"], [vm("vm-1")])
+    await scan(db, user["id"], [vm("vm-1"), vm("vm-2")])
+
+    rid = vm("vm-2")["id"]
+    await svc.add_ignore(db, user["id"], "t1", rid)
+
+    diff = await diff_scans(db, user["id"], "t1")
+    hidden = svc.apply_ignores(diff, await svc.list_ignores(db, user["id"], "t1"))
+    assert hidden["added_count"] == 0
+
+    await svc.remove_ignore(db, user["id"], "t1", rid)
+    diff = await diff_scans(db, user["id"], "t1")
+    shown = svc.apply_ignores(diff, await svc.list_ignores(db, user["id"], "t1"))
+    assert shown["added_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_configuration_bag_is_captured_and_diffed_through_a_real_scan(db):
+    """The whole path: Resource Graph shape in, property difference out."""
+    from services import changes as svc
+
+    user = await user_service.upsert_user(db, claims("oid-i7"))
+
+    before = vm("vm-net")
+    before["properties"] = {"publicNetworkAccess": "Disabled"}
+    after = vm("vm-net")
+    after["properties"] = {"publicNetworkAccess": "Enabled"}
+
+    await scan(db, user["id"], [before])
+    await scan(db, user["id"], [after])
+
+    result = await diff_scans(db, user["id"], "t1")
+    fields = [c["field"] for c in result["modified"][0]["changes"]]
+    assert fields == ["publicNetworkAccess"]
+    assert result["modified"][0]["properties"] == {"publicNetworkAccess": "Enabled"}

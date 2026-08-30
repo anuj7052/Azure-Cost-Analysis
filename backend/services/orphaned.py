@@ -14,6 +14,8 @@ from typing import Any, Dict, List
 
 import httpx
 
+from services import azure_retry
+
 MGMT_BASE = "https://management.azure.com"
 GRAPH_URL = f"{MGMT_BASE}/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
 
@@ -212,7 +214,12 @@ async def run_graph_query(
         while True:
             if skip_token:
                 body["options"]["$skipToken"] = skip_token
-            resp = await client.post(GRAPH_URL, headers=headers, json=body)
+            # Resource Graph is throttled per tenant, and this module runs eight
+            # rules back to back plus paging. Without the wait, one 429 became a
+            # raised exception and lost the whole category.
+            resp = await azure_retry.send_with_retry(
+                lambda: client.post(GRAPH_URL, headers=headers, json=body)
+            )
             resp.raise_for_status()
             data = resp.json()
             results.extend(data.get("data", []))
@@ -239,6 +246,66 @@ def _describe(rule: OrphanRule, row: Dict[str, Any]) -> str:
     if rule.key == "empty_load_balancers":
         return f"{row.get('skuName') or ''} · empty backend pool".strip(" ·")
     return ""
+
+
+# Every rule is an Azure Resource Graph query over the inventory. None of them
+# reads a metric. Saying so on each finding matters: "inventory-based" means
+# the resource is provably detached right now, which is a much stronger claim
+# than "we saw no traffic", and the reader deserves to know which one they are
+# being shown.
+INVENTORY = "inventory"
+
+# The Graph queries already project these columns. They used to be flattened
+# into one free-text line and then dropped, which meant the evidence for a
+# finding could be read but never filtered, sorted or checked. Keeping them
+# structured costs nothing and is the difference between "trust us" and "here
+# is why".
+_EVIDENCE_LABELS = {
+    "sizeGb": "Size (GB)",
+    "skuName": "SKU",
+    "skuTier": "SKU tier",
+    "vmSize": "VM size",
+    "ipAddress": "IP address",
+    "powerState": "Power state",
+    "workers": "Instances",
+    "ageDays": "Age (days)",
+    "created": "Created",
+}
+
+
+def _evidence(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The projected columns behind a finding, keyed by a readable label.
+
+    Empty values are dropped rather than rendered as blanks. A row that says
+    "SKU: " reads as missing data about the resource; leaving it out and
+    letting the panel say what it does not have is more honest.
+    """
+    out: Dict[str, Any] = {}
+    for key, label in _EVIDENCE_LABELS.items():
+        value = row.get(key)
+        if value is None or value == "":
+            continue
+        out[label] = value
+    return out
+
+
+def _age_days(row: Dict[str, Any]) -> int | None:
+    """
+    How long the resource has existed, when the query happened to compute it.
+
+    Only the snapshot rule projects this today. Returning None everywhere else
+    is deliberate: Azure Resource Graph does not record when a resource became
+    detached, and there is no scan history to derive it from, so any other
+    number here would be invented.
+    """
+    raw = row.get("ageDays")
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 async def find_orphaned_resources(
@@ -290,6 +357,13 @@ async def find_orphaned_resources(
                 "tags": row.get("tags") or {},
                 "detail": _describe(rule, row),
                 "monthly_cost": cost,
+                "rule": rule.key,
+                "rule_title": rule.title,
+                "severity": rule.severity,
+                "reason": rule.reason,
+                "method": INVENTORY,
+                "evidence": _evidence(row),
+                "age_days": _age_days(row),
             })
 
         # Most expensive first so the biggest saving is the first thing read.

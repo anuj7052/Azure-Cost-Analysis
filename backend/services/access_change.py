@@ -356,6 +356,61 @@ async def create_assignment(
     return True, "", created
 
 
+async def swap_assignment(
+    client: httpx.AsyncClient,
+    token: str,
+    scope: str,
+    role_definition_id: str,
+    principal_id: str,
+    principal_type: str,
+    old_assignment_id: str,
+) -> Dict[str, Any]:
+    """
+    Replace one role assignment with another, granting before removing.
+
+    The order is the entire safety property, and it is why this lives in one
+    function rather than being left to each caller to sequence. There are three
+    outcomes and they are not equally bad:
+
+      * Grant fails      -- nothing was removed. The account is untouched and
+                            still holds the role it had. This is the safe
+                            failure, and it is the one this order guarantees
+                            whenever Azure refuses the new role.
+      * Grant, no remove -- the account now holds both roles. Too much access,
+                            visible, and reportable. Bad, but recoverable by
+                            anyone reading the result.
+      * Both succeed     -- what was asked for.
+
+    Removing first would replace the first outcome with a fourth: the account
+    holds nothing, mid-shift, because a role that was working was deleted before
+    its replacement was known to exist. That is the one failure that stops
+    somebody's work, so it is the one the order rules out.
+
+    Returns a dict rather than raising, because the caller has an audit row to
+    close and a partial result to describe either way.
+    """
+    granted, grant_message, new_id = await create_assignment(
+        client, token, scope, role_definition_id, principal_id, principal_type,
+    )
+    if not granted:
+        return {
+            "stage": "grant",
+            "granted": False,
+            "removed": False,
+            "new_assignment_id": "",
+            "message": grant_message,
+        }
+
+    removed, remove_message = await delete_assignment(client, token, old_assignment_id)
+    return {
+        "stage": "done" if removed else "remove",
+        "granted": True,
+        "removed": removed,
+        "new_assignment_id": new_id,
+        "message": "" if removed else remove_message,
+    }
+
+
 async def delete_assignment(
     client: httpx.AsyncClient, token: str, assignment_id: str
 ) -> Tuple[bool, str]:

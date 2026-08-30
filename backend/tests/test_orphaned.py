@@ -152,3 +152,104 @@ async def test_expensive_findings_are_listed_first(monkeypatch):
     disks = next(c for c in result["categories"] if c["key"] == "unattached_disks")
 
     assert [i["name"] for i in disks["items"]] == ["pricey", "cheap"]
+
+
+# ── Structured evidence ────────────────────────────────────────────────────
+#
+# The projected Graph columns used to be squashed into one free-text line and
+# then dropped. Keeping them structured is what lets the detail panel show why
+# a finding is a finding, so these tests pin that they survive the round trip
+# and that nothing is invented to fill a gap.
+
+from services.orphaned import _evidence, _age_days, INVENTORY  # noqa: E402
+
+
+class TestEvidence:
+    def test_projected_columns_are_kept_with_readable_labels(self):
+        out = _evidence({"sizeGb": 128, "skuName": "Premium_LRS"})
+        assert out == {"Size (GB)": 128, "SKU": "Premium_LRS"}
+
+    def test_absent_columns_are_dropped_rather_than_shown_blank(self):
+        # A row reading "SKU: " looks like missing data about the resource
+        # rather than a column this rule never projected.
+        out = _evidence({"sizeGb": 8, "skuName": None, "vmSize": ""})
+        assert out == {"Size (GB)": 8}
+
+    def test_a_genuine_zero_is_kept(self):
+        assert _evidence({"workers": 0}) == {"Instances": 0}
+
+    def test_unknown_columns_are_ignored(self):
+        assert _evidence({"somethingElse": "x"}) == {}
+
+    def test_an_empty_row_yields_nothing(self):
+        assert _evidence({}) == {}
+
+
+class TestAgeDays:
+    def test_it_reads_the_age_the_query_computed(self):
+        assert _age_days({"ageDays": 115}) == 115
+
+    def test_it_accepts_a_string_from_the_json_payload(self):
+        assert _age_days({"ageDays": "115"}) == 115
+
+    def test_it_returns_none_when_the_rule_did_not_compute_one(self):
+        # Azure does not record when a resource became detached, so any number
+        # here for the other rules would be invented.
+        assert _age_days({}) is None
+        assert _age_days({"ageDays": None}) is None
+        assert _age_days({"ageDays": ""}) is None
+
+    def test_garbage_does_not_become_a_number(self):
+        assert _age_days({"ageDays": "soon"}) is None
+
+
+class TestItemShape:
+    @pytest.mark.asyncio
+    async def test_findings_carry_their_rule_and_evidence(self, monkeypatch):
+        async def fake_query(token, subs, query):
+            if "diskState" not in query:
+                return []
+            return [{
+                "id": "/subscriptions/s1/rg/a/disks/d1",
+                "name": "d1",
+                "type": "microsoft.compute/disks",
+                "resourceGroup": "rg-a",
+                "subscriptionId": "s1",
+                "location": "eastus",
+                "sizeGb": 128,
+                "skuName": "Premium_LRS",
+            }]
+
+        monkeypatch.setattr(orphaned_module, "run_graph_query", fake_query)
+        result = await find_orphaned_resources("t", ["s1"])
+
+        found = [i for c in result["categories"] for i in c["items"]]
+        assert len(found) == 1
+        item = found[0]
+
+        # Regrouping by subscription flattens the categories away, so the rule
+        # has to travel on the item or the finding loses its meaning.
+        assert item["rule"] == "unattached_disks"
+        assert item["rule_title"]
+        assert item["severity"] == "certain"
+        assert item["reason"]
+        assert item["evidence"] == {"Size (GB)": 128, "SKU": "Premium_LRS"}
+        assert item["age_days"] is None
+
+    @pytest.mark.asyncio
+    async def test_every_finding_says_it_came_from_inventory(self, monkeypatch):
+        """
+        No rule reads a metric today.
+
+        "Inventory-based" is a stronger claim than "we saw no traffic", and a
+        future metrics rule must not inherit that credibility by default.
+        """
+        async def fake_query(token, subs, query):
+            return [{"id": "/x", "name": "x", "subscriptionId": "s1"}]
+
+        monkeypatch.setattr(orphaned_module, "run_graph_query", fake_query)
+        result = await find_orphaned_resources("t", ["s1"])
+
+        found = [i for c in result["categories"] for i in c["items"]]
+        assert found
+        assert all(i["method"] == INVENTORY for i in found)

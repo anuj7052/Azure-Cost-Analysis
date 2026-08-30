@@ -267,3 +267,97 @@ class TestPlainLanguage:
     def test_dangerous_roles_are_recognised_case_insensitively(self):
         assert "owner" in access_change.DANGEROUS_ROLES
         assert "User Access Administrator".lower() in access_change.DANGEROUS_ROLES
+
+
+class TestSwapAssignment:
+    """
+    Replacing a role with a smaller one.
+
+    Every test here is really about ordering. The grant must happen first, so
+    that the failure mode of a broken swap is "too much access" rather than
+    "none at all" -- one is a finding for the next review, the other stops
+    somebody working mid-shift.
+    """
+
+    OLD = (
+        "/subscriptions/0befd724-7980-4cff-9fa4-2c1905abeb29"
+        "/providers/Microsoft.Authorization/roleAssignments/old"
+    )
+    SCOPE = "/subscriptions/0befd724-7980-4cff-9fa4-2c1905abeb29"
+
+    async def _swap(self, client):
+        return await access_change.swap_assignment(
+            client, "tok", self.SCOPE, "/rd/reader",
+            "principal-1", "User", self.OLD,
+        )
+
+    async def test_grants_before_removing(self):
+        client = FakeClient(
+            put=httpx.Response(201, json={"id": "/new"}),
+            delete=httpx.Response(200),
+        )
+        result = await self._swap(client)
+
+        verbs = [call[0] for call in client.calls]
+        assert verbs == ["PUT", "DELETE"], (
+            "The new role must exist before the old one is taken away."
+        )
+        assert result["granted"] and result["removed"]
+        assert result["stage"] == "done"
+
+    async def test_failed_grant_removes_nothing(self):
+        client = FakeClient(
+            put=httpx.Response(403, json={"error": {"message": "Denied."}}),
+            delete=httpx.Response(200),
+        )
+        result = await self._swap(client)
+
+        assert "DELETE" not in [call[0] for call in client.calls], (
+            "A refused grant must leave the existing access untouched."
+        )
+        assert result["granted"] is False
+        assert result["removed"] is False
+        assert result["stage"] == "grant"
+        assert "Denied." in result["message"]
+
+    async def test_failed_removal_is_reported_not_swallowed(self):
+        client = FakeClient(
+            put=httpx.Response(201, json={"id": "/new"}),
+            delete=httpx.Response(409, json={"error": {"message": "Locked."}}),
+        )
+        result = await self._swap(client)
+
+        # Both roles are now held. Calling this a success would leave the wider
+        # role in place with nobody told it was still there.
+        assert result["granted"] is True
+        assert result["removed"] is False
+        assert result["stage"] == "remove"
+        assert "Locked." in result["message"]
+
+    async def test_unreachable_azure_during_grant_changes_nothing(self):
+        client = FakeClient(put=httpx.ConnectError("boom"))
+        result = await self._swap(client)
+
+        assert client.calls == [("PUT", client.calls[0][1], client.calls[0][2])]
+        assert result["granted"] is False
+        assert result["new_assignment_id"] == ""
+
+    async def test_already_absent_old_assignment_still_counts_as_removed(self):
+        # A 404 on delete means the access the caller wanted gone is gone.
+        client = FakeClient(
+            put=httpx.Response(201, json={"id": "/new"}),
+            delete=httpx.Response(404),
+        )
+        result = await self._swap(client)
+        assert result["removed"] is True
+        assert result["stage"] == "done"
+
+    async def test_the_new_role_is_the_one_requested(self):
+        client = FakeClient(
+            put=httpx.Response(201, json={"id": "/new"}),
+            delete=httpx.Response(200),
+        )
+        await self._swap(client)
+        body = client.calls[0][2]
+        assert body["properties"]["roleDefinitionId"] == "/rd/reader"
+        assert body["properties"]["principalId"] == "principal-1"

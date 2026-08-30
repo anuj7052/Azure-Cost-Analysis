@@ -39,6 +39,8 @@ from urllib.parse import quote, urlencode
 
 import httpx
 
+from services import azure_retry
+
 log = logging.getLogger(__name__)
 
 MGMT_BASE = "https://management.azure.com"
@@ -59,6 +61,26 @@ DEFAULT_GRAIN = "PT1H"
 # a large estate finish in reasonable time without collecting 429s.
 MAX_CONCURRENT = 4
 PER_RESOURCE_TIMEOUT = 30.0
+
+# One gate for the whole process, not one per call.
+#
+# This used to be built inside collect_metrics, which meant the limit was four
+# *per invocation*: two browser tabs, or the Compute page and the Estate page,
+# each got their own four and Azure saw eight. The limit that matters is the
+# one Azure enforces, and it counts requests, not callers.
+#
+# Created lazily because a Semaphore binds to the running event loop, and this
+# module is imported before there is one.
+_gate: asyncio.Semaphore | None = None
+_gate_size = 0
+
+
+def _shared_gate(size: int) -> asyncio.Semaphore:
+    global _gate, _gate_size
+    if _gate is None or _gate_size != size:
+        _gate = asyncio.Semaphore(size)
+        _gate_size = size
+    return _gate
 
 # Below this many observed points, a percentile is not a measurement, it is a
 # rumour. A VM created three days ago cannot be right-sized on its first day.
@@ -240,12 +262,17 @@ async def fetch_metric_definitions(
     params = {"api-version": METRIC_DEFINITIONS_API}
 
     try:
-        resp = await client.get(url, params=params, headers=_headers(token),
-                                timeout=PER_RESOURCE_TIMEOUT)
+        resp = await azure_retry.send_with_retry(
+            lambda: client.get(url, params=params, headers=_headers(token),
+                               timeout=PER_RESOURCE_TIMEOUT)
+        )
         if resp.status_code == 403:
             return {"error": "Missing Monitoring Reader (Microsoft.Insights/metrics/read).",
                     "kind": NO_ACCESS, "status_code": 403}
         if resp.status_code == 429:
+            # Still throttled after the retries above waited out Azure's own
+            # Retry-After. Reported rather than retried further: this VM has a
+            # named reason, and continuing to ask would throttle the rest.
             return {"error": "Azure Monitor throttled the metric definitions request.",
                     "kind": THROTTLED, "status_code": 429}
         resp.raise_for_status()
@@ -525,8 +552,10 @@ async def fetch_resource_metrics(
         return round((time.monotonic() - started) * 1000, 1)
 
     try:
-        resp = await client.get(f"{url}?{query}", headers=_headers(token),
-                                timeout=PER_RESOURCE_TIMEOUT)
+        resp = await azure_retry.send_with_retry(
+            lambda: client.get(f"{url}?{query}", headers=_headers(token),
+                               timeout=PER_RESOURCE_TIMEOUT)
+        )
         diagnostics = {
             "requested_metrics": names,
             "status_code": resp.status_code,
@@ -831,7 +860,7 @@ async def fetch_many(
     with its error rather than missing, because a page that silently drops the
     resources it could not read shows a smaller, cleaner and wrong estate.
     """
-    semaphore = asyncio.Semaphore(max_concurrent)
+    semaphore = _shared_gate(max_concurrent)
     results: Dict[str, Dict[str, Any]] = {}
 
     async with httpx.AsyncClient(timeout=PER_RESOURCE_TIMEOUT) as client:

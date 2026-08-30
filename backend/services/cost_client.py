@@ -683,8 +683,13 @@ async def query_active_resources(
             "         vmSize = tostring(properties.hardwareProfile.vmSize), "
             "         diskGb = tostring(properties.diskSizeGB), "
             "         diskTier = tostring(properties.tier) "
+            # `properties` is the provider's own configuration bag, and it is
+            # the only place a change like "public network access was turned
+            # on" or "TLS was downgraded" can be seen. Projecting it makes the
+            # snapshot large, which is the price of being able to answer what
+            # actually changed instead of only that something did.
             "| project id, name, type, resourceGroup, subscriptionId, location, tags, "
-            "          skuName, skuTier, skuSize, vmSize, diskGb, diskTier "
+            "          skuName, skuTier, skuSize, vmSize, diskGb, diskTier, properties "
             "| order by type asc"
         ),
         "options": {"$top": 1000},

@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from services import azure_retry
+
 MGMT_BASE = "https://management.azure.com"
 ACTIVITY_API_VERSION = "2015-04-01"
 
@@ -217,10 +219,12 @@ async def fetch_activity(
         next_url: Optional[str] = url
         first = True
         while next_url:
-            response = await client.get(
-                next_url,
-                headers=headers,
-                params=params if first else None,
+            # One read per subscription, and the router runs them for every
+            # selected subscription. A throttled page used to raise and lose
+            # the whole subscription's history.
+            page_url, page_params = next_url, (params if first else None)
+            response = await azure_retry.send_with_retry(
+                lambda: client.get(page_url, headers=headers, params=page_params)
             )
             response.raise_for_status()
             payload = response.json()

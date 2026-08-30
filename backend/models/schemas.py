@@ -642,6 +642,22 @@ class ChangedResource(BaseModel):
     sku: str = ""
     tags: dict = {}
     changes: List[FieldChange] = []
+    # The provider's configuration bag as captured, so the detail view can show
+    # the resource exactly as Azure reported it. None means it was never
+    # captured — not that the resource had no configuration.
+    properties: Optional[dict] = None
+    # True when the owner has said this change is expected. Sent even when the
+    # entry is being hidden, so a suppressed row can be greyed out rather than
+    # silently disappearing.
+    ignored: bool = False
+
+
+class ChangeGroup(BaseModel):
+    key: str
+    added: int = 0
+    removed: int = 0
+    modified: int = 0
+    total: int = 0
 
 
 class ScanRef(BaseModel):
@@ -665,6 +681,33 @@ class ChangeDiffResponse(BaseModel):
     # Why a comparison could not be made, or which capture a date resolved to.
     # A range that silently resolved elsewhere would be impossible to trust.
     note: Optional[str] = None
+    # How many changes were suppressed. Reported even when they are hidden, so
+    # the page can say "3 changes ignored" instead of quietly showing less.
+    ignored_count: int = 0
+    groups: List[ChangeGroup] = []
+    grouped_by: Optional[str] = None
+
+
+class IgnoreRule(BaseModel):
+    resource_id: str
+    field: str = ""
+    note: str = ""
+    created_by: str = ""
+    created_at: Optional[str] = None
+
+
+class IgnoreListResponse(BaseModel):
+    ignores: List[IgnoreRule] = []
+    count: int = 0
+
+
+class IgnoreRequest(BaseModel):
+    tenant_id: str
+    resource_id: str
+    # Empty means the whole resource. A named field silences only that one, so
+    # a nightly tag rewrite does not also hide the day the resource is deleted.
+    field: str = ""
+    note: str = ""
 
 
 class HistoryEvent(BaseModel):
@@ -701,6 +744,20 @@ class OrphanedItem(BaseModel):
     # None means "Cost Management did not report a charge for this resource",
     # which is not the same as "it is free" — the query may have been throttled.
     monthly_cost: Optional[float] = None
+    # Which rule found it, carried on the item so the flattened list stays
+    # meaningful once it is regrouped by subscription or resource group.
+    rule: str = ""
+    rule_title: str = ""
+    severity: str = ""
+    reason: str = ""
+    # Always "inventory" today. Present as a field so a future metrics-based
+    # rule cannot quietly be presented as the same kind of proof.
+    method: str = ""
+    # The Graph columns behind the finding, keyed by a readable label.
+    evidence: dict = {}
+    # Age of the resource, not of the orphaning. Only the snapshot rule
+    # computes it; None everywhere else rather than a guess.
+    age_days: Optional[int] = None
 
 
 class OrphanedCategory(BaseModel):
@@ -942,3 +999,91 @@ class BandwidthResponse(BaseModel):
     meters: List[BandwidthMeter]
     by_subscription: List[BandwidthSubscription]
     errors: List[dict] = []
+
+
+# ── Azure write actions ────────────────────────────────────────────────────
+
+
+class ActionCatalogueItem(BaseModel):
+    """One capability, as the catalogue endpoint describes it.
+
+    `destructive` and `reversible` are separate fields because they are
+    separate questions. Deallocating a VM is destructive and reversible;
+    deleting a disk is both destructive and not. A UI that only knew
+    "dangerous" could not word those two warnings differently, and they are
+    not the same warning.
+    """
+    key: str
+    title: str
+    description: str
+    destructive: bool
+    reversible: bool
+    azure_permission: str = ""
+    enabled: bool
+    requires_confirmation: bool
+    caveats: List[str] = []
+
+
+class ActionCatalogueResponse(BaseModel):
+    actions: List[ActionCatalogueItem]
+    # Whether *this* caller may run any of them. The catalogue is readable by
+    # everyone with a seat, so the client needs to be told separately that a
+    # viewer is looking at a list of things they cannot do.
+    can_run: bool
+
+
+class ActionRecord(BaseModel):
+    """One attempt to change Azure, successful or not.
+
+    Failed attempts are returned, not filtered out. A history that shows only
+    what worked cannot answer "did somebody try to remove that role?", which is
+    most of the reason to keep one.
+    """
+    action_id: str
+    action: str
+    state: str
+    tenant_id: str
+    subscription_id: str = ""
+    resource_id: str = ""
+    resource_name: str = ""
+    resource_kind: str = ""
+    actor_name: str = ""
+    actor_email: str = ""
+    request: dict = {}
+    previous_state: dict = {}
+    new_state: dict = {}
+    failure_reason: str = ""
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class ActionHistoryResponse(BaseModel):
+    items: List[ActionRecord]
+
+
+class TagRequest(BaseModel):
+    tenant_id: str
+    resource_id: str
+    tags: dict
+    subscription_id: str = ""
+    resource_name: str = ""
+    resource_kind: str = ""
+    # Required by the server, not just by the dialog. The API is callable
+    # directly, so an unconfirmed change to somebody's estate has to fail here.
+    confirmation: bool = False
+
+    @field_validator("resource_id")
+    @classmethod
+    def _must_be_an_arm_id(cls, value: str) -> str:
+        """Reject anything that is not an ARM resource id before Azure sees it.
+
+        This value is interpolated into a management.azure.com URL. Letting a
+        caller supply an arbitrary string there is how a path becomes a way to
+        reach a different endpoint than the one intended.
+        """
+        v = (value or "").strip()
+        if not v.startswith("/subscriptions/"):
+            raise ValueError("resource_id must be a full Azure resource id.")
+        if ".." in v or "?" in v or "#" in v or "//" in v:
+            raise ValueError("resource_id contains characters that are not allowed.")
+        return v

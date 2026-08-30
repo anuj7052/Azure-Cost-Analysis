@@ -17,6 +17,8 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from services import permissions_manifest
+
 INK = colors.HexColor("#0f172a")
 MUTED = colors.HexColor("#475569")
 ACCENT = colors.HexColor("#2563eb")
@@ -122,8 +124,10 @@ def build_setup_guide(app_name: str = "Cloudledger") -> bytes:
     f.append(Paragraph("Connect your Azure tenant", st["title"]))
     f.append(Paragraph(
         "A step-by-step guide to creating the service principal this app uses to read "
-        "your Azure costs. Read-only: nothing in this setup can create, change or delete "
-        "resources, or see anything beyond billing and inventory data.",
+        "your Azure costs. The roles in Step 3 are read-only, and they are enough for "
+        "cost and estate reporting. Some features can act on Azure rather than only "
+        "report on it; those need extra roles, they are listed separately at the end, "
+        "and nothing grants them unless you choose to.",
         st["lede"],
     ))
 
@@ -183,10 +187,11 @@ def build_setup_guide(app_name: str = "Cloudledger") -> bytes:
     f.append(PageBreak())
 
     # ── Step 3 ────────────────────────────────────────────────────────────
-    f.append(Paragraph("Step 3 — Grant read-only access to your subscriptions", st["h2"]))
+    f.append(Paragraph("Step 3 \u2014 Grant access to your subscriptions", st["h2"]))
     f.append(Paragraph(
         "The application exists but can see nothing yet. Repeat this step for every "
-        "subscription whose costs you want to track.",
+        "subscription whose costs you want to track. Every role in the table below is "
+        "read-only \u2014 none of them can create, change or delete a resource.",
         st["body"],
     ))
     f.append(_steps([
@@ -197,19 +202,21 @@ def build_setup_guide(app_name: str = "Cloudledger") -> bytes:
         "Under Members choose <b>User, group, or service principal</b>, select "
         "<b>Select members</b>, search for your app registration name and select it.",
         "Select <b>Review + assign</b>.",
-        "Now repeat the same assignment for the <b>Cost Management Reader</b> role.",
+        "Repeat for each remaining role in the table below. <b>Reader</b> and "
+        "<b>Cost Management Reader</b> are the two you cannot skip.",
     ], st))
     f.append(Spacer(1, 4))
 
     roles = Table(
         [
             [Paragraph("<b>Role</b>", st["muted"]), Paragraph("<b>Why it is needed</b>", st["muted"])],
-            [Paragraph("Reader", st["body"]),
-             Paragraph("Lists subscriptions, resource groups and resources, so charges can be "
-                       "attributed to what actually created them.", st["muted"])],
-            [Paragraph("Cost Management Reader", st["body"]),
-             Paragraph("Reads the billing and usage data behind every figure this app shows.",
-                       st["muted"])],
+        ] + [
+            [Paragraph(r["name"], st["body"]),
+             Paragraph(
+                 r["why"] + (f" <i>{r['caveat']}</i>" if r["caveat"] else ""),
+                 st["muted"],
+             )]
+            for r in permissions_manifest.cumulative_roles(permissions_manifest.FULL_READ)
         ],
         colWidths=[45 * mm, 120 * mm],
     )
@@ -293,10 +300,37 @@ def build_setup_guide(app_name: str = "Cloudledger") -> bytes:
         "month end, so the most recent complete month is the reliable comparison.",
     ], st))
 
+    f.append(Paragraph("Optional \u2014 letting the app make changes", st["h2"]))
+    f.append(Paragraph(
+        "Everything above is read-only. A few features do more than report: applying a "
+        "tag, resizing a virtual machine, deploying from a bill of quantities, or "
+        "removing a role assignment that access review flagged. Those need the roles "
+        "below. Grant them only if you want those features, and scope them as narrowly "
+        "as you can. The app always asks before it acts.",
+        st["body"],
+    ))
+    f.append(_bullets([
+        f"<b>{r['name']}</b> \u2014 {r['why']} {r['caveat']}"
+        for r in permissions_manifest.write_roles()
+    ], st))
+    f.append(Spacer(1, 4))
+    f.append(_panel([
+        Paragraph("Resolving names instead of GUIDs", st["h3"]),
+        Paragraph(
+            "Role assignments in Azure identify people by GUID. To show names instead, "
+            "the app asks for the <b>Directory.Read.All</b> delegated permission in "
+            "Microsoft Entra ID, which a tenant administrator must consent to once. It "
+            "reads the whole directory, not only the accounts shown here, so decide "
+            "deliberately. Skip it and every account appears as a GUID; nothing else "
+            "stops working.",
+            st["muted"],
+        ),
+    ]))
+
     f.append(Paragraph("Keeping access secure", st["h2"]))
     f.append(_bullets([
-        "The service principal only ever needs <b>Reader</b> and <b>Cost Management Reader</b>. "
-        "If anyone asks you to add Contributor or Owner, it is not required by this app.",
+        "For reporting, the service principal only ever needs the read-only roles in "
+        "step 3. If anyone asks you to add <b>Owner</b>, it is not required by this app.",
         "Set a calendar reminder before the client secret expires. When it lapses, cost data "
         "stops updating.",
         "If a secret is ever exposed, delete it in <b>Certificates &amp; secrets</b> "

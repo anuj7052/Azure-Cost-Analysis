@@ -410,3 +410,84 @@ async def test_windows_and_spot_rates_are_excluded_from_a_linux_vm_price(monkeyp
         psvc.draft("linux_vm", {"name": "web01"}), "centralindia", "INR"
     )
     assert price["monthly"] == 2.0 * psvc.HOURS_PER_MONTH
+
+
+# ── virtual networks ────────────────────────────────────────────────────────
+#
+# An address space cannot be changed once things are running inside it, so a
+# wrong one here is expensive to discover later. These check that the obvious
+# mistakes are refused before Azure is called, not after.
+
+
+def test_a_virtual_network_can_be_built_from_defaults_alone():
+    drafted = psvc.draft("virtual_network", {"name": "vnet-app"})
+    assert drafted["missing"] == []
+
+    template = psvc.build_template(
+        [{"kind": "virtual_network", "fields": drafted["fields"]}], "centralindia"
+    )
+    resource = template["resources"][0]
+    assert resource["type"] == "Microsoft.Network/virtualNetworks"
+    assert resource["properties"]["addressSpace"]["addressPrefixes"] == ["10.0.0.0/16"]
+    assert resource["properties"]["subnets"][0]["properties"]["addressPrefix"] == "10.0.1.0/24"
+
+
+def test_a_subnet_outside_its_address_space_is_refused_with_both_ranges_named():
+    with pytest.raises(psvc.ProvisionError) as exc:
+        psvc.build_template([{
+            "kind": "virtual_network",
+            "fields": {"name": "vnet-app", "address_space": "10.0.0.0/16",
+                       "subnet_prefix": "192.168.1.0/24"},
+        }], "centralindia")
+
+    message = exc.value.message
+    assert "192.168.1.0/24" in message and "10.0.0.0/16" in message
+
+
+def test_a_subnet_inside_its_address_space_is_accepted():
+    template = psvc.build_template([{
+        "kind": "virtual_network",
+        "fields": {"name": "vnet-app", "address_space": "172.16.0.0/12",
+                   "subnet_prefix": "172.16.5.0/24"},
+    }], "centralindia")
+    assert template["resources"][0]["properties"]["subnets"][0][
+        "properties"]["addressPrefix"] == "172.16.5.0/24"
+
+
+@pytest.mark.parametrize("bad", ["10.0.0.0", "not-a-cidr", "10.0.0.0/16/24"])
+def test_an_address_space_that_is_not_cidr_is_refused(bad):
+    with pytest.raises(psvc.ProvisionError):
+        psvc.build_template([{
+            "kind": "virtual_network",
+            "fields": {"name": "vnet-app", "address_space": bad,
+                       "subnet_prefix": "10.0.1.0/24"},
+        }], "centralindia")
+
+
+def test_an_empty_address_space_means_use_the_default_not_refuse():
+    """A field left blank is the caller declining to choose, which the
+    catalogue already has an answer for. Refusing it would turn an optional
+    field into a required one."""
+    template = psvc.build_template([{
+        "kind": "virtual_network",
+        "fields": {"name": "vnet-app", "address_space": "", "subnet_prefix": ""},
+    }], "centralindia")
+    assert template["resources"][0]["properties"][
+        "addressSpace"]["addressPrefixes"] == ["10.0.0.0/16"]
+
+
+def test_a_virtual_network_is_priced_as_free_rather_than_unknown():
+    """Azure does not charge for a VNet. Reporting "Not available" would make a
+    free thing look unpriced, which is a different claim."""
+    import asyncio
+
+    price = asyncio.run(psvc.estimate_monthly(
+        {"kind": "virtual_network", "fields": {"name": "v"}}, "centralindia", "INR"
+    ))
+    assert price["monthly"] == 0.0
+    assert "not charged" in price["basis"].lower()
+
+
+def test_the_catalogue_offers_a_virtual_network():
+    kinds = {entry["kind"] for entry in psvc.describe_catalog()}
+    assert "virtual_network" in kinds

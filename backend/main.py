@@ -42,7 +42,7 @@ from models.schemas import ProfileUpdate
 from routers import (
     admin, tenants, subscriptions, costs, services, upload, bandwidth, boq,
     guide, integrations, orphaned, scans, changes, activity, prices, security,
-    compute, anomalies, team, provision,
+    compute, anomalies, team, provision, actions, network, commitments,
 )
 
 log = logging.getLogger("app")
@@ -69,6 +69,9 @@ API_ROUTERS = [
     compute.router,
     team.router,
     provision.router,
+    actions.router,
+    network.router,
+    commitments.router,
 ]
 
 

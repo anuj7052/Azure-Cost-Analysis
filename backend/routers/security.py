@@ -24,7 +24,8 @@ from pydantic import BaseModel, Field
 
 from auth.dependencies import get_current_user, require_workspace_admin
 from core.db import get_db
-from services import access_change, access_review, graph_identity, security_fetch
+from services import access_accept, access_change, access_review, graph_identity
+from services import management_groups, security_fetch
 from services import security_posture as posture
 from services.activity import fetch_activity, normalise
 from services.azure_errors import azure_error
@@ -46,6 +47,11 @@ class PostureRequest(BaseModel):
     # id instead of the most recent one, so a specific pair can be compared.
     compare_to: Optional[int] = None
     save: bool = True
+    # Also read the grants made *at* management groups. Off by default because
+    # it is an extra tenant-wide read that many accounts have no permission for,
+    # and a page that fails for everyone without Management Group Reader would
+    # be a regression for the majority to serve the minority.
+    include_management_groups: bool = False
 
 
 class AccessRequest(PostureRequest):
@@ -56,6 +62,41 @@ class AccessRequest(PostureRequest):
     # Reading the Activity Log is by far the slowest part of this page, and the
     # assignment list is useful without it, so it can be turned off.
     include_usage: bool = True
+    # Findings the reviewer has already accepted are hidden unless asked for.
+    show_hidden: bool = False
+
+
+class AcceptRequest(BaseModel):
+    tenant_id: str
+    principal_id: str
+    # Empty means the whole principal — the "hide principal" action.
+    finding_key: str = ""
+    note: str = ""
+
+
+async def _management_group_assignments(
+    token: str,
+    include: bool,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Grants made at management groups, and the hierarchy they were made on.
+
+    Returns empty results rather than raising when the caller has no management
+    group access. That permission is granted separately from subscription
+    access and plenty of legitimate reviewers lack it — failing the whole page
+    for them would hide the subscription findings they *are* entitled to, which
+    is the opposite of what a security tool should do when access is partial.
+    """
+    if not include:
+        return [], [], {}
+
+    hierarchy = await management_groups.fetch_hierarchy(token)
+    groups = management_groups.flatten_tree(hierarchy["groups"])
+    assignments, errors, truncated = await management_groups.fetch_group_assignments(
+        token, groups
+    )
+    hierarchy["assignments_truncated"] = truncated
+    return assignments, list(hierarchy["errors"]) + errors, hierarchy
 
 
 def _now_iso() -> str:
@@ -215,6 +256,12 @@ async def get_role_assignments(
         if not payload.get("definitions_read", True):
             definitions_read = False
 
+    group_assignments, group_errors, hierarchy = await _management_group_assignments(
+        token, body.include_management_groups
+    )
+    assignments.extend(group_assignments)
+    errors.extend(group_errors)
+
     # Names are resolved across the merged list rather than per subscription:
     # the same handful of administrators hold access in most of them, and one
     # pass asks Graph once per distinct account instead of once per account per
@@ -230,6 +277,7 @@ async def get_role_assignments(
 
     return {
         **view,
+        "management_groups": hierarchy,
         "truncated": truncated,
         "truncation_note": (
             "Azure returned more role assignments than this read follows. The "
@@ -294,6 +342,17 @@ async def get_access_review(
     for payload in assignment_results.values():
         assignments.extend(payload["assignments"])
 
+    # Read after the subscriptions, and merged in, so that a grant made at a
+    # management group is reviewed as the one grant it is. Reading it per
+    # subscription would report the same Owner assignment once for every
+    # subscription that inherits it, which is how a single platform-team grant
+    # turns into forty identical findings.
+    group_assignments, group_errors, hierarchy = await _management_group_assignments(
+        token, body.include_management_groups
+    )
+    assignments.extend(group_assignments)
+    errors.extend(group_errors)
+
     # Resolved before the findings are built, so that a finding's headline names
     # the person rather than their object id. Doing it afterwards would mean
     # rewriting sentences that had already been composed around a GUID.
@@ -333,8 +392,23 @@ async def get_access_review(
         now_iso=_now_iso(),
     )
 
+    # Acceptance is applied last, over the finished findings, so that the
+    # totals inside `review` still describe everything that was found. A page
+    # that hid findings *and* shrank its own totals could never tell the reader
+    # that anything had been hidden at all.
+    rules = await access_accept.list_rules(
+        db, current_user["account_id"], body.tenant_id
+    )
+    accepted = access_accept.apply_rules(
+        review["findings"], rules, show_hidden=body.show_hidden
+    )
+
     return {
         **review,
+        "findings": accepted["findings"],
+        "hidden_count": accepted["hidden_count"],
+        "principals": access_accept.principal_rows(accepted["findings"]),
+        "management_groups": hierarchy,
         "errors": errors,
         "coverage": security_fetch.coverage_note(subscriptions, errors, posture.RBAC),
         "directory": {
@@ -354,6 +428,85 @@ async def get_access_review(
             "look idle here.",
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Accepted findings
+# ---------------------------------------------------------------------------
+
+@router.get("/access-ignores")
+async def list_access_ignores(
+    tenant_id: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Every finding this workspace has accepted for this tenant."""
+    rules = await access_accept.list_rules(
+        db, current_user["account_id"], tenant_id
+    )
+    return {"ignores": rules, "count": len(rules)}
+
+
+@router.post("/access-ignores", status_code=204)
+async def accept_access_finding(
+    body: AcceptRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Record that a finding was reviewed and accepted.
+
+    Nothing in Azure changes. This only affects what this workspace sees by
+    default, and every acceptance is attributed and reversible — an audit needs
+    to know who decided a finding was fine, not just that somebody did.
+    """
+    await access_accept.accept(
+        db,
+        current_user["account_id"],
+        body.tenant_id,
+        body.principal_id,
+        body.finding_key,
+        body.note,
+        created_by=current_user.get("email") or str(current_user.get("actor_id", "")),
+    )
+
+
+@router.delete("/access-ignores", status_code=204)
+async def restore_access_finding(
+    tenant_id: str = Query(...),
+    principal_id: str = Query(...),
+    finding_key: str = Query(""),
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Put an accepted finding back in the list."""
+    await access_accept.restore(
+        db, current_user["account_id"], tenant_id, principal_id, finding_key
+    )
+
+
+# ---------------------------------------------------------------------------
+# Management groups
+# ---------------------------------------------------------------------------
+
+@router.post("/management-groups")
+async def get_management_groups(
+    body: PostureRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    The management group hierarchy this account can see.
+
+    Deliberately not scoped by the subscription selector: the hierarchy is a
+    property of the tenant, and the whole reason to read it is to see the levels
+    *above* the subscriptions somebody happened to tick. What bounds the answer
+    instead is the caller's own token — Azure returns only the groups they hold
+    read access on, so this can never widen what they are entitled to see.
+    """
+    token = await _token(body, current_user, db)
+    return await management_groups.fetch_hierarchy(token)
+
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +845,21 @@ class RevokeRequest(BaseModel):
     assignment_id: str
     principal_name: str = ""
     role_name: str = ""
+    confirmation: bool = False
+
+
+class DowngradeRequest(BaseModel):
+    """Swap one role for a smaller one, at the same scope, for the same account."""
+
+    tenant_id: str
+    # The grant being replaced. Its scope and principal are read from Azure
+    # rather than accepted from the browser, so a caller cannot aim the new
+    # assignment at somebody else.
+    assignment_id: str
+    role_definition_id: str
+    principal_name: str = ""
+    from_role_name: str = ""
+    to_role_name: str = ""
     confirmation: bool = False
 
 
@@ -1037,6 +1205,228 @@ async def revoke_access(
         "message": (
             f"{body.principal_name or 'That account'} no longer holds "
             f"{role_name or 'that role'} here."
+        ),
+    }
+
+
+@router.post("/access/downgrade/preview")
+async def preview_downgrade(
+    body: DowngradeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    What replacing this role with a smaller one would involve.
+
+    A downgrade is two Azure operations, not one, and the preview says so —
+    somebody approving this is approving a grant *and* a removal, and hiding
+    half of that behind a single friendly word would be the wrong kind of
+    simplification.
+    """
+    scope = _assignment_scope(body.assignment_id)
+    token = await _authorise_scope(body.tenant_id, scope, current_user, db)
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        existing = await access_change.find_assignment(
+            client, token, scope, body.assignment_id
+        )
+        permission = await access_change.caller_permissions(client, token, scope)
+        from_role = body.from_role_name
+        if existing and not from_role:
+            from_role = await access_change.role_name_for(
+                client, token, existing["role_definition_id"]
+            )
+        to_role = body.to_role_name or await access_change.role_name_for(
+            client, token, body.role_definition_id
+        )
+
+    checks = [
+        {
+            "key": "exists",
+            "label": "The current access still exists",
+            "ok": existing is not None,
+            "note": (
+                "Found in Azure." if existing
+                else "Azure no longer has this assignment. There is nothing to "
+                     "replace — grant the smaller role directly instead."
+            ),
+        },
+        {
+            "key": "target",
+            "label": "The replacement role was found",
+            "ok": bool(body.role_definition_id),
+            "note": to_role or "The replacement role could not be named.",
+        },
+        {
+            "key": "different",
+            "label": "The two roles are different",
+            # Replacing a role with itself would delete working access and
+            # re-create it for no reason, and a transient failure in between
+            # would leave the account with nothing.
+            "ok": bool(existing) and (
+                existing["role_definition_id"].rsplit("/", 1)[-1].lower()
+                != body.role_definition_id.rsplit("/", 1)[-1].lower()
+            ),
+            "note": (
+                "The replacement is a different role."
+                if existing and existing["role_definition_id"].rsplit("/", 1)[-1].lower()
+                != body.role_definition_id.rsplit("/", 1)[-1].lower()
+                else "This is the same role that is already held. Nothing would change."
+            ),
+        },
+        {
+            "key": "permission",
+            "label": "You may both grant and remove access here",
+            # Both are required, and the write is the one that matters more:
+            # without it the removal would still succeed and the account would
+            # be left with no access at all.
+            "ok": permission["can_write"] and permission["can_delete"],
+            "note": permission["note"],
+        },
+    ]
+
+    return {
+        "action": "downgrade",
+        "can_apply": all(c["ok"] for c in checks),
+        "checks": checks,
+        "principal_name": body.principal_name or (existing or {}).get("principal_id", ""),
+        "role_name": to_role,
+        "from_role_name": from_role,
+        "scope": scope,
+        "scope_kind": access_change.scope_kind(scope),
+        "effect": (
+            f"{body.principal_name or 'That account'} keeps access here, but as "
+            f"{to_role or 'the smaller role'} instead of {from_role or 'the current role'}. "
+            "The smaller role is granted first and the larger one removed only "
+            "after that succeeds, so there is no moment with no access at all."
+        ),
+        "high_risk": (from_role or "").strip().lower() in access_change.DANGEROUS_ROLES,
+        "permission": permission,
+    }
+
+
+@router.post("/access/downgrade", dependencies=[Depends(require_workspace_admin)])
+async def downgrade_access(
+    body: DowngradeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Replace a role with a smaller one, granting before removing.
+
+    The order is the whole safety property of this endpoint. Removing first and
+    granting second leaves a window — and, if the grant then fails, a permanent
+    state — in which the account has no access at all. Granting first is
+    briefly *over*-permissive instead, which is the failure worth having: the
+    person keeps working, and the worst outcome is a leftover assignment that
+    the next review will flag and that this response names explicitly.
+    """
+    if not body.confirmation:
+        raise HTTPException(
+            status_code=400,
+            detail="Changing somebody's role requires explicit confirmation.",
+        )
+
+    scope = _assignment_scope(body.assignment_id)
+    token = await _authorise_scope(body.tenant_id, scope, current_user, db)
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        permission = await access_change.caller_permissions(client, token, scope)
+        if not (permission["can_write"] and permission["can_delete"]):
+            raise HTTPException(status_code=403, detail=permission["note"])
+
+        existing = await access_change.find_assignment(
+            client, token, scope, body.assignment_id
+        )
+        if not existing:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Azure no longer has that assignment, so there is nothing "
+                    "to replace. Grant the smaller role directly instead."
+                ),
+            )
+
+        from_role = body.from_role_name or await access_change.role_name_for(
+            client, token, existing["role_definition_id"]
+        )
+        to_role = body.to_role_name or await access_change.role_name_for(
+            client, token, body.role_definition_id
+        )
+
+        event_id = await access_change.open_event(
+            db, current_user, body.tenant_id, access_change.ACTION_GRANT,
+            scope=scope,
+            target_id=existing["principal_id"],
+            target_name=body.principal_name,
+            target_kind=existing.get("principal_type", "principal"),
+            previous_state=from_role or "Unknown role",
+            new_state=to_role or body.role_definition_id,
+            detail={
+                "downgrade": True,
+                "replaces": body.assignment_id,
+                "role_definition_id": body.role_definition_id,
+            },
+        )
+
+        outcome = await access_change.swap_assignment(
+            client, token, scope, body.role_definition_id,
+            existing["principal_id"], existing.get("principal_type", ""),
+            body.assignment_id,
+        )
+
+        if not outcome["granted"]:
+            # Nothing has been removed, so the account is exactly as it was.
+            # Saying that plainly matters more than the error itself.
+            await access_change.close_event(
+                db, event_id, access_change.RESULT_FAILED,
+                failure_reason=outcome["message"],
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"The smaller role could not be granted: {outcome['message']}. "
+                    "Nothing was removed, so this account still holds "
+                    f"{from_role or 'its current role'}."
+                ),
+            )
+
+    removed = outcome["removed"]
+    new_assignment_id = outcome["new_assignment_id"]
+
+    await access_change.close_event(
+        db, event_id,
+        access_change.RESULT_SUCCESS if removed else access_change.RESULT_FAILED,
+        failure_reason="" if removed else outcome["message"],
+        azure_operation=new_assignment_id,
+    )
+
+    if not removed:
+        # Both roles are now held. This is a real, visible problem and it is
+        # reported as one -- returning success because "the downgrade mostly
+        # worked" would leave elevated access in place with nobody told.
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"{to_role or 'The smaller role'} was granted, but "
+                f"{from_role or 'the larger role'} could not be removed: "
+                f"{outcome['message']}. This account now holds both. Remove the "
+                "larger one from the Role Assignments page."
+            ),
+        )
+
+    return {
+        "event_id": event_id,
+        "assignment_id": new_assignment_id,
+        "result": "success",
+        "principal_name": body.principal_name,
+        "role_name": to_role,
+        "from_role_name": from_role,
+        "scope": scope,
+        "message": (
+            f"{body.principal_name or 'That account'} now holds "
+            f"{to_role or 'the smaller role'} here instead of "
+            f"{from_role or 'the previous role'}."
         ),
     }
 
