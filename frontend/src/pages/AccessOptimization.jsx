@@ -22,7 +22,7 @@ import { useAppStore } from '../store/useAppStore';
 import {
   OPTIMIZATION_KINDS, KIND_LABEL, PRINCIPAL_TYPES, ROLE_TYPES, SORTS,
   shown, asDate, idleLabel, operationChips, scopeLabel, scopeChip,
-  filterFindings, principalRows, findingsFor, subscriptionOptions,
+  filterFindings, principalRows, cardsFor, CARD_SCOPES, subscriptionOptions,
   managementGroupOptions, actionability, roleIdFor,
 } from '../utils/accessOptimization';
 
@@ -97,6 +97,7 @@ const CARD_SORTS = [
   { key: 'kind', label: 'Optimization type' },
   { key: 'severity', label: 'Severity' },
   { key: 'role', label: 'Role' },
+  { key: 'principal', label: 'Principal (A\u2013Z)' },
 ];
 
 function Chip({ tone, icon: Icon, children }) {
@@ -395,6 +396,7 @@ export default function AccessOptimization() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('most');
   const [cardSort, setCardSort] = useState('kind');
+  const [cardScope, setCardScope] = useState('principal');
   const [selected, setSelected] = useState('');
   const [busyKey, setBusyKey] = useState('');
   const [revoking, setRevoking] = useState(null);
@@ -423,8 +425,12 @@ export default function AccessOptimization() {
   );
 
   const cards = useMemo(
-    () => (active ? findingsFor(filtered, active.key, cardSort) : []),
-    [filtered, active, cardSort],
+    () => cardsFor(filtered, {
+      scope: cardScope,
+      principalKey: active?.key,
+      sort: cardSort,
+    }),
+    [filtered, active, cardScope, cardSort],
   );
 
   const subscriptions = useMemo(() => subscriptionOptions(allFindings), [allFindings]);
@@ -634,8 +640,8 @@ export default function AccessOptimization() {
                   <PrincipalRow
                     key={row.key}
                     row={row}
-                    active={active?.key === row.key}
-                    onSelect={() => setSelected(row.key)}
+                    active={cardScope === 'principal' && active?.key === row.key}
+                    onSelect={() => { setSelected(row.key); setCardScope('principal'); }}
                   />
                 ))}
               </div>
@@ -649,6 +655,17 @@ export default function AccessOptimization() {
               <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 px-4 py-2.5">
                 <p className="text-xs font-semibold text-white">Optimization Recommendations</p>
                 <label className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                  Showing
+                  <select
+                    value={cardScope}
+                    onChange={e => setCardScope(e.target.value)}
+                    aria-label="Which findings to show"
+                    className="rounded-lg border border-slate-800 bg-slate-800/50 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-slate-600"
+                  >
+                    {CARD_SCOPES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                  </select>
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-500">
                   Sort by
                   <select
                     value={cardSort}
@@ -659,7 +676,7 @@ export default function AccessOptimization() {
                   </select>
                 </label>
 
-                {active && (
+                {cardScope === 'principal' && active && (
                   <div className="ml-auto flex items-center gap-2">
                     <button
                       onClick={() => {
@@ -687,7 +704,7 @@ export default function AccessOptimization() {
                 )}
               </div>
 
-              {active && (
+              {cardScope === 'principal' && active && (
                 <div className="border-b border-slate-800 px-4 py-2">
                   <p className="text-[11px] text-slate-500">
                     {active.principal_type}:{' '}
@@ -697,6 +714,15 @@ export default function AccessOptimization() {
                     {active.principal_upn && (
                       <span className="ml-1 break-all text-slate-600">{active.principal_upn}</span>
                     )}
+                  </p>
+                </div>
+              )}
+
+              {cardScope === 'all' && (
+                <div className="border-b border-slate-800 px-4 py-2">
+                  <p className="text-[11px] text-slate-500">
+                    Every principal that matches the filters above. Selecting a
+                    name on the left narrows this back to one person.
                   </p>
                 </div>
               )}
@@ -724,7 +750,8 @@ export default function AccessOptimization() {
               </div>
 
               <div className="border-t border-slate-800 px-4 py-2 text-[11px] text-slate-500">
-                Showing {cards.length} optimization{cards.length === 1 ? '' : 's'} of{' '}
+                Showing {cards.length} optimization{cards.length === 1 ? '' : 's'}
+                {cardScope === 'principal' ? ' for this principal' : ' across every principal'}, of{' '}
                 {filtered.length} matching this filter, from {totals.finding_count ?? 0} found.
                 {hiddenCount > 0 && !showHidden && ` ${hiddenCount} accepted and hidden.`}
               </div>

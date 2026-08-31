@@ -4,6 +4,7 @@ import {
   filterFindings, principalRows, sortPrincipals, findingsFor,
   subscriptionOptions, managementGroupOptions, flattenGroups,
   actionability, roleIdFor,
+  cardsFor, sortFindings, principalKeyOf, CARD_SCOPES,
   OPTIMIZATION_KINDS,
 } from '../src/utils/accessOptimization';
 
@@ -344,5 +345,56 @@ describe('resolving a recommended role name to an id', () => {
 
   it('accepts the alternative field names Azure responses use', () => {
     expect(roleIdFor([{ role_definition_id: '/rd/x', name: 'Reader' }], 'Reader')).toBe('/rd/x');
+  });
+});
+
+describe('cardsFor', () => {
+  const amber = finding({ principal_id: 'p1', principal_name: 'Amber Chen' });
+  const rijul = finding({ principal_id: 'p2', principal_name: 'Rijul Sharma', kind: 'over_privileged' });
+  const all = [amber, rijul];
+
+  it('shows only the selected principal by default', () => {
+    const cards = cardsFor(all, { principalKey: 'p1' });
+    expect(cards).toHaveLength(1);
+    expect(cards[0].principal_name).toBe('Amber Chen');
+  });
+
+  it('never leaks another principal into a selection', () => {
+    for (const key of ['p1', 'p2']) {
+      const cards = cardsFor(all, { principalKey: key });
+      expect(cards.every(c => principalKeyOf(c) === key)).toBe(true);
+    }
+  });
+
+  it('shows everything when the scope is all', () => {
+    expect(cardsFor(all, { scope: 'all', principalKey: 'p1' })).toHaveLength(2);
+  });
+
+  it('ignores the selection entirely in all scope', () => {
+    expect(cardsFor(all, { scope: 'all', principalKey: '' })).toHaveLength(2);
+  });
+
+  it('returns nothing rather than everything when no principal is selected', () => {
+    expect(cardsFor(all, { principalKey: '' })).toEqual([]);
+  });
+
+  it('falls back to the name when a finding carries no id', () => {
+    const nameless = finding({ principal_id: '', principal_name: 'Ghost' });
+    expect(principalKeyOf(nameless)).toBe('ghost');
+    expect(cardsFor([nameless], { principalKey: 'ghost' })).toHaveLength(1);
+  });
+
+  it('can order the combined view by principal', () => {
+    const sorted = sortFindings(all, 'principal');
+    expect(sorted.map(f => f.principal_name)).toEqual(['Amber Chen', 'Rijul Sharma']);
+  });
+
+  it('offers exactly the two scopes the pane implements', () => {
+    expect(CARD_SCOPES.map(s => s.key)).toEqual(['principal', 'all']);
+  });
+
+  it('tolerates a missing list', () => {
+    expect(cardsFor(undefined, { scope: 'all' })).toEqual([]);
+    expect(cardsFor(null, { principalKey: 'p1' })).toEqual([]);
   });
 });

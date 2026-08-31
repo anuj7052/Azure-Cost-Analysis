@@ -262,23 +262,61 @@ export function sortPrincipals(rows, sort = 'most') {
   return copy;
 }
 
-/** The findings belonging to one principal, in the chosen card order. */
-export function findingsFor(findings, principalKey, sort = 'kind') {
-  const key = text(principalKey).toLowerCase();
-  const mine = (findings || []).filter(f => {
-    const own = text(f.principal_id).toLowerCase() || text(f.principal_name).toLowerCase();
-    return own === key;
-  });
+/**
+ * How a finding identifies its principal.
+ *
+ * Shared with principalRows so the left-hand list and the right-hand cards can
+ * never disagree about which findings belong to whom — the one guarantee that
+ * makes selecting a name trustworthy.
+ */
+export function principalKeyOf(finding) {
+  return text(finding?.principal_id).toLowerCase()
+    || text(finding?.principal_name).toLowerCase();
+}
 
+/** Whether the card pane is showing one principal or the whole review. */
+export const CARD_SCOPES = [
+  { key: 'principal', label: 'Selected principal only' },
+  { key: 'all', label: 'All principals' },
+];
+
+/** Findings in the chosen card order, without changing which ones they are. */
+export function sortFindings(findings, sort = 'kind') {
   const rank = f => OPTIMIZATION_KINDS.findIndex(k => k.key === f.kind);
   const severity = f => SEVERITY_RANK[text(f.severity).toLowerCase()] ?? 9;
+  const name = f => text(f.principal_name);
 
-  const copy = [...mine];
+  const copy = [...(findings || [])];
   if (sort === 'severity') copy.sort((a, b) => severity(a) - severity(b) || rank(a) - rank(b));
   else if (sort === 'role') {
     copy.sort((a, b) => text(a.role_name).localeCompare(text(b.role_name)) || rank(a) - rank(b));
+  } else if (sort === 'principal') {
+    copy.sort((a, b) => name(a).localeCompare(name(b)) || rank(a) - rank(b) || severity(a) - severity(b));
   } else copy.sort((a, b) => rank(a) - rank(b) || severity(a) - severity(b));
   return copy;
+}
+
+/** The findings belonging to one principal, in the chosen card order. */
+export function findingsFor(findings, principalKey, sort = 'kind') {
+  const key = text(principalKey).toLowerCase();
+  if (!key) return [];
+  return sortFindings(
+    (findings || []).filter(f => principalKeyOf(f) === key),
+    sort,
+  );
+}
+
+/**
+ * The cards to show, given the pane's scope.
+ *
+ * Kept here rather than inline in the page so the rule has a name and a test:
+ * "all" ignores the selection entirely, and anything else shows exactly one
+ * principal — never a silent mixture of the two.
+ */
+export function cardsFor(findings, { scope = 'principal', principalKey = '', sort = 'kind' } = {}) {
+  return scope === 'all'
+    ? sortFindings(findings, sort)
+    : findingsFor(findings, principalKey, sort);
 }
 
 /**
