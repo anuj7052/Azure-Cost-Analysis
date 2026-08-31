@@ -103,6 +103,51 @@ function AccountLoadFailed({ error, onRetry }) {
   );
 }
 
+/**
+ * Shown to someone who was added to a workspace that has no Azure tenant
+ * connected yet.
+ *
+ * They cannot fix this themselves — connecting a tenant is the owner's right,
+ * not theirs — so the screen does not offer a form. It names the one person
+ * who can act and lets them re-check, which is the only two things that are
+ * actually true here.
+ */
+function WorkspaceNotReady({ ownerEmail, onRetry }) {
+  const { instance } = useMsal();
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6">
+      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
+        <h1 className="text-lg font-semibold text-white">Nothing to show yet</h1>
+        <p className="mt-2 text-sm leading-relaxed text-slate-400">
+          You have been added to{' '}
+          {ownerEmail
+            ? <span className="text-slate-200">{ownerEmail}</span>
+            : 'this'}
+          {ownerEmail ? "'s workspace" : ' workspace'}, but no Azure tenant has been
+          connected to it yet. Once the workspace owner connects one, everything
+          here fills in for you automatically — there is nothing for you to set up.
+        </p>
+
+        <div className="mt-6 flex gap-3">
+          <button
+            onClick={onRetry}
+            className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
+          >
+            Check again
+          </button>
+          <button
+            onClick={() => { clearSecurityCache(); instance.clearCache(); instance.logoutRedirect(); }}
+            className="flex-1 rounded-xl border border-slate-700 py-2.5 text-sm font-medium text-slate-300 transition hover:text-white"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppShell() {
   const isAuthenticated = useIsAuthenticated();
   const { accounts } = useMsal();
@@ -146,14 +191,23 @@ function AppShell() {
   if (!me) return <PageLoader />;
 
   // Registering a tenant is how a customer subscribes to the product, so it is
-  // mandatory rather than skippable. Administrators are exempt: they run the
-  // service and manage accounts, they do not bring Azure spend of their own.
-  if (!me.is_admin && me.tenant_count === 0) {
+  // mandatory rather than skippable. Who that applies to is decided by the
+  // server -- see `needs_onboarding` -- because the rule turns on who owns the
+  // workspace, and the copy that used to live here sent invited members to a
+  // screen they were never allowed to answer.
+  if (me.needs_onboarding) {
     return (
       <Suspense fallback={<PageLoader />}>
         <Onboarding />
       </Suspense>
     );
+  }
+
+  // A member of a workspace that has nothing connected yet. Every page would
+  // render empty, which reads as a broken product rather than as a wait, so it
+  // is named for what it is and points at the one person who can end it.
+  if (!me.is_owner && me.tenant_count === 0) {
+    return <WorkspaceNotReady ownerEmail={me.owner_email} onRetry={loadMe} />;
   }
 
   return (

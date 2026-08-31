@@ -184,6 +184,24 @@ export default function Onboarding() {
               five minutes.
             </p>
 
+            {/* Someone whose colleague already connected the tenant does not
+                need any of the above, and would otherwise register a second
+                application for an estate that is already being read. They
+                arrive here only because the invitation had not been issued when
+                they first signed in, so the way out is to look again. */}
+            <p className="text-slate-500 mt-3 text-sm leading-relaxed max-w-xl">
+              Already part of a team here?{' '}
+              <button
+                type="button"
+                onClick={() => loadMe()}
+                className="text-blue-400 underline underline-offset-2 hover:text-blue-300"
+              >
+                Check for your invitation
+              </button>{' '}
+              instead — if someone has added you to their workspace, you do not need to
+              register anything.
+            </p>
+
             <div className="mt-8 space-y-3">
               {STEPS.map((s, i) => (
                 <div

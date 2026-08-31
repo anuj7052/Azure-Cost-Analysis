@@ -161,6 +161,24 @@ class TeamError(Exception):
         self.message = message
 
 
+async def has_connected_tenants(db: aiosqlite.Connection, user_id: int) -> bool:
+    """
+    Whether this account has Azure tenants of its own.
+
+    This is the line between having a workspace and merely having an account.
+    Somebody who signed in once and stopped at the connect-a-tenant screen has
+    an account and nothing else; treating that as a workspace made them
+    impossible to invite, and told them to disconnect tenants they never had.
+    """
+    for table in ("service_principals", "session_tokens"):
+        async with db.execute(
+            f"SELECT 1 FROM {table} WHERE user_id = ? LIMIT 1", (user_id,)
+        ) as cursor:
+            if await cursor.fetchone() is not None:
+                return True
+    return False
+
+
 async def invite(
     db: aiosqlite.Connection, owner: aiosqlite.Row, email: str,
     role: str = ROLE_USER,
@@ -186,14 +204,32 @@ async def invite(
             raise TeamError(409, "That person already belongs to another workspace.")
         if account["id"] == owner["id"]:
             raise TeamError(400, "You are already in this workspace.")
-        # An existing account that owns its own workspace is left alone.
-        # Absorbing it would silently hand its connected tenants to someone
-        # else, so the two people have to sort that out between them.
-        raise TeamError(
-            409,
-            "That person already has their own workspace. They would need to "
-            "remove their connected tenants and sign up again to join yours.",
-        )
+        # Someone who has connected Azure of their own is left alone. Absorbing
+        # them would silently hand those tenants to whoever invited them, so
+        # the two people have to sort that out between themselves first.
+        if await has_connected_tenants(db, account["id"]):
+            raise TeamError(
+                409,
+                "That person has already connected Azure tenants of their own. "
+                "They would need to disconnect them before joining your workspace.",
+            )
+
+        async with db.execute(
+            "SELECT 1 FROM users WHERE owner_id = ? LIMIT 1", (account["id"],)
+        ) as cursor:
+            if await cursor.fetchone() is not None:
+                raise TeamError(
+                    409,
+                    "That person runs a workspace of their own with people in "
+                    "it. Joining yours would leave their team without access.",
+                )
+
+        # Otherwise the account exists only because they signed in and got as
+        # far as the connect-a-tenant screen. There is nothing of theirs to
+        # hand over or lose, so the invitation is issued like any other and is
+        # redeemed on their next request. Refusing here was a deadlock: they
+        # could not get past that screen without connecting a tenant, and the
+        # owner could not invite them out of it.
 
     async with db.execute(
         "SELECT id, status FROM team_invitations WHERE owner_id = ? AND email = ?",
@@ -356,12 +392,8 @@ async def accept_pending_invitation(
     # An account that has already connected a tenant of its own is not absorbed.
     # Joining would replace everything they can see with the owner's workspace,
     # which from their side looks like their data disappearing.
-    for table in ("service_principals", "session_tokens"):
-        async with db.execute(
-            f"SELECT 1 FROM {table} WHERE user_id = ? LIMIT 1", (user_id,)
-        ) as cursor:
-            if await cursor.fetchone() is not None:
-                return None
+    if await has_connected_tenants(db, user_id):
+        return None
 
     usage = await seat_usage(db, invitation["owner_id"])
     if usage["accepted"] >= MAX_TEAM_MEMBERS:

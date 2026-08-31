@@ -35,7 +35,7 @@ from core.middleware import (
 )
 from core.versioning import API_V1_PREFIX, LEGACY_SUNSET, register_routers
 from auth.dependencies import get_current_user
-from services.user_service import tenant_counts
+from services.user_service import needs_onboarding, tenant_counts
 from services import user_sessions
 from services import backup
 from models.schemas import ProfileUpdate
@@ -278,6 +278,7 @@ async def _account_payload(current_user: dict, db: aiosqlite.Connection) -> dict
     number.
     """
     counts = await tenant_counts(db)
+    tenant_count = counts.get(current_user["account_id"], 0)
     async with db.execute(
         "SELECT phone, company, login_count, last_login_at, profile_consent_at "
         "FROM users WHERE id = ?",
@@ -327,7 +328,11 @@ async def _account_payload(current_user: dict, db: aiosqlite.Connection) -> dict
         ),
         "can_administer": current_user["can_administer"],
         "owner_email": owner_email,
-        "tenant_count": counts.get(current_user["account_id"], 0),
+        "tenant_count": tenant_count,
+        # Decided here rather than in the interface. The rule depends on who
+        # owns the workspace, and a copy of it in the frontend drifted into
+        # sending invited members to a screen only an owner can answer.
+        "needs_onboarding": needs_onboarding(current_user, tenant_count),
     }
 
 

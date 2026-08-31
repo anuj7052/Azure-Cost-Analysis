@@ -92,6 +92,61 @@ async def test_the_invitation_is_case_insensitive_on_email(db):
     assert member["owner_id"] == owner["id"]
 
 
+@pytest.mark.asyncio
+async def test_someone_who_signed_in_before_being_invited_can_still_be_invited(db):
+    """
+    The deadlock this used to be.
+
+    A colleague signs in to look at the product, is held at the connect-a-tenant
+    screen because they have nothing connected, and gives up. The owner then
+    tries to add them and is told they "already have their own workspace" and
+    should remove their connected tenants -- of which they have none. Neither
+    person could act, and the only escape was deleting the account by hand.
+    """
+    owner = await make_owner(db)
+    early = await user_service.upsert_user(
+        db, claims("oid-early", "colleague@corp.com")
+    )
+    assert early["owner_id"] is None
+
+    await team_service.invite(db, owner, "colleague@corp.com")
+
+    # Redeemed on their next request, without them signing in again.
+    joined = await user_service.upsert_user(
+        db, claims("oid-early", "colleague@corp.com")
+    )
+    assert joined["id"] == early["id"]
+    assert joined["owner_id"] == owner["id"]
+
+
+# ── The connect-a-tenant screen ────────────────────────────────────────────
+
+def _account(role="user", is_owner=True):
+    return {"role": role, "is_owner": is_owner}
+
+
+def test_a_member_is_never_held_at_the_connect_a_tenant_screen():
+    """
+    They are joining someone else's Azure estate, and connecting a tenant is
+    refused for them anyway. Showing them that form asked them to register an
+    application their workspace had already registered, and then rejected the
+    submission. It holds even when the owner has connected nothing yet, so an
+    empty workspace does not trap the people in it.
+    """
+    assert user_service.needs_onboarding(_account(is_owner=False), 0) is False
+    assert user_service.needs_onboarding(_account(is_owner=False), 3) is False
+
+
+def test_a_new_owner_is_held_until_they_connect_something():
+    assert user_service.needs_onboarding(_account(), 0) is True
+    assert user_service.needs_onboarding(_account(), 1) is False
+
+
+def test_a_platform_administrator_is_exempt():
+    """They run the service; they do not bring Azure spend of their own."""
+    assert user_service.needs_onboarding(_account(role="admin"), 0) is False
+
+
 # ── The tenant check ───────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -189,12 +244,41 @@ async def test_a_sixth_person_cannot_slip_in_past_an_accepted_five(db):
 # ── Refusals that protect existing data ────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_someone_who_already_owns_a_workspace_is_not_absorbed(db):
+async def test_an_account_with_its_own_tenant_is_not_absorbed(db):
+    """
+    Having connected Azure is what makes a workspace worth protecting, and it
+    is the only thing that does. Refusing on the mere existence of an account
+    was the deadlock tested above; refusing on connected tenants is the rule
+    that was actually meant, because absorbing them would hand those tenants to
+    whoever invited them.
+    """
     owner = await make_owner(db)
-    await user_service.upsert_user(db, claims("oid-other", "other@corp.com"))
+    other = await user_service.upsert_user(db, claims("oid-other", "other@corp.com"))
+    await db.execute(
+        "INSERT INTO service_principals (user_id, tenant_id, tenant_name, "
+        "client_id, client_secret) VALUES (?, 'their-tenant', 'Theirs', 'cid', 'sec')",
+        (other["id"],),
+    )
+    await db.commit()
 
     with pytest.raises(team_service.TeamError) as exc:
         await team_service.invite(db, owner, "other@corp.com")
+    assert exc.value.status_code == 409
+
+    unchanged = await row(db, other["id"])
+    assert unchanged["owner_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_account_that_runs_its_own_team_is_not_absorbed(db):
+    """Joining would leave the people they invited with nothing to read."""
+    owner = await make_owner(db)
+    lead = await user_service.upsert_user(db, claims("oid-lead", "lead@corp.com"))
+    await team_service.invite(db, lead, "theirs@corp.com")
+    await user_service.upsert_user(db, claims("oid-theirs", "theirs@corp.com"))
+
+    with pytest.raises(team_service.TeamError) as exc:
+        await team_service.invite(db, owner, "lead@corp.com")
     assert exc.value.status_code == 409
 
 

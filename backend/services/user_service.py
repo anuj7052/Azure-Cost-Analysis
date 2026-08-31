@@ -121,3 +121,24 @@ async def tenant_counts(db: aiosqlite.Connection) -> dict[int, int]:
             for row in await cursor.fetchall():
                 counts[row["user_id"]] = counts.get(row["user_id"], 0) + row["n"]
     return counts
+
+
+def needs_onboarding(current_user: dict, tenant_count: int) -> bool:
+    """
+    Whether to hold this person at the connect-a-tenant screen.
+
+    Connecting a tenant is refused for everyone except the workspace owner and
+    the administrators they appoint, so showing that screen to an invited
+    member was a dead end: a form they were not permitted to submit, asking
+    them to register an application their workspace had already registered.
+    They are joining someone else's Azure estate, which is the whole point of
+    the invitation.
+
+    Platform administrators are exempt for the original reason -- they run the
+    service and manage accounts, they do not bring Azure spend of their own.
+    """
+    if current_user["role"] == ROLE_ADMIN:
+        return False
+    if not current_user["is_owner"]:
+        return False
+    return tenant_count == 0
