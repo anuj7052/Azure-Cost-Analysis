@@ -275,6 +275,78 @@ def build_setup_guide(app_name: str = "Cloudledger") -> bytes:
 
     f.append(PageBreak())
 
+    # ── Step 5 ────────────────────────────────────────────────────────────
+    # This is the step people most often get wrong, because it looks like it
+    # belongs to the app registration from step 1 and it does not. That one
+    # authenticates with a secret and never touches the directory. Name
+    # resolution runs on the signed-in user's own token, so the consent is
+    # granted to this application inside your tenant instead.
+    f.append(Paragraph("Step 5 \u2014 Show names instead of GUIDs (optional)", st["h2"]))
+    f.append(Paragraph(
+        "Azure records every role assignment by GUID, never by name. Until this step is "
+        "done, the access pages are correct but hard to read: each account appears as a "
+        "raw identifier. Granting the permission below lets the app translate those "
+        "identifiers into people, groups and managed identities.",
+        st["body"],
+    ))
+    f.append(Spacer(1, 4))
+    f.append(_panel([
+        Paragraph("This is not a change to the app registration you just created", st["h3"]),
+        Paragraph(
+            "The registration from step 1 signs in with a client secret and never reads "
+            "your directory. Do <b>not</b> add Directory.Read.All to it. Names are resolved "
+            "using the token of whoever is signed in, so the consent is granted to "
+            "<b>this application</b>, once, inside your own tenant.",
+            st["muted"],
+        ),
+    ], bg=WARN_BG, edge=WARN_EDGE))
+    f.append(Spacer(1, 6))
+    f.append(Paragraph(
+        "The permission is <b>Directory.Read.All</b>, of type <b>Delegated</b> \u2014 not "
+        "Application. Delegated means the app can never see more of your directory than "
+        "the signed-in person could already see in the portal. It still needs a one-time "
+        "consent from a <b>Global Administrator</b> or <b>Privileged Role Administrator</b>; "
+        "an ordinary user cannot grant it, and will be refused with "
+        "<i>Authorization_RequestDenied</i>.",
+        st["body"],
+    ))
+    f.append(Spacer(1, 4))
+    f.append(Paragraph("The quick way", st["h3"]))
+    f.append(_steps([
+        "Open any access page in the app. Where accounts show as GUIDs there is a "
+        "<b>Show names</b> button.",
+        "Select it while signed in as an administrator, and accept the consent prompt.",
+    ], st))
+    f.append(Spacer(1, 4))
+    f.append(Paragraph("The portal way, if an administrator must do it separately", st["h3"]))
+    f.append(_steps([
+        "Sign in to <b>portal.azure.com</b> as a Global Administrator.",
+        "Open <b>Microsoft Entra ID</b>, then <b>Enterprise applications</b>.",
+        "Find this application by name and open it. If it is not listed, sign in to the "
+        "app once first \u2014 that is what creates the entry in your tenant.",
+        "Choose <b>Permissions</b> in the left menu.",
+        "Select <b>Grant admin consent for &lt;your organisation&gt;</b> and accept.",
+    ], st))
+    f.append(Spacer(1, 6))
+    f.append(_panel([
+        Paragraph(
+            "Afterwards, reload the app in your browser. It remembers that the permission "
+            "was missing for the rest of the session, so an open tab keeps showing GUIDs "
+            "until it is refreshed.",
+            st["muted"],
+        ),
+    ]))
+    f.append(Spacer(1, 6))
+    f.append(Paragraph(
+        "Be clear-eyed about the trade: this reads your whole directory, not only the "
+        "accounts the app displays. Skipping it is a legitimate choice. Every page keeps "
+        "working, costs and resources are unaffected, and accounts simply stay as GUIDs "
+        "with their identifiers shown under technical details.",
+        st["body"],
+    ))
+
+    f.append(PageBreak())
+
     # ── Troubleshooting ───────────────────────────────────────────────────
     f.append(Paragraph("If something goes wrong", st["h2"]))
     f.append(Paragraph("No subscriptions found", st["h3"]))
@@ -313,19 +385,6 @@ def build_setup_guide(app_name: str = "Cloudledger") -> bytes:
         f"<b>{r['name']}</b> \u2014 {r['why']} {r['caveat']}"
         for r in permissions_manifest.write_roles()
     ], st))
-    f.append(Spacer(1, 4))
-    f.append(_panel([
-        Paragraph("Resolving names instead of GUIDs", st["h3"]),
-        Paragraph(
-            "Role assignments in Azure identify people by GUID. To show names instead, "
-            "the app asks for the <b>Directory.Read.All</b> delegated permission in "
-            "Microsoft Entra ID, which a tenant administrator must consent to once. It "
-            "reads the whole directory, not only the accounts shown here, so decide "
-            "deliberately. Skip it and every account appears as a GUID; nothing else "
-            "stops working.",
-            st["muted"],
-        ),
-    ]))
 
     f.append(Paragraph("Keeping access secure", st["h2"]))
     f.append(_bullets([
@@ -335,7 +394,10 @@ def build_setup_guide(app_name: str = "Cloudledger") -> bytes:
         "stops updating.",
         "If a secret is ever exposed, delete it in <b>Certificates &amp; secrets</b> "
         "immediately and add a new one. That revokes the old one instantly.",
-        "Each account only ever sees the tenants it connected itself.",
+        "Each account only ever sees the tenants it connected itself. Credentials are "
+        "stored against the account that entered them, so one customer's tenant, client "
+        "ID and secret are never readable by another, and are never pooled or shared "
+        "between accounts.",
     ], st))
 
     doc.build(
