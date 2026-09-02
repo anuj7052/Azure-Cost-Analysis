@@ -1,25 +1,32 @@
 """
 Work out which Azure access token to use for a given tenant.
 
-Three ways in, tried in order:
+Four ways in, tried in order:
   1. A session token the user pasted in Settings — takes priority because the
      user added it deliberately and it usually carries wider rights than their
      own login.
-  2. A stored service principal for that tenant.
-  3. The caller's own delegated token from the Microsoft sign-in.
+  2. The machine's `az login`, when `AZURE_CLI_AUTH` is on. Placed above the
+     stored credentials because an operator who turned it on did so precisely
+     to stop maintaining them.
+  3. A stored service principal for that tenant.
+  4. The caller's own delegated token from the Microsoft sign-in.
 
 Stored credentials are always filtered by the calling account, so one customer
 can never borrow another's service principal by guessing a tenant id.
 """
 import hashlib
+import logging
 import time
 from typing import List
 
 import aiosqlite
 from fastapi import HTTPException
 
-from services import azure_names
+from core.config import settings
+from services import azure_cli, azure_names
 from services.azure_mgmt import get_sp_token, is_expired, list_subscriptions
+
+log = logging.getLogger(__name__)
 
 
 async def resolve_tenant_token(
@@ -46,6 +53,18 @@ async def resolve_tenant_token(
             )
         return row["access_token"]
 
+    # The CLI is asked before the stored credentials and before the delegated
+    # token, because it is the one source that covers every tenant the operator
+    # can reach without anything having been registered first. A failure here
+    # is logged and stepped over rather than raised: the whole point is that it
+    # is an addition to the existing routes, not a replacement that can break
+    # them.
+    if settings.AZURE_CLI_AUTH:
+        try:
+            return await azure_cli.get_token(tenant_id)
+        except azure_cli.CliUnavailable as exc:
+            log.info("Azure CLI could not issue a token for %s: %s", tenant_id, exc)
+
     if tenant_id == current_user.get("tenant_id"):
         # The delegated Azure token, not the one that proved who they are. In
         # production those are two different tokens with two different
@@ -62,7 +81,14 @@ async def resolve_tenant_token(
     if not row:
         raise HTTPException(
             status_code=403,
-            detail="You do not have access to this tenant.",
+            detail=(
+                "You do not have access to this tenant. Connect it with a "
+                "service principal or a session token in Settings."
+                if not settings.AZURE_CLI_AUTH else
+                "You do not have access to this tenant, and the Azure CLI on "
+                "this machine could not reach it either. Check `az login` "
+                "covers this directory."
+            ),
         )
 
     try:

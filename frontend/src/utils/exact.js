@@ -7,6 +7,7 @@
  * reconciling against an invoice — so the exact number has to stay reachable
  * on hover rather than being thrown away at render time.
  */
+import { getDisplayCurrency } from './currency';
 
 /** Hours in a day. Azure meters compute in hours, humans reason in days. */
 const HOURS_PER_DAY = 24;
@@ -39,6 +40,14 @@ export function exactAmount(amount, currency) {
     maximumFractionDigits: 4,
   });
 
+  // Always the billed figure, never the converted one. This tooltip exists to
+  // be checked against an invoice, and an invoice is issued in the currency
+  // Azure billed — so when a display currency is in force this is the one
+  // place that deliberately disagrees with the number above it, and says why.
+  const display = getDisplayCurrency();
+  if (display && display !== cur) {
+    return `${cur} ${exact} as billed — shown above converted to ${display}`;
+  }
   return `${cur} ${exact}`;
 }
 

@@ -73,6 +73,8 @@ const REDUNDANCY = /\b(lrs|zrs|grs|ragrs|gzrs)\b/gi;
 
 export function skuKeys(text) {
   const source = String(text || '');
+  const cached = SKU_CACHE.get(source);
+  if (cached) return cached;
   const keys = new Set();
   for (const m of source.matchAll(VM_SIZE)) keys.add(`vm:${m[1].toLowerCase().replace(/\s+/g, ' ')}`);
   for (const m of source.matchAll(DISK_SKU)) keys.add(`disk:${m[1].toLowerCase()}${m[2]}`);
@@ -81,8 +83,21 @@ export function skuKeys(text) {
   for (const tier of TIER_WORDS) {
     if (lower.includes(tier)) { keys.add(`tier:${tier}`); break; }
   }
+  // Four regex passes over every one of tens of thousands of usage rows was
+  // the single largest cost in building this report, and almost all of it was
+  // repeated work: the same meter description recurs on every resource on every
+  // day of the period. The result is immutable and read-only downstream, so it
+  // is safe to hand the same Set back each time.
+  if (SKU_CACHE.size >= SKU_CACHE_LIMIT) SKU_CACHE.clear();
+  SKU_CACHE.set(source, keys);
   return keys;
 }
+
+const SKU_CACHE = new Map();
+// Bounded so a long session over many tenants cannot grow it without limit.
+// Cleared wholesale rather than evicted one by one: the set is rebuilt from a
+// single pass over the rows, so a cold cache costs one report, not many.
+const SKU_CACHE_LIMIT = 20000;
 
 /** Weighted overlap — a matching disk/VM SKU is worth far more than a shared tier. */
 function matchScore(budgetKeys, usageKeys) {
@@ -117,6 +132,10 @@ function budgetQty(description) {
 
 const usageLabel = (row) =>
   [row.meter, row.meter_subcategory].filter(Boolean).join(' · ') || row.service;
+
+/** Shared empty result, so the common "nothing could claim this row" path
+ *  allocates nothing at all. */
+const EMPTY_LINES = [];
 
 /** Everything needed to identify a charge without opening the Azure portal. */
 function meterIdentity(row) {
@@ -252,6 +271,36 @@ function compareLines(budgetLines, usageRows, span) {
   const matchable = lines.filter(l => l.hasSku);
   const unmatched = new Map();
 
+  // A row can only be claimed at a score of 100 or more, and only a shared
+  // `disk:` or `vm:` key is worth that much. So a line that shares no strong key
+  // with the row can never win, and scoring it is wasted work -- which it was,
+  // once per row per line, on estates with tens of thousands of rows. Indexing
+  // the lines by their strong keys turns that scan into a lookup of the handful
+  // of lines that could actually claim the row. The winner is unchanged: the
+  // candidates are scored in their original order, so ties break the same way.
+  const strongIndex = new Map();
+  matchable.forEach((line, order) => {
+    line.order = order;
+    for (const key of line.keys) {
+      if (!key.startsWith('disk:') && !key.startsWith('vm:')) continue;
+      const held = strongIndex.get(key);
+      if (held) held.push(line);
+      else strongIndex.set(key, [line]);
+    }
+  });
+
+  function candidatesFor(keys) {
+    let found = null;
+    for (const key of keys) {
+      const lot = strongIndex.get(key);
+      if (!lot) continue;
+      if (found === null) found = lot.slice();
+      else for (const line of lot) if (!found.includes(line)) found.push(line);
+    }
+    if (found === null) return EMPTY_LINES;
+    return found.length > 1 ? found.sort((a, b) => a.order - b.order) : found;
+  }
+
   // One record per usage row saying which estimate line claimed it. The
   // category table can only ever be read by category; this keeps the same
   // verdict attached to the row itself so the identical numbers can be
@@ -263,7 +312,7 @@ function compareLines(budgetLines, usageRows, span) {
     const keys = skuKeys(`${row.meter || ''} ${row.meter_subcategory || ''} ${row.service || ''}`);
     let best = null;
     let bestScore = 0;
-    for (const line of matchable) {
+    for (const line of candidatesFor(keys)) {
       const score = matchScore(line.keys, keys);
       if (score > bestScore) { best = line; bestScore = score; }
     }
@@ -307,6 +356,7 @@ function compareLines(budgetLines, usageRows, span) {
   const shape = (source) => {
     const line = { ...source };
     delete line.keys;
+    delete line.order;
     const variance = line.actual - line.monthly_cost;
     const billedCount = line.matches.length;
     return {
@@ -372,34 +422,74 @@ export function bucketFor(name) {
  * @param boqs   parsed estimates (each already filtered to the ones in use)
  * @param rows   usage rows already filtered by subscription and date
  * @param months how many distinct months those rows span
+ * @param currency the currency both sides are quoted in
+ * @param opts.perMonth  true to average actuals down to one month; false to
+ *   multiply the estimate up to the whole selected period instead.
+ * @param opts.days  how many days the usage actually covers, and
+ * @param opts.daysInPeriod  how many days those calendar months hold in full.
+ *   Given both, the estimate is scaled by the fraction of the period that was
+ *   really billed. A four-day window otherwise compares four days of spend
+ *   against a whole month of budget and reports a 90% underspend that means
+ *   nothing. When they are equal this reduces exactly to the month count, so
+ *   a complete selection behaves as before.
+ *
+ * The two bases answer different questions and both are legitimate. Per month
+ * is the right way to compare estimates written at different times. Full period
+ * is the right way to answer "what did this quarter cost against what we said
+ * it would", and it is the only one whose actual figure ties back to an
+ * invoice. What is not legitimate is mixing them, so the basis is decided once,
+ * here, and every number in the report -- headline, category, line, driver and
+ * traffic -- is on it.
  */
-export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR') {
+export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts = {}) {
   const span = Math.max(months, 1);
+  const perMonth = opts.perMonth !== false;
 
-  // The estimate is a monthly figure, so actuals are averaged per month to keep
-  // the two comparable no matter how long a period the user has selected.
+  // How much of the selected period the usage actually covers. Only trusted
+  // when both halves are known and the covered part is genuinely shorter --
+  // a partial figure larger than the period would mean the inputs disagree,
+  // and stretching the budget to fit would hide that rather than show it.
+  const days = Number(opts.days) || 0;
+  const daysInPeriod = Number(opts.daysInPeriod) || 0;
+  const partial = days > 0 && daysInPeriod > 0 && days < daysInPeriod
+    ? days / daysInPeriod
+    : 1;
+
+  // Only one of these is ever not 1. Either actuals come down to a month, or
+  // the estimate goes up to the period -- never both, which would cancel out
+  // and silently produce the per-month answer under a full-period heading.
+  const divisor = perMonth ? span : 1;
+  const budgetFactor = perMonth ? 1 : span * partial;
+
+  // The estimate is a monthly figure, so one side has to move to meet the
+  // other before anything can be compared.
   const budget = new Map();
   let budgetTotal = 0;
   for (const boq of boqs) {
     for (const item of boq.items || []) {
       const bucket = bucketFor(`${item.service_type} ${item.service_category}`);
       const entry = budget.get(bucket.key) || { label: bucket.label, amount: 0, lines: [] };
-      entry.amount += item.monthly_cost;
-      entry.lines.push({ ...item, boq: boq.name });
+      const scaled = item.monthly_cost * budgetFactor;
+      entry.amount += scaled;
+      // Scaled at the source so every downstream consumer -- lines, pooled
+      // budgets, unit prices, drivers -- is on the same basis without each
+      // having to remember to apply the factor itself.
+      entry.lines.push({ ...item, monthly_cost: scaled, boq: boq.name });
       budget.set(bucket.key, entry);
-      budgetTotal += item.monthly_cost;
+      budgetTotal += scaled;
     }
     // Managed services / support are real budgeted money, so include them.
     if (boq.managed_services) {
       const entry = budget.get('licensing') || { label: 'Licences & Support', amount: 0, lines: [] };
-      entry.amount += boq.managed_services;
+      const scaled = boq.managed_services * budgetFactor;
+      entry.amount += scaled;
       entry.lines.push({
         service_category: 'Support', service_type: 'Managed Services',
         custom_name: '', region: '', description: 'Managed services retainer',
-        monthly_cost: boq.managed_services, boq: boq.name,
+        monthly_cost: scaled, boq: boq.name,
       });
       budget.set('licensing', entry);
-      budgetTotal += boq.managed_services;
+      budgetTotal += scaled;
     }
   }
 
@@ -426,9 +516,9 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR') {
     const b = budget.get(key);
     const a = actual.get(key);
     const budgeted = round(b?.amount || 0);
-    const spent = round((a?.amount || 0) / span);
+    const spent = round((a?.amount || 0) / divisor);
     const variance = round(spent - budgeted);
-    const detail = compareLines(b?.lines || [], a?.rows || [], span);
+    const detail = compareLines(b?.lines || [], a?.rows || [], divisor);
     const label = b?.label || a?.label || OTHER.label;
     // Where a category budgets things that cannot be split per resource
     // (a backup policy, a support retainer), leftover charges are covered by
@@ -471,14 +561,14 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR') {
         boqName: item.boqName,
         coverage: item.matched ? 'line' : pooled ? 'pooled' : 'none',
       })),
-      traffic: trafficSummary(a?.rows || [], span),
+      traffic: trafficSummary(a?.rows || [], divisor),
       actualServices: [...(a?.services || new Map())]
-        .map(([name, cost]) => ({ name, cost: round(cost / span) }))
+        .map(([name, cost]) => ({ name, cost: round(cost / divisor) }))
         .sort((x, y) => y.cost - x.cost),
     };
   }).sort((x, y) => y.variance - x.variance);
 
-  const monthlyActual = round(actualTotal / span);
+  const monthlyActual = round(actualTotal / divisor);
   const overspend = categories.filter(c => c.variance > 0);
 
   // Every individual charge with no BOQ line behind it, flattened so it can be
@@ -491,6 +581,16 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR') {
   return {
     currency,
     months: span,
+    // Which question this report answers. Every figure in it is on this basis,
+    // and the page says which one out loud rather than leaving a reader to
+    // work out whether a number is a month or a quarter.
+    perMonth,
+    budgetFactor,
+    // The fraction of the period that was actually billed, so the page can say
+    // "4 of 31 days" rather than presenting a part-month as a whole one.
+    partial,
+    days: days || null,
+    daysInPeriod: daysInPeriod || null,
     categories,
     // Flat, row-level view of exactly the same money the categories describe.
     attributions: categories.flatMap(c => c.attributions),

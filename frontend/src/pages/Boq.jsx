@@ -3,8 +3,9 @@ import { useAppStore } from '../store/useAppStore';
 import { uploadBoq } from '../api/client';
 import { formatAmount } from '../utils/currency';
 import { Quantity } from '../components/Common/Amount';
-import BoqGenerator from '../components/Boq/BoqGenerator';
 import BoqBreakdown from '../components/Boq/BoqBreakdown';
+import BoqDashboard from '../components/Boq/BoqDashboard';
+import BoqMovement from '../components/Boq/BoqMovement';
 import { formatBytes } from '../utils/bytes';
 import { compareBoqToUsage } from '../utils/boqCompare';
 import toast from 'react-hot-toast';
@@ -20,10 +21,18 @@ import {
 const ACCEPTED = '.csv,.xlsx,.xlsm,.xls';
 
 export default function Boq() {
-  const { boqs, addBoq, removeBoq, toggleBoq, costData, imported, rowsData, rowsLoading, loadCosts, loadCostRows, detailedUsageRows, selectedTenantId, selectedSubscriptionIds, dateKey } = useAppStore();
+  const { boqs, addBoq, removeBoq, toggleBoq, costData, imported, rowsData, rowsLoading, loadCosts, loadCostRows, dailyData, loadDailyCosts, detailedUsageRows, selectedTenantId, selectedSubscriptionIds, dateKey, months: monthsBack, dateMode, fromDate, toDate } = useAppStore();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [focus, setFocus] = useState(null);
+  // A BOQ is written as one month's money. Over a three-month selection there
+  // are two honest ways to compare it and they answer different questions:
+  // average the actuals back down to a month, or multiply the estimate up to
+  // the period. Full period is the default because its actual figure is the one
+  // that ties back to an invoice -- but the choice is explicit, because a
+  // number three times larger than expected with no explanation is worse than
+  // either answer.
+  const [perMonth, setPerMonth] = useState(false);
   const inputRef = useRef(null);
   const t = useChartTheme();
 
@@ -38,6 +47,10 @@ export default function Boq() {
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
     loadCosts();
     loadCostRows();
+    // The day-by-day line is the only thing on the page that can show a month
+    // drifting over budget before the month is over, so it is fetched here
+    // rather than left to whichever page happened to be visited first.
+    loadDailyCosts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imported, selectedTenantId, selectedSubscriptionIds.join(','), dateKey]);
 
@@ -45,30 +58,81 @@ export default function Boq() {
   const currency = costData?.currency || active[0]?.currency || 'INR';
   const fmt = (v) => formatAmount(v, currency);
 
-  // The estimate is a monthly figure, so usage is averaged per month to match.
+  // How much of the selected period actually has spend behind it. A BOQ is a
+  // whole month's money, so comparing it with four days of a month and calling
+  // the difference an underspend is arithmetic nobody asked for. The daily
+  // series is the only honest source of this -- the monthly totals cannot say
+  // whether a month is complete or three days old.
+  const coverage = useMemo(() => {
+    const days = dailyData?.days;
+    if (!Array.isArray(days) || days.length === 0) return {};
+    const monthsCovered = new Set(days.map(d => String(d.date).slice(0, 7)));
+    let daysInPeriod = 0;
+    for (const key of monthsCovered) {
+      const [y, m] = key.split('-').map(Number);
+      daysInPeriod += new Date(Date.UTC(y, m, 0)).getUTCDate();
+    }
+    return { days: days.length, daysInPeriod };
+  }, [dailyData]);
+
   // Meter-level rows give the per-resource match (P20 disk to P20 disk); the
-  // service-level summary is only a fallback.
-  const report = useMemo(() => {
-    if (!active.length || !costData?.months?.length) return null;
+  // service-level summary is only a fallback. Built once and shared, so the
+  // month-over-month panel is explaining the same rows the comparison scored
+  // rather than a second, separately assembled set of them.
+  const movementRows = useMemo(() => {
+    if (!costData?.months?.length) return null;
     const detailed = detailedUsageRows();
     // While the meter-level rows are still in flight there is nothing to match
     // on, and the service totals would roll every backup charge into one
     // unexplainable lump. Waiting is better than showing a figure that cannot
     // be broken down.
     if (!detailed?.length && rowsLoading) return null;
-    const rows = detailed?.length
-      ? detailed
-      : costData.months.flatMap(m =>
-          Object.entries(m.by_service || {}).map(([service, cost]) => ({ service, cost })),
-        );
-    return compareBoqToUsage(active, rows, costData.months.length, currency);
+    if (detailed?.length) return detailed;
+    return costData.months.flatMap(m =>
+      Object.entries(m.by_service || {}).map(([service, cost]) => ({
+        service, cost, month: m.month,
+      })),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boqs, costData, currency, imported, rowsData, rowsLoading]);
+  }, [costData, imported, rowsData, rowsLoading]);
+
+  const report = useMemo(() => {
+    if (!active.length || !movementRows?.length) return null;
+    return compareBoqToUsage(active, movementRows, costData.months.length, currency, {
+      perMonth, ...coverage,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boqs, costData, currency, movementRows, perMonth, coverage]);
+
+  const months = report?.months || 1;
+  // The phrase every figure on the page is qualified with. One string so the
+  // cards, the chart and the recommendations cannot describe the same number
+  // three different ways.
+  const per = report?.perMonth
+    ? 'per month'
+    : report?.partial && report.partial < 1
+      ? `over the ${report.days} day${report.days > 1 ? 's' : ''} billed so far`
+      : `over ${months} month${months > 1 ? 's' : ''}`;
 
   // Service totals carry no meter, resource or quantity, so a comparison built
   // from them cannot be drilled into. Say so rather than letting it pass for
   // the real thing.
   const coarse = !!report && !detailedUsageRows()?.length;
+
+  // What to ask Azure when the rows on this page cannot name a resource. On an
+  // uploaded file there is nothing to ask -- the names are already in the file,
+  // and there is no tenant behind it to query.
+  const resourceQuery = useMemo(() => {
+    if (imported || !selectedTenantId || !selectedSubscriptionIds.length) return null;
+    return {
+      tenant_id: selectedTenantId,
+      subscription_ids: selectedSubscriptionIds,
+      months: monthsBack || 6,
+      ...(dateMode === 'custom' && fromDate && toDate
+        ? { from_date: fromDate, to_date: toDate }
+        : {}),
+    };
+  }, [imported, selectedTenantId, selectedSubscriptionIds, monthsBack, dateMode, fromDate, toDate]);
 
   async function handleFiles(fileList) {
     const files = [...fileList];
@@ -114,6 +178,18 @@ export default function Boq() {
     );
   }
 
+  // Clicking a bar in the dashboard opens that one category below it. The
+  // headline filter is cleared, otherwise the table could be showing a category
+  // the reader picked while still labelled as some other focus.
+  function openCategory(key) {
+    if (!key) return;
+    setFocus(null);
+    setExpanded({ [key]: true });
+    requestAnimationFrame(() =>
+      document.getElementById('boq-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
+  }
+
   return (
     <div className="p-6 space-y-6 max-w-screen-2xl mx-auto">
       <div>
@@ -126,8 +202,6 @@ export default function Boq() {
 
       {/* Generate a BOQ from what is actually deployed. Sits above upload
           because most people arrive without an estimate to upload. */}
-      <BoqGenerator />
-
       {/* Upload */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -228,6 +302,37 @@ export default function Boq() {
         </div>
       ) : (
         <>
+          {/* Which question the whole page is answering. Placed above the
+              numbers it changes, because finding it underneath them means
+              reading the numbers wrong first. */}
+          {(months > 1 || report?.partial < 1) && (
+            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3">
+              <div className="flex rounded-xl border border-slate-700 p-0.5">
+                <button
+                  onClick={() => setPerMonth(false)}
+                  className={`rounded-lg px-3 py-1.5 text-xs transition ${
+                    !perMonth ? 'bg-blue-600 text-[#fff]' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {report?.partial < 1 ? 'Days billed' : 'Whole period'}
+                </button>
+                <button
+                  onClick={() => setPerMonth(true)}
+                  className={`rounded-lg px-3 py-1.5 text-xs transition ${
+                    perMonth ? 'bg-blue-600 text-[#fff]' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Per month
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">
+                {perMonth
+                  ? `Actuals averaged down to one month and compared with the estimate as written.`
+                  : report?.partial < 1
+                    ? `Only ${report.days} of ${report.daysInPeriod} days in this period have been billed, so the estimate is scaled to the same ${report.days} days rather than compared as a whole month.`
+                    : `Estimate multiplied by ${months} to cover the ${months} months selected, and compared with what was actually billed across them.`}
+              </p>
+            </div>
+          )}
+
           {coarse && (
             <div className="flex items-start gap-2.5 border border-amber-500/40 bg-amber-500/[0.07] rounded-xl px-4 py-3">
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -244,12 +349,37 @@ export default function Boq() {
             </div>
           )}
 
+          {/* The dashboard read: commitment against actual, the shape of the
+              spend over time, where it went, and what to do about it. Sits
+              above the cards because it answers the question people arrive
+              with; the cards below it are the filters into the detail. */}
+          <BoqDashboard
+            report={report}
+            months={costData?.months}
+            days={dailyData?.days}
+            rows={movementRows}
+            resourceQuery={resourceQuery}
+            tenantId={selectedTenantId}
+            onFocusCategory={openCategory}
+            onShowOverruns={() => focusOn('extra')}
+          />
+
+          {/* Why the bill moved, in BOQ terms. On this page rather than only on
+              Compare, because "it went up" and "it went over" are different
+              statements and the second one needs the budget beside it. */}
+          <BoqMovement
+            rows={movementRows}
+            report={report}
+            currency={currency}
+            onFocusCategory={openCategory}
+          />
+
           {/* Headline variance */}
           <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
             <SummaryCard
               label="Budget (BOQ)"
               value={fmt(report.budgetTotal)}
-              hint={`${active.length} estimate${active.length > 1 ? 's' : ''} · per month`}
+              hint={`${active.length} estimate${active.length > 1 ? 's' : ''} · ${per}`}
               tone="neutral"
               onClick={() => focusOn('budget')}
               active={focus === 'budget'}
@@ -257,7 +387,9 @@ export default function Boq() {
             <SummaryCard
               label="Actual spend"
               value={fmt(report.actualTotal)}
-              hint={report.months > 1 ? `monthly average of ${report.months} months` : 'this month'}
+              hint={report.perMonth
+                ? (months > 1 ? `monthly average of ${months} months` : 'this month')
+                : `billed across ${months} month${months > 1 ? 's' : ''}`}
               tone="neutral"
               onClick={() => focusOn('actual')}
               active={focus === 'actual'}
@@ -297,7 +429,7 @@ export default function Boq() {
             <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3">
               <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
               <div className="text-sm text-red-200">
-                <span className="font-semibold">{fmt(report.unbudgetedTotal)} per month</span> is
+                <span className="font-semibold">{fmt(report.unbudgetedTotal)} {per}</span> is
                 being spent in whole categories your BOQ never budgeted for — separate from the{' '}
                 {fmt(report.notInBoqTotal)} of individual charges with no matching budget line.
                 Both are highlighted in red below.

@@ -1147,8 +1147,12 @@ function securityHealth({ security, services }) {
  * five it rests on — so a "92" built from one category cannot be mistaken for
  * a clean bill of health.
  */
-export function estateHealth({ compute, orphaned, costData, services, policy, defender, advisor, access, roles } = {}) {
-  const spend = spendOverview(costData)?.current ?? null;
+export function estateHealth({ compute, orphaned, costData, services, policy, defender, advisor, access, roles, opts = {} } = {}) {
+  // `opts` carries the same `now` the rest of the estate module accepts. Without
+  // it this function reads the real clock, which makes its score depend on the
+  // day it is asked -- the same data scoring one way in August and another in
+  // September, purely because the last month became complete overnight.
+  const spend = spendOverview(costData, opts)?.current ?? null;
   const governance = governanceSnapshot({ services, policy });
   const security = securitySnapshot({ defender, policy, advisor, access, roles });
 

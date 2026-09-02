@@ -18,23 +18,76 @@
  * they propose cancelling a reservation, and an estimate would look identical
  * on screen to a measurement.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   PiggyBank, TrendingDown, CalendarClock, Percent, Wallet, Loader2,
   ShoppingCart, Info, ChevronRight, ChevronDown, ExternalLink, Search,
+  AlertTriangle, Ban,
 } from 'lucide-react';
 import { fetchCommitments } from '../api/client';
 import {
   PageHeader, NeedsSelection, Failure, Empty, Chips,
 } from '../components/Security/SecurityShell';
 import { useAppStore } from '../store/useAppStore';
+import CommitmentRules from '../components/Commitments/CommitmentRules';
 import { friendlyError } from '../utils/apiError';
+import { cancellationImpact } from '../utils/commitmentRules';
 import {
   GRAINS, TYPE_FILTERS, KIND_LABEL, KIND_FULL, EXPIRY_TONE, EXPIRY_LABEL,
   MISSING, percent, money, termLabel, expiryLabel, filterCommitments, usedAt,
-  wastageOf, byResourceType, worstWaste, utilisationTone, utilisationBar,
+  wastageOf, wastageBasis, byResourceType, worstWaste, utilisationTone, utilisationBar,
   utilisationVerdict,
 } from '../utils/commitments';
+
+/**
+ * What cancelling one specific commitment would mean.
+ *
+ * Opened from the row rather than shown always, because most commitments are
+ * not cancellation candidates and a permanent block of warnings beside a
+ * healthy reservation trains people to stop reading them. A blocker is drawn
+ * differently from a cost so that "you cannot" and "you can, but" are never
+ * mistaken for one another.
+ */
+const IMPACT_TONE = {
+  blocker: { icon: Ban, wrap: 'border-rose-900/60 bg-rose-950/30', text: 'text-rose-300' },
+  cost: { icon: AlertTriangle, wrap: 'border-amber-900/60 bg-amber-950/20', text: 'text-amber-300' },
+  note: { icon: Info, wrap: 'border-slate-800 bg-slate-900/60', text: 'text-slate-400' },
+};
+
+function Impact({ item, grain }) {
+  const notes = useMemo(() => cancellationImpact(item, { grain }), [item, grain]);
+  if (notes.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] uppercase tracking-wide text-slate-500">
+        If you cancel {item.name || 'this commitment'}
+      </p>
+      {notes.map(note => {
+        const tone = IMPACT_TONE[note.severity] || IMPACT_TONE.note;
+        const Glyph = tone.icon;
+        return (
+          <div key={note.id} className={`flex gap-2.5 rounded-xl border p-3 ${tone.wrap}`}>
+            <Glyph size={14} className={`mt-0.5 shrink-0 ${tone.text}`} />
+            <div className="min-w-0">
+              <p className={`text-xs font-medium ${tone.text}`}>{note.title}</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-slate-400">{note.detail}</p>
+              {note.source && (
+                <a
+                  href={note.source.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300"
+                >
+                  {note.source.title} <ExternalLink size={10} />
+                </a>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function Kpi({ icon, label, value, hint, tone = 'text-slate-100', accent = 'border-slate-800' }) {
   const Glyph = icon;
@@ -169,6 +222,9 @@ export default function Commitments() {
   const [type, setType] = useState('all');
   const [hideExpired, setHideExpired] = useState(true);
   const [query, setQuery] = useState('');
+  // Only one row's cancellation impact is open at a time. Several at once turns
+  // the table into a wall of warnings with no row visible between them.
+  const [impactFor, setImpactFor] = useState(null);
 
   const ready = Boolean(tenantId) && (subscriptionIds || []).length > 0;
 
@@ -257,9 +313,14 @@ export default function Commitments() {
               label="Commitment spend"
               value={money(summary.monthly_spend, currency)}
               hint={
-                summary.costed < summary.active
-                  ? `Covers ${summary.costed} of ${summary.active} active commitments.`
-                  : 'Amortised over the last 30 days.'
+                summary.monthly_spend === null
+                  ? 'Cost Management returned no benefit charges for the selected '
+                    + 'subscriptions. Amortised cost lands on the subscriptions that used '
+                    + 'the benefit, so select those too, or check Cost Management access.'
+                  : summary.costed < summary.active
+                    ? `Amortised over the last 30 days. Covers ${summary.costed} of `
+                      + `${summary.active} active commitments — the rest returned no charges.`
+                    : 'Amortised over the last 30 days.'
               }
             />
             <Kpi
@@ -268,8 +329,13 @@ export default function Commitments() {
               value={money(summary.wastage, currency)}
               hint={
                 summary.wastage === null
-                  ? 'Needs both a utilisation figure and a cost.'
-                  : `Unused share across ${summary.wastage_counted} commitments.`
+                  ? 'Needs either Azure’s own unused-benefit charge or both a utilisation '
+                    + 'figure and a cost. Neither came back for these commitments.'
+                  : summary.wastage_measured
+                    ? `Across ${summary.wastage_counted} commitments, `
+                      + `${summary.wastage_measured} of them billed by Azure as unused.`
+                    : `Unused share across ${summary.wastage_counted} commitments, worked `
+                      + 'out from utilisation rather than billed.'
               }
               tone={summary.wastage ? 'text-rose-400' : 'text-slate-100'}
               accent={summary.wastage ? 'border-rose-500/30' : 'border-slate-800'}
@@ -371,14 +437,18 @@ export default function Commitments() {
                           <th className="px-3 py-2 font-medium">Utilisation ({grain}d)</th>
                           <th className="px-3 py-2 text-right font-medium">Monthly cost</th>
                           <th className="px-4 py-2 text-right font-medium">Wasted</th>
+                          <th className="px-4 py-2 text-right font-medium">If cancelled</th>
                         </tr>
                       </thead>
                       <tbody>
                         {rows.map(item => {
                           const used = usedAt(item, grain);
                           const lost = wastageOf(item, grain);
+                          const basis = wastageBasis(item, grain);
+                          const open = impactFor === item.id;
                           return (
-                            <tr key={item.id} className="border-b border-slate-800/60 last:border-0">
+                            <Fragment key={item.id}>
+                            <tr className="border-b border-slate-800/60">
                               <td className="max-w-[14rem] truncate px-4 py-2 text-slate-200" title={item.name}>
                                 {item.name || MISSING}
                               </td>
@@ -400,8 +470,34 @@ export default function Commitments() {
                                 lost ? 'text-rose-400' : 'text-slate-500'
                               }`}>
                                 {money(lost, item.currency || currency)}
+                                {/* Says whether Azure billed this or we worked it
+                                    out, because one is evidence and the other is
+                                    an inference and they should not read alike. */}
+                                {basis && (
+                                  <span className="block text-[10px] font-normal text-slate-600">
+                                    {basis === 'measured' ? 'billed as unused' : 'from utilisation'}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2 text-right">
+                                <button
+                                  onClick={() => setImpactFor(open ? null : item.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-500 hover:text-white"
+                                  aria-expanded={open}
+                                >
+                                  {open ? 'Hide' : 'What happens'}
+                                  <ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} />
+                                </button>
                               </td>
                             </tr>
+                            {open && (
+                              <tr className="border-b border-slate-800/60 bg-slate-950/40">
+                                <td colSpan={10} className="px-4 py-3">
+                                  <Impact item={item} grain={grain} />
+                                </td>
+                              </tr>
+                            )}
+                            </Fragment>
                           );
                         })}
                       </tbody>
@@ -538,6 +634,13 @@ export default function Commitments() {
           </span>
         </Empty>
       )}
+
+      {/* Reference, not measurement -- and deliberately available before any
+          tenant is selected, because the question "what does it cost to get out
+          of this" is usually asked before anyone signs in to check. */}
+      <div className="border-t border-slate-800 pt-6">
+        <CommitmentRules items={items} currency={currency} />
+      </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe, fetchOrphaned, fetchPricing, fetchCompute, fetchActivity, fetchPolicy, fetchDefender, fetchAdvisor, fetchAccessReview, fetchRoleAssignments } from '../api/client';
 import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
+import { readSavedViews, removeView, saveView, writeSavedViews } from '../utils/costExplorer';
 import { readCache, readPrefs, writeCache, writePrefs, evictApiCache } from '../utils/persistCache';
 
 /**
@@ -136,6 +137,63 @@ function savePrefs(get) {
   writePrefs({ selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate });
 }
 
+/*
+ * Everything held in the store that belongs to one tenant-and-subscription
+ * selection.
+ *
+ * These are answers to a question that included a tenant id, so the moment the
+ * tenant changes they are answers to a question nobody is asking any more.
+ * Leaving them in place was a real bug rather than a cosmetic one: switching
+ * tenant clears the subscription selection, every loader then returns early
+ * because nothing is selected, and the previous tenant's totals stay on screen
+ * with the new tenant's name in the topbar. The figures were never wrong for
+ * the tenant they came from -- they were labelled with the wrong one, which on
+ * a cost page is worse.
+ *
+ * Listed explicitly rather than derived by matching key names, so adding a
+ * dataset is a deliberate decision about whether it is tenant-scoped. A
+ * forgotten entry here shows stale money; a wrongly included one only costs a
+ * refetch.
+ */
+const TENANT_SCOPED = [
+  'costData', 'rgData', 'dailyData', 'rowsData', 'bandwidthData', 'pricingData',
+  'orphanedData', 'computeData', 'activityData', 'policyData', 'defenderData',
+  'advisorData', 'accessData', 'rolesData',
+];
+
+/*
+ * The error beside each of those, listed separately because the mapping is not
+ * mechanical: posture is three datasets behind one error, and roles shares the
+ * access error. Deriving these by trimming "Data" off the names above invented
+ * `policyError` and `defenderError`, which exist nowhere, and quietly failed to
+ * clear the two that do -- leaving a red panel from the previous tenant on a
+ * page that has not asked Azure anything yet.
+ */
+const TENANT_SCOPED_ERRORS = [
+  'costError', 'rgError', 'dailyError', 'rowsError', 'bandwidthError',
+  'pricingError', 'orphanedError', 'computeError', 'activityError',
+  'postureError', 'accessError',
+];
+
+function clearedTenantData() {
+  const cleared = {};
+  for (const key of TENANT_SCOPED) cleared[key] = null;
+  for (const key of TENANT_SCOPED_ERRORS) cleared[key] = null;
+  return cleared;
+}
+
+/*
+ * Subscription ids are kept sorted.
+ *
+ * Every cache key is the JSON of a payload containing this array, so picking
+ * A then B and picking B then A produced two different keys for one identical
+ * question -- a guaranteed miss, and a second round trip to Azure for an
+ * answer already sitting in localStorage. Sorting at the point of selection
+ * fixes every key, on the client and on the server, without touching the two
+ * dozen places that build a payload.
+ */
+const sortedIds = (ids) => [...ids].sort();
+
 export const useAppStore = create((set, get) => ({
   // ── Signed-in account ──
   // Role comes from the backend, never from the token, so the admin nav cannot
@@ -151,6 +209,24 @@ export const useAppStore = create((set, get) => ({
     try {
       set({ me: await fetchMe(), meLoading: false, meError: null });
     } catch (err) {
+      // Retry once, but only for an expired credential.
+      //
+      // This is the request that decides whether the app renders at all, so
+      // failing it puts up a full-screen block whose clearest way out is Sign
+      // out - which is how a recoverable token problem turned into people
+      // being signed out of a session that was still valid. A 401 is precisely
+      // the case worth retrying: the first attempt is what discovers the token
+      // is stale, and the client renews it before the second one goes out.
+      //
+      // Deliberately not retried for anything else. A 500 or a network failure
+      // will not be fixed by asking again immediately, and hiding a real
+      // outage behind a second attempt only makes it slower to diagnose.
+      if (err.response?.status === 401) {
+        try {
+          set({ me: await fetchMe(), meLoading: false, meError: null });
+          return;
+        } catch { /* Fall through and report the original failure. */ }
+      }
       set({
         me: null,
         meLoading: false,
@@ -186,7 +262,13 @@ export const useAppStore = create((set, get) => ({
   },
 
   setSelectedTenant: async (tenantId) => {
-    set({ selectedTenantId: tenantId, selectedSubscriptionIds: [] });
+    // Cleared in the same set() as the new id, so no render can ever pair one
+    // tenant's name with another tenant's money.
+    set({
+      selectedTenantId: tenantId,
+      selectedSubscriptionIds: [],
+      ...clearedTenantData(),
+    });
     savePrefs(get);
     await get().loadSubscriptions(tenantId);
   },
@@ -209,7 +291,7 @@ export const useAppStore = create((set, get) => ({
   // Anything restored here is still filtered against the subscriptions that
   // actually came back from Azure, so a stale or revoked id cannot resurrect
   // itself and silently skew a total.
-  selectedSubscriptionIds: prefs.selectedSubscriptionIds ?? [],
+  selectedSubscriptionIds: sortedIds(prefs.selectedSubscriptionIds ?? []),
   subscriptionsLoading: false,
   subscriptionsError: null,
 
@@ -231,7 +313,7 @@ export const useAppStore = create((set, get) => ({
       // loads — slow, and throttled on any sizeable estate — to answer a
       // question the user has not asked yet. They choose, then data loads.
       const activeIds = subs.filter(s => s.state === 'Enabled').map(s => s.subscription_id);
-      set({ selectedSubscriptionIds: get().selectedSubscriptionIds.filter(id => activeIds.includes(id)) });
+      set({ selectedSubscriptionIds: sortedIds(get().selectedSubscriptionIds.filter(id => activeIds.includes(id))) });
       savePrefs(get);
     } catch (err) {
       set({ subscriptionsLoading: false, subscriptionsError: err.message });
@@ -239,17 +321,24 @@ export const useAppStore = create((set, get) => ({
   },
 
   toggleSubscription: (subId) => {
-    set((s) => ({
-      selectedSubscriptionIds: s.selectedSubscriptionIds.includes(subId)
-        ? s.selectedSubscriptionIds.filter(id => id !== subId)
-        : [...s.selectedSubscriptionIds, subId],
-    }));
+    set((s) => {
+      const next = sortedIds(
+        s.selectedSubscriptionIds.includes(subId)
+          ? s.selectedSubscriptionIds.filter(id => id !== subId)
+          : [...s.selectedSubscriptionIds, subId],
+      );
+      // Deselecting the last subscription leaves every loader with nothing to
+      // ask for, so they return early -- and the totals for the selection the
+      // user just cleared would stay on screen unless they go here.
+      return { selectedSubscriptionIds: next, ...(next.length ? {} : clearedTenantData()) };
+    });
     savePrefs(get);
     if (get().imported) get().recomputeImported();
   },
 
   setAllSubscriptions: (ids) => {
-    set({ selectedSubscriptionIds: ids });
+    const next = sortedIds(ids);
+    set({ selectedSubscriptionIds: next, ...(next.length ? {} : clearedTenantData()) });
     savePrefs(get);
     if (get().imported) get().recomputeImported();
   },
@@ -413,7 +502,7 @@ export const useAppStore = create((set, get) => ({
   dailyRg: null,  // currently selected RG filter
 
   loadDailyCosts: async (resourceGroup = null, opts = {}) => {
-    const { selectedTenantId, selectedSubscriptionIds, imported } = get();
+    const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate, imported } = get();
     // An imported file has no daily granularity, so never fall back to Azure.
     if (imported) return set({ dailyData: null, dailyLoading: false, dailyRg: resourceGroup });
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
@@ -422,7 +511,12 @@ export const useAppStore = create((set, get) => ({
       const payload = {
         tenant_id: selectedTenantId,
         subscription_ids: selectedSubscriptionIds,
-        months: 1,
+        // The daily series used to ask for one month no matter what the date
+        // picker said, so a three-month selection drew a one-month chart beside
+        // three-month totals. It follows the selection like every other query,
+        // capped at the six months the API accepts at day resolution.
+        months: Math.min(Math.max(months || 1, 1), 6),
+        ...(dateMode === 'custom' && fromDate && toDate ? { from_date: fromDate, to_date: toDate } : {}),
         resource_group: resourceGroup,
       };
       await cached(
@@ -622,6 +716,26 @@ export const useAppStore = create((set, get) => ({
   clearBoqs: () => {
     writeCache(BOQ_KEY, []);
     set({ boqs: [] });
+  },
+
+  // ── Saved cost views ──
+  // A view is a way of reading the cost data, not a copy of it, so only the
+  // configuration is stored. It survives reloads for the same reason the
+  // import does: rebuilding the same chart every morning is the thing this
+  // feature exists to stop.
+  costViews: readSavedViews(),
+
+  saveCostView: (view) => {
+    const next = saveView(get().costViews, view);
+    writeSavedViews(next);
+    set({ costViews: next });
+    return next;
+  },
+
+  removeCostView: (id) => {
+    const next = removeView(get().costViews, id);
+    writeSavedViews(next);
+    set({ costViews: next });
   },
 
   /**

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   TrendingUp, TrendingDown, Sparkles, CircleSlash, Minus,
-  ExternalLink, Loader2, AlertTriangle,
+  ExternalLink, Loader2, AlertTriangle, GitCompareArrows, ArrowRight,
 } from 'lucide-react';
 import DetailPanel from '../Common/DetailPanel';
 import { formatAmount, formatAmountFull } from '../../utils/currency';
-import { setAnomalyStatus, fetchAnomalyHistory } from '../../api/client';
+import { setAnomalyStatus, fetchAnomalyHistory, explainAnomaly } from '../../api/client';
 import { friendlyError } from '../../utils/apiError';
 import {
   possibleCauses, severityLabel, severityHint, directionLabel, STATUSES,
@@ -41,13 +42,126 @@ function Figure({ label, value, currency, hint }) {
 }
 
 /**
+ * The changes recorded in this subscription and resource group while the cost
+ * moved.
+ *
+ * This is the closest thing to an answer the data can give, and the wording is
+ * load-bearing. Cost Management can say a resource group's bill doubled; it
+ * cannot say the VM resize on the 14th did it. Both facts side by side are
+ * worth a great deal, and the inference belongs to the reader -- so nothing
+ * here says "caused", and a change that would have moved the bill the other way
+ * is shown greyed out rather than dropped, because knowing we looked and found
+ * nothing better is itself an answer.
+ */
+function WhatChanged({ row, tenantId, comparison }) {
+  const from = comparison?.previous_start;
+  const to = comparison?.current_effective_end;
+  const subscriptionId = row.subscription_id || '';
+  const resourceGroup = row.resource_group || '';
+  const service = row.service || '';
+  const direction = row.direction || 'increase';
+
+  // The request this answer belongs to. Stored alongside the answer rather
+  // than paired with a separate loading flag, because that flag had to be set
+  // synchronously inside the effect to stop the previous anomaly's evidence
+  // showing for a frame under the new one's heading. Deriving it means the
+  // stale answer simply cannot be rendered.
+  const request = [tenantId, from, to, subscriptionId, resourceGroup, service, direction].join('|');
+  const [result, setResult] = useState({ request: null, data: null, error: '' });
+
+  useEffect(() => {
+    if (!tenantId || !from || !to) return undefined;
+    let live = true;
+    explainAnomaly({
+      tenant_id: tenantId,
+      from_date: from,
+      to_date: to,
+      subscription_id: subscriptionId,
+      resource_group: resourceGroup,
+      service,
+      direction,
+    })
+      .then((data) => { if (live) setResult({ request, data, error: '' }); })
+      .catch((e) => { if (live) setResult({ request, data: null, error: friendlyError(e) }); });
+    return () => { live = false; };
+  }, [request, tenantId, from, to, subscriptionId, resourceGroup, service, direction]);
+
+  if (!from || !to) return null;
+
+  const settled = result.request === request;
+  const { data, error } = result;
+
+  return (
+    <section>
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold text-white">
+        <GitCompareArrows className="h-4 w-4 text-slate-500" />
+        What changed here
+      </h3>
+      <p className="mt-0.5 text-[11px] text-slate-500">
+        From your own scans, between {from} and {to}.
+      </p>
+
+      {!settled && (
+        <p className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Looking for changes in this period…
+        </p>
+      )}
+
+      {settled && error && (
+        <p className="mt-2 text-xs text-amber-300/80">{error}</p>
+      )}
+
+      {settled && data && (
+        <>
+          <p className="mt-2 text-xs leading-relaxed text-slate-300">{data.summary}</p>
+
+          {!!data.evidence?.length && (
+            <ul className="mt-2 space-y-1.5">
+              {data.evidence.map((item) => {
+                const strong = item.relevance === 'strong';
+                return (
+                  <li
+                    key={`${item.kind}-${item.resource_id}`}
+                    className={`rounded-lg border px-3 py-2 ${
+                      strong
+                        ? 'border-slate-700 bg-slate-900/60'
+                        : 'border-slate-800/60 bg-slate-900/30'
+                    }`}
+                  >
+                    <p className={`text-xs ${strong ? 'text-slate-200' : 'text-slate-400'}`}>
+                      {item.headline}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-slate-500">{item.why_relevant}</p>
+                    {/* Straight into the resource's own timeline, where the
+                        exact dates, the person and the cost either side of the
+                        change live. */}
+                    <Link
+                      to={`/changes?resource=${encodeURIComponent(item.resource_id)}`}
+                      className="mt-1 inline-flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300"
+                    >
+                      See this resource's timeline
+                      <ArrowRight className="h-3 w-3" />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
  * Everything known about one cost change, and the only place it can be triaged.
  *
  * The drawer exists because a table row can carry an amount but not an
  * argument. Whether a ₹18,000 increase matters depends on what else moved with
  * it, and that context does not fit in a cell.
  */
-export default function AnomalyDrawer({ open, row, currency, tenantId, siblings, onClose, onStatusChange }) {
+export default function AnomalyDrawer({ open, row, currency, tenantId, siblings, comparison, onClose, onStatusChange }) {
   const [history, setHistory] = useState([]);
   const [historyState, setHistoryState] = useState('idle');
   const [comment, setComment] = useState('');
@@ -136,6 +250,8 @@ export default function AnomalyDrawer({ open, row, currency, tenantId, siblings,
             hint={row.pct_change == null ? 'No previous cost to compare against' : null}
           />
         </div>
+
+        <WhatChanged row={row} tenantId={tenantId} comparison={comparison} />
 
         <section>
           <h3 className="text-sm font-semibold text-white">Possible causes</h3>

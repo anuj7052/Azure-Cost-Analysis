@@ -161,17 +161,29 @@ export function usedAt(item, grain) {
 /**
  * What a commitment is costing that nobody is using.
  *
- * Both halves are required. This is the number somebody quotes when they
- * propose cancelling a reservation, and an estimate built on a guessed cost
- * would look identical on screen to a measured one.
+ * Azure bills the unused portion of a benefit as its own charge, so where that
+ * came back it is used directly: it is a measured figure rather than a derived
+ * one, and it exists even in tenants where the utilisation API returns nothing.
+ * Only when it is absent does this fall back to cost multiplied by the unused
+ * percentage, and that fallback still needs both halves -- this is the number
+ * somebody quotes when they propose cancelling a reservation, and an estimate
+ * built on a guessed cost would look identical on screen to a measured one.
  */
 export function wastageOf(item, grain) {
+  const measured = item && item.measured_wastage;
+  if (measured !== null && measured !== undefined) return Math.round(measured * 100) / 100;
   const cost = item && item.monthly_cost;
   const used = usedAt(item, grain);
   if (cost === null || cost === undefined) return null;
   if (used === null || used === undefined) return null;
   const unused = Math.max(0, Math.min(100, 100 - used));
   return Math.round(cost * unused) / 100;
+}
+
+/** Whether a wastage figure was billed by Azure or inferred from a percentage. */
+export function wastageBasis(item, grain) {
+  if (item && item.measured_wastage !== null && item.measured_wastage !== undefined) return 'measured';
+  return wastageOf(item, grain) === null ? '' : 'derived';
 }
 
 /**

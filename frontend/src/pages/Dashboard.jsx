@@ -9,7 +9,7 @@ import DetailPanel, { DetailStat } from '../components/Common/DetailPanel';
 import PortalGuide from '../components/Common/PortalGuide';
 import { COST_GUIDE } from '../components/Common/portalGuides';
 import AnomalyCard from '../components/Cards/AnomalyCard';
-import CostTrendChart from '../components/Charts/CostTrendChart';
+import CostAnalysisChart from '../components/Charts/CostAnalysisChart';
 import ServicePieChart from '../components/Charts/ServicePieChart';
 import { formatAmount, formatAmountFull } from '../utils/currency';
 import { exactAmount } from '../utils/exact';
@@ -27,6 +27,8 @@ export default function Dashboard() {
     computeData, computeLoading, loadCompute,
     orphanedData, orphanedLoading, loadOrphaned,
     activityData, activityLoading, activityError, loadActivity,
+    rowsData, rowsLoading, loadCostRows, dailyData, loadDailyCosts, detailedUsageRows,
+    costViews, saveCostView, removeCostView,
     imported, boqs,
   } = useAppStore();
 
@@ -78,6 +80,14 @@ export default function Dashboard() {
       await loadCosts();
       if (cancelled) return;
       await Promise.allSettled([loadBandwidth(), loadPricing()]);
+      if (cancelled) return;
+      // The explorer's finer dimensions -- resource group, meter, region --
+      // only exist in the meter rows, and its daily grain only in the daily
+      // totals. Both are fetched last and in the background: the tiles above
+      // do not need them, and both are cached and de-duplicated with the other
+      // pages that ask for the same window, so arriving here second usually
+      // costs nothing at all.
+      await Promise.allSettled([loadCostRows(), loadDailyCosts()]);
     })();
 
     return () => { cancelled = true; };
@@ -90,14 +100,35 @@ export default function Dashboard() {
   // looked" and "we looked and found none" are different answers, and a
   // dashboard that renders both as 0 is quietly telling you the estate is
   // clean when it has never been examined.
-  const anomalyCount  = costData ? (costData.anomalies?.length || 0) : null;
-  const savingsTotal  = costData
+  const anomalyCount  = costData ? (costData.anomalies?.length || 0) : null;  const savingsTotal  = costData
     ? (costData.savings?.reduce((acc, s) => acc + s.saved_amount, 0) || 0)
     : null;
   const avgMonthly    = costData?.months?.length
     ? costData.months.reduce((s, m) => s + m.total_cost, 0) / costData.months.length : null;
   const dailyBurn     = latest?.total_cost ? latest.total_cost / 30 : null;
   const currency      = costData?.months?.[0]?.currency || 'INR';
+  // What the explorer charts. The meter rows carry every dimension and are
+  // preferred; until they arrive the service and subscription splits already
+  // in the monthly summary are enough to draw the default view, so the panel
+  // is never blank while a second query is in flight. Both are the same money,
+  // read at different resolutions -- never a second source for it.
+  const explorerRows = useMemo(() => {
+    const detailed = detailedUsageRows();
+    if (detailed?.length) return detailed;
+    return (costData?.months || []).flatMap(m => {
+      const services = Object.entries(m.by_service || {});
+      const subs = Object.entries(m.by_subscription || {});
+      // Only one of the two splits can be used per row without inventing a
+      // cross-tabulation Azure never reported, so the coarser fallback emits
+      // service rows and carries the subscription only when there is one.
+      const only = subs.length === 1 ? subs[0][0] : '';
+      return services.map(([service, cost]) => ({
+        month: m.month, cost, service, subscription_id: only,
+        meter: '', resource_group: '', region: '', resource_name: '',
+      }));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [costData, rowsData, imported]);
   const fmt           = (v) => formatAmount(v, currency);
   const full          = (v) => formatAmountFull(v, currency);
   // The unabbreviated figure, shown on hover so a tile can be reconciled
@@ -384,7 +415,7 @@ export default function Dashboard() {
 
       {boqReport && <BoqVarianceBanner report={boqReport} onOpen={() => navigate('/boq')} />}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="stagger-children grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {Object.entries(HEROES).map(([key, h]) => (
           <HeroCard
             key={key}
@@ -442,7 +473,7 @@ export default function Dashboard() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="stagger-children grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {[
             { key: 'bw_total',   title: 'Total Transfer', sub: 'All directions', icon: Network,         accent: 'blue',    bytes: bwTotal,           cost: bw?.total_cost },
             { key: 'bw_egress',  title: 'Egress · Out',   sub: 'Billable',       icon: ArrowUpFromLine, accent: 'rose',    bytes: bw?.egress_bytes,  cost: bw?.egress_cost },
@@ -485,9 +516,20 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-slate-300 mb-1">Cost Trend</h2>
-          <p className="text-xs text-slate-500 mb-4">Monthly spend across all subscriptions</p>
-          <CostTrendChart months={costData?.months || []} loading={costLoading} currency={currency} />
+          <h2 className="text-sm font-semibold text-slate-300 mb-1">Cost Analysis</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            Build the view you need — by service, subscription, resource group, meter or
+            region — then keep it.
+          </p>
+          <CostAnalysisChart
+            rows={explorerRows}
+            days={dailyData?.days || []}
+            currency={currency}
+            loading={costLoading || (rowsLoading && !explorerRows.length)}
+            saved={costViews}
+            onSave={saveCostView}
+            onDelete={removeCostView}
+          />
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
           <h2 className="text-sm font-semibold text-slate-300 mb-1">Service Distribution</h2>

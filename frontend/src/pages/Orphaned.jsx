@@ -349,7 +349,60 @@ export default function Orphaned() {
             />
           </div>
 
-          <p className="text-xs text-slate-500">{coverageNote(shown)}</p>
+          <p className="text-xs text-slate-500">
+            {coverageNote(shown, {
+              month: orphanedData.cost_month,
+              partial: orphanedData.cost_partial,
+            })}
+          </p>
+
+          {orphanedData.cost_errors?.length > 0 && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-300">
+                <AlertTriangle className="h-4 w-4" />
+                Costs could not be read for every subscription
+              </div>
+              <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
+                The findings below are complete, but the money against them is not. Cost
+                Management refused or did not answer for{' '}
+                {orphanedData.cost_errors.length} subscription
+                {orphanedData.cost_errors.length === 1 ? '' : 's'}, so those resources show
+                no cost even though they are still being billed.
+              </p>
+              <ul className="mt-2 space-y-1">
+                {orphanedData.cost_errors.map(e => (
+                  <li key={e.subscription_id} className="text-xs text-slate-500">
+                    <span className="text-slate-400">
+                      {e.subscription_name || e.subscription_id}
+                    </span>
+                    {' — '}{e.error || 'no reason given'}
+                    {e.retryable && ' This one is worth trying again.'}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                A billing query that fails needs the Cost Management Reader role on the
+                subscription — Reader alone is not enough to see costs.
+              </p>
+            </div>
+          )}
+
+          {!orphanedData.cost_errors?.length
+            && orphanedData.priced_count === 0
+            && shown.length > 0 && (
+            <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                <Info className="h-4 w-4" />
+                Azure billed nothing against these subscriptions
+              </div>
+              <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
+                The billing query succeeded and came back empty, so the missing costs are
+                not a fault here. That happens on a brand new subscription, on one whose
+                charges land on a different billing account, and in the first day or two of
+                a month before Azure has published anything.
+              </p>
+            </div>
+          )}
 
           {orphanedData.errors?.length > 0 && (
             <div className="rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4">

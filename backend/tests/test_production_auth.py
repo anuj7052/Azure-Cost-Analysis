@@ -140,6 +140,10 @@ def _prod(**over):
         AZURE_CLIENT_ID=CLIENT_ID,
         APP_SECRET_KEY="x" * 48,
         CORS_ORIGINS="https://app.example.com",
+        # Stated rather than left to default, because Settings still reads the
+        # developer's own .env and a local convenience flag must not decide
+        # whether a test about production passes.
+        AZURE_CLI_AUTH=False,
     )
     base.update(over)
     return Settings(**base)
@@ -154,6 +158,8 @@ def test_a_correct_production_config_reports_no_problems():
     ({"APP_SECRET_KEY": "short"}, "APP_SECRET_KEY"),
     ({"AZURE_CLIENT_ID": ""}, "AZURE_CLIENT_ID"),
     ({"CORS_ORIGINS": "http://app.example.com"}, "CORS_ORIGINS"),
+    # Hosted, this hands every caller the server's own Azure rights.
+    ({"AZURE_CLI_AUTH": True}, "AZURE_CLI_AUTH"),
 ])
 def test_each_insecure_setting_is_named_not_merely_counted(over, expect):
     """

@@ -263,3 +263,137 @@ describe('csv export', () => {
     expect(csv.split('\n')[0].startsWith('Service,')).toBe(true);
   });
 });
+
+// ── period basis ───────────────────────────────────────────────────────────
+/**
+ * A BOQ is written per month; a bill is read over whatever range the user
+ * picked. Comparing the two without saying which basis is in force is how a
+ * three-month bill ends up looking like a 200% overrun against a one-month
+ * estimate. These pin both bases to the same underlying money.
+ */
+describe('period basis', () => {
+  const rows = [
+    row({ month: '2026-05' }),
+    row({ month: '2026-06' }),
+    row({ month: '2026-07' }),
+  ];
+
+  it('averages the actuals down to one month by default', () => {
+    const report = compareBoqToUsage([boq([item()])], rows, 3);
+    expect(report.perMonth).toBe(true);
+    expect(report.budgetFactor).toBe(1);
+    expect(report.budgetTotal).toBe(1000);
+    expect(report.actualTotal).toBe(1000);
+  });
+
+  it('multiplies the estimate to cover the whole period instead', () => {
+    const report = compareBoqToUsage([boq([item()])], rows, 3, 'INR', { perMonth: false });
+    expect(report.perMonth).toBe(false);
+    expect(report.budgetFactor).toBe(3);
+    expect(report.budgetTotal).toBe(3000);
+    expect(report.actualTotal).toBe(3000);
+  });
+
+  it('scales the estimate everywhere it appears, not just the headline', () => {
+    const one = compareBoqToUsage([boq([item()])], rows, 3);
+    const all = compareBoqToUsage([boq([item()])], rows, 3, 'INR', { perMonth: false });
+    const cat = (r) => r.categories.find(c => c.budgeted > 0);
+    expect(cat(all).budgeted).toBeCloseTo(cat(one).budgeted * 3, 6);
+    expect(cat(all).lines[0].monthly_cost).toBeCloseTo(cat(one).lines[0].monthly_cost * 3, 6);
+  });
+
+  it('leaves a single-month selection reading the same on either basis', () => {
+    const one = compareBoqToUsage([boq([item()])], [row()], 1);
+    const all = compareBoqToUsage([boq([item()])], [row()], 1, 'INR', { perMonth: false });
+    expect(all.budgetTotal).toBe(one.budgetTotal);
+    expect(all.actualTotal).toBe(one.actualTotal);
+    expect(all.variance).toBe(one.variance);
+  });
+
+  it('reports the same variance percentage on both bases', () => {
+    const rich = [...rows, row({ month: '2026-07', resource_name: 'disk-b' })];
+    const one = compareBoqToUsage([boq([item()])], rich, 3);
+    const all = compareBoqToUsage([boq([item()])], rich, 3, 'INR', { perMonth: false });
+    // The ratio is basis-independent, so a percentage that moves means one of
+    // the two sides was scaled and the other was not.
+    expect(all.variancePct).toBeCloseTo(one.variancePct, 6);
+  });
+});
+
+/**
+ * A month that has not finished yet.
+ *
+ * Azure bills a day or two behind, so "this month" is almost never a whole
+ * month of data. Comparing four days of spend with a whole month of estimate
+ * reports an enormous underspend that will evaporate, which is the most
+ * dangerous kind of wrong number: it reads as good news.
+ */
+describe('part-finished periods', () => {
+  const monthly = 3100;
+  const item = () => ({ service: 'Storage', name: 'P20 disk', monthly_cost: monthly, qty: 1 });
+  const boq = (items) => ({ id: 'b', enabled: true, items });
+  const rows = [{ month: '2026-07', service: 'Storage', meter: 'P20 Disks', cost: 400 }];
+
+  it('scales the estimate down to the days actually billed', () => {
+    const r = compareBoqToUsage([boq([item()])], rows, 1, 'INR',
+      { perMonth: false, days: 4, daysInPeriod: 31 });
+    expect(r.partial).toBeCloseTo(4 / 31, 6);
+    expect(r.budgetTotal).toBeCloseTo(monthly * 4 / 31, 2);
+  });
+
+  it('carries the days through so the page can explain the scaling', () => {
+    const r = compareBoqToUsage([boq([item()])], rows, 1, 'INR',
+      { perMonth: false, days: 4, daysInPeriod: 31 });
+    expect(r.days).toBe(4);
+    expect(r.daysInPeriod).toBe(31);
+  });
+
+  it('scales a multi-month selection by both the months and the days', () => {
+    const r = compareBoqToUsage([boq([item()])], rows, 3, 'INR',
+      { perMonth: false, days: 45, daysInPeriod: 92 });
+    expect(r.budgetTotal).toBeCloseTo(monthly * 3 * (45 / 92), 2);
+  });
+
+  it('changes nothing when the period is complete', () => {
+    const whole = compareBoqToUsage([boq([item()])], rows, 2, 'INR',
+      { perMonth: false, days: 61, daysInPeriod: 61 });
+    const plain = compareBoqToUsage([boq([item()])], rows, 2, 'INR', { perMonth: false });
+    expect(whole.partial).toBe(1);
+    expect(whole.budgetTotal).toBe(plain.budgetTotal);
+    expect(whole.budgetTotal).toBe(monthly * 2);
+  });
+
+  it('ignores day counts that disagree with each other', () => {
+    // More days billed than the period contains means one of the two numbers
+    // is wrong; inventing a budget larger than the estimate is worse than
+    // falling back to the plain month count.
+    const r = compareBoqToUsage([boq([item()])], rows, 1, 'INR',
+      { perMonth: false, days: 40, daysInPeriod: 31 });
+    expect(r.partial).toBe(1);
+    expect(r.budgetTotal).toBe(monthly);
+  });
+
+  it('ignores a half-known day count', () => {
+    const r = compareBoqToUsage([boq([item()])], rows, 1, 'INR',
+      { perMonth: false, days: 4 });
+    expect(r.partial).toBe(1);
+    expect(r.budgetTotal).toBe(monthly);
+  });
+
+  it('does not scale when the reader asked for a per-month view', () => {
+    // Per month means per whole month by definition; the days are about how
+    // much of the period elapsed, which that view has already divided out.
+    const r = compareBoqToUsage([boq([item()])], rows, 1, 'INR',
+      { perMonth: true, days: 4, daysInPeriod: 31 });
+    expect(r.budgetTotal).toBe(monthly);
+  });
+
+  it('scales the category and line figures too, not only the total', () => {
+    const r = compareBoqToUsage([boq([item()])], rows, 1, 'INR',
+      { perMonth: false, days: 4, daysInPeriod: 31 });
+    const cat = r.categories.find(c => c.budgeted > 0);
+    expect(cat.budgeted).toBeCloseTo(monthly * 4 / 31, 2);
+    expect(cat.budgetLines[0].monthly_cost).toBeCloseTo(monthly * 4 / 31, 2);
+  });
+});
+

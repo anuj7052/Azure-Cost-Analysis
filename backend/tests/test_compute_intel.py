@@ -221,6 +221,80 @@ class TestClassify:
         assert ci.memory_headroom({"Available Memory Bytes": {"min": 1}}, None) is None
 
 
+GIB = 1024 ** 3
+
+
+def mem_metric(**stats):
+    base = {"points": 200, "confident": True}
+    base.update({k: v * GIB for k, v in stats.items()})
+    return {"Available Memory Bytes": base}
+
+
+class TestMemoryReading:
+    """
+    The memory column, which is the one place an inverted reading is invisible.
+
+    Azure publishes free memory. Every statistic therefore means the opposite of
+    what its name suggests, and a machine at 95% usage and one at 5% look
+    identical if the sign is wrong.
+    """
+
+    def test_peak_usage_comes_from_the_minimum_free_reading(self):
+        out = ci.memory_reading(mem_metric(min=2, avg=10, p95=4), 16 * GIB)
+        assert out["status"] == "OK"
+        assert out["used_pct_peak"] == pytest.approx(87.5)
+        assert out["used_pct_avg"] == pytest.approx(37.5)
+        # 4 GiB free is the busy end of an availability series, not the quiet one.
+        assert out["used_pct_p95"] == pytest.approx(75.0)
+
+    def test_it_reports_gigabytes_as_well_as_percentages(self):
+        out = ci.memory_reading(mem_metric(min=2, avg=10), 16 * GIB)
+        assert out["installed_gb"] == 16.0
+        assert out["used_gb_peak"] == pytest.approx(14.0)
+        assert out["used_gb_avg"] == pytest.approx(6.0)
+        assert out["free_gb_min"] == pytest.approx(2.0)
+
+    def test_a_missing_metric_says_the_agent_is_absent_not_that_ram_is_free(self):
+        # The distinction that matters: "we cannot see inside this machine" is
+        # not "this machine uses no memory".
+        out = ci.memory_reading({}, 16 * GIB)
+        assert out["status"] == "NO_AGENT"
+        assert out["used_pct_avg"] is None
+        assert "Azure Monitor Agent" in out["note"]
+        # The size is still known and still worth showing.
+        assert out["installed_gb"] == 16.0
+
+    def test_a_published_metric_with_no_readings_is_told_apart_from_no_metric(self):
+        out = ci.memory_reading({"Available Memory Bytes": {"points": 0}}, 16 * GIB)
+        assert out["status"] == "NO_DATA"
+
+    def test_without_the_installed_size_it_reports_bytes_and_no_percentage(self):
+        out = ci.memory_reading(mem_metric(min=2, avg=10), None)
+        assert out["status"] == "NO_SIZE"
+        assert out["free_gb_min"] == pytest.approx(2.0)
+        assert out["used_pct_peak"] is None
+        assert out["used_gb_peak"] is None
+        assert out["installed_gb"] is None
+
+    def test_a_reading_above_the_installed_size_is_clamped_not_negative(self):
+        # A guest agent reporting more free memory than the SKU has is a
+        # reporting artefact; "-3% used" is not a number anybody can act on.
+        out = ci.memory_reading(mem_metric(min=20, avg=20), 16 * GIB)
+        assert out["used_pct_peak"] == 0.0
+        assert out["used_gb_peak"] == 0.0
+
+    def test_the_fleet_row_carries_memory_flat_and_nested(self):
+        vm = {"id": "/x/vm1", "name": "vm1", "sku": "Standard_D4s_v5",
+              "power_state": "PowerState/running", "ram_bytes": 16 * GIB}
+        metrics = cpu(30.0)
+        metrics.update(mem_metric(min=4, avg=8))
+        out = ci.analyse_vm(vm, metrics)
+        assert out["memory_gb"] == 16.0
+        assert out["memory_used_pct"] == pytest.approx(50.0)
+        assert out["memory_used_pct_peak"] == pytest.approx(75.0)
+        assert out["utilization"]["memory"]["status"] == "OK"
+
+
 # ───────────────────────────── SKU arithmetic ─────────────────────────────
 
 class TestSkuMath:

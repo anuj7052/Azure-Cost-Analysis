@@ -200,6 +200,24 @@ def wastage(monthly_cost: Optional[float], used_percent: Optional[float]) -> Opt
     return round(monthly_cost * unused / 100.0, 2)
 
 
+def wastage_of(item: Dict[str, Any], grain: int = DEFAULT_GRAIN) -> Tuple[Optional[float], str]:
+    """
+    One commitment's wasted money, and where the figure came from.
+
+    Azure bills the unused portion of a benefit as its own charge type, so when
+    that came back it is used directly -- it is measured rather than derived,
+    and it survives a tenant where the utilisation API returns nothing. Only
+    when it is absent does this fall back to cost multiplied by the unused
+    percentage. The basis travels with the number so the page can say which of
+    the two it is showing instead of presenting them as the same thing.
+    """
+    measured = item.get("measured_wastage")
+    if measured is not None:
+        return round(float(measured), 2), "measured"
+    derived = wastage(item.get("monthly_cost"), (item.get("utilisation") or {}).get(grain))
+    return derived, ("derived" if derived is not None else "")
+
+
 def normalise_reservation(row: Dict[str, Any], today: Optional[datetime] = None) -> Dict[str, Any]:
     props = row.get("properties") or {}
     sku = (row.get("sku") or {}).get("name") or ""
@@ -227,6 +245,7 @@ def normalise_reservation(row: Dict[str, Any], today: Optional[datetime] = None)
         "utilisation": {g: utilisation(row, g) for g in UTILISATION_GRAINS},
         # Filled in later, and only from a cost query that actually returned.
         "monthly_cost": None,
+        "measured_wastage": None,
         "currency": "",
     }
 
@@ -257,6 +276,7 @@ def normalise_savings_plan(row: Dict[str, Any], today: Optional[datetime] = None
         "expiry_band": expiry_band(days),
         "utilisation": {g: utilisation(row, g) for g in UTILISATION_GRAINS},
         "monthly_cost": None,
+        "measured_wastage": None,
         "currency": _text(commitment.get("currencyCode")),
     }
 
@@ -298,23 +318,51 @@ def normalise_recommendation(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def attach_costs(items: List[Dict[str, Any]], costs: Dict[str, float], currency: str) -> List[Dict[str, Any]]:
+def attach_costs(items: List[Dict[str, Any]], costs: Dict[str, Any], currency: str) -> List[Dict[str, Any]]:
     """
-    Join measured amortised cost onto each commitment, by name.
+    Join measured amortised cost onto each commitment.
 
-    Name is the only key the two APIs share -- the Capacity API's reservation id
-    does not appear in Cost Management output -- so the match is exact and
-    case-insensitive and nothing is joined on a near miss. A commitment whose
-    cost did not come back keeps `monthly_cost = None` and shows as "Not
-    available", which is a smaller error than showing somebody else's money
-    against it.
+    Tried by resource id first and display name second. The id is what Cost
+    Management calls `BenefitId` and it is stable; a display name can be edited
+    at any time and past cost rows keep the old one, so joining on the name
+    alone silently loses money from renamed commitments. Both the full ARM id
+    and its trailing GUID are tried, because the two APIs disagree on how much
+    of the path they return.
+
+    Nothing is joined on a near miss. A commitment whose cost did not come back
+    keeps `monthly_cost = None` and shows as "Not available", which is a smaller
+    error than showing somebody else's money against it.
+
+    Values may be a bare number or a `{cost, unused}` mapping; the mapping form
+    carries Azure's own measurement of the unused portion, which is recorded as
+    `measured_wastage` and is preferred later over anything inferred from a
+    utilisation percentage.
     """
     lookup = {str(k).strip().lower(): v for k, v in (costs or {}).items() if str(k).strip()}
+
+    def candidates(item: Dict[str, Any]) -> List[str]:
+        ident = _text(item.get("id")).strip()
+        keys = [ident, ident.rsplit("/", 1)[-1] if ident else "", _text(item.get("name")).strip()]
+        return [k.lower() for k in keys if k]
+
     for item in items:
-        matched = lookup.get(_text(item.get("name")).strip().lower())
+        matched = next((lookup[k] for k in candidates(item) if k in lookup), None)
         if matched is None:
             continue
-        item["monthly_cost"] = round(float(matched), 2)
+        if isinstance(matched, dict):
+            amount = _number(matched.get("cost"))
+            unused = _number(matched.get("unused"))
+        else:
+            amount = _number(matched)
+            unused = None
+        if amount is None:
+            continue
+        item["monthly_cost"] = round(float(amount), 2)
+        # Only recorded when the query that produced it actually distinguished
+        # unused rows. Zero here means "Azure reported no waste", which is a
+        # real answer and must not be confused with never having asked.
+        if unused is not None:
+            item["measured_wastage"] = round(float(unused), 2)
         item["currency"] = item.get("currency") or currency
     return items
 
@@ -345,8 +393,19 @@ def summarise(items: List[Dict[str, Any]], grain: int = DEFAULT_GRAIN) -> Dict[s
     plain: List[float] = []
     waste_total = 0.0
     waste_known = 0
+    waste_measured = 0
 
     for item in live:
+        # Waste is counted first and separately, because the measured figure
+        # exists even where utilisation does not and skipping the item on a
+        # missing percentage would throw that money away.
+        lost, basis = wastage_of(item, grain)
+        if lost is not None:
+            waste_total += lost
+            waste_known += 1
+            if basis == "measured":
+                waste_measured += 1
+
         used = (item.get("utilisation") or {}).get(grain)
         if used is None:
             continue
@@ -355,10 +414,6 @@ def summarise(items: List[Dict[str, Any]], grain: int = DEFAULT_GRAIN) -> Dict[s
         if cost is not None and cost > 0:
             weighted_top += used * cost
             weighted_bottom += cost
-        lost = wastage(cost, used)
-        if lost is not None:
-            waste_total += lost
-            waste_known += 1
 
     if weighted_bottom > 0:
         overall = round(weighted_top / weighted_bottom, 1)
@@ -392,6 +447,10 @@ def summarise(items: List[Dict[str, Any]], grain: int = DEFAULT_GRAIN) -> Dict[s
         "monthly_spend": round(sum(spend), 2) if spend else None,
         "wastage": round(waste_total, 2) if waste_known else None,
         "wastage_counted": waste_known,
+        # How many of those came from Azure's own unused-benefit charge rather
+        # than from cost multiplied by an unused percentage. The page says which,
+        # because one is a bill and the other is an inference.
+        "wastage_measured": waste_measured,
         "underused": sum(
             1 for i in live
             if (i.get("utilisation") or {}).get(grain) is not None
@@ -498,31 +557,67 @@ async def fetch_recommendations(token: str, subscription_ids: List[str]) -> Tupl
 
 async def fetch_amortised_costs(
     token: str, subscription_ids: List[str], from_date: str, to_date: str,
-) -> Tuple[Dict[str, float], str, List[str]]:
+) -> Tuple[Dict[str, Dict[str, float]], str, List[str]]:
     """
-    What each commitment actually cost last month, from Cost Management.
+    What each commitment actually cost over the window, from Cost Management.
 
     Deliberately an amortised query rather than an actual one. An actual-cost
     query shows an upfront reservation as its entire purchase price in the month
     it was bought and zero every month after, which would read as a single
     enormous commitment surrounded by free ones. Amortised spreads it across the
     term, which is the shape this page is describing.
+
+    Grouped by `BenefitId` and `BenefitName` rather than `ReservationName`.
+    Microsoft documents the Benefit dimensions as covering savings plans as well
+    as reservations, whereas `ReservationName` is empty for every savings plan --
+    so the old query could never return a cost for half the page, and every
+    savings plan read "Not available" no matter how healthy the tenant was.
+
+    `ChargeType` is grouped too, because amortised data carries the unused
+    portion of a benefit as its own `UnusedReservation` / `UnusedSavingsPlan`
+    rows. That is Azure's own measurement of waste in money, which is a far
+    better answer than multiplying a cost by an unused percentage, and it is
+    the only figure available when utilisation itself does not come back.
+
+    Returns costs keyed by *both* the lowercased benefit id and the lowercased
+    benefit name, so the join afterwards can prefer the id and fall back to the
+    name rather than depending on a display name nobody promised was stable.
     """
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    body = {
-        "type": "AmortizedCost",
-        "timeframe": "Custom",
-        "timePeriod": {"from": from_date, "to": to_date},
-        "dataset": {
-            "granularity": "None",
-            "aggregation": {"totalCost": {"name": "PreTaxCost", "function": "Sum"}},
-            "grouping": [{"type": "Dimension", "name": "ReservationName"}],
-        },
-    }
 
-    totals: Dict[str, float] = {}
+    def query_body(grouping: List[Dict[str, str]]) -> Dict[str, Any]:
+        return {
+            "type": "AmortizedCost",
+            "timeframe": "Custom",
+            "timePeriod": {"from": from_date, "to": to_date},
+            "dataset": {
+                "granularity": "None",
+                "aggregation": {"totalCost": {"name": "PreTaxCost", "function": "Sum"}},
+                "grouping": grouping,
+            },
+        }
+
+    benefit_body = query_body([
+        {"type": "Dimension", "name": "BenefitId"},
+        {"type": "Dimension", "name": "BenefitName"},
+        {"type": "Dimension", "name": "ChargeType"},
+    ])
+    # Kept as a fallback because the Benefit dimensions are not offered on every
+    # agreement type. Losing the savings plans is better than losing the page.
+    legacy_body = query_body([{"type": "Dimension", "name": "ReservationName"}])
+
+    totals: Dict[str, Dict[str, float]] = {}
     currency = ""
     errors: List[str] = []
+
+    def add(key: str, amount: float, unused: bool) -> None:
+        key = str(key).strip().lower()
+        if not key:
+            return
+        entry = totals.setdefault(key, {"cost": 0.0, "unused": 0.0})
+        entry["cost"] += amount
+        if unused:
+            entry["unused"] += amount
 
     async with httpx.AsyncClient(timeout=90) as client:
         for sub in subscription_ids:
@@ -530,27 +625,39 @@ async def fetch_amortised_costs(
                 f"{MGMT_BASE}/subscriptions/{sub}/providers/Microsoft.CostManagement"
                 f"/query?api-version={COST_API_VERSION}"
             )
-            try:
-                resp = await azure_retry.send_with_retry(
-                    lambda: client.post(url, headers=headers, json=body)
-                )
-                resp.raise_for_status()
-                payload = resp.json()
-            except Exception as exc:  # noqa: BLE001
-                log.info("amortised cost failed for %s: %s", sub, exc)
-                errors.append(f"{sub}: {exc}")
+
+            payload = None
+            for body in (benefit_body, legacy_body):
+                try:
+                    resp = await azure_retry.send_with_retry(
+                        lambda b=body: client.post(url, headers=headers, json=b)
+                    )
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    log.info("amortised cost failed for %s: %s", sub, exc)
+                    last_error = exc
+            if payload is None:
+                errors.append(f"{sub}: {last_error}")
                 continue
 
             props = payload.get("properties") or {}
             columns = [c.get("name") for c in (props.get("columns") or [])]
             for row in props.get("rows") or []:
                 record = dict(zip(columns, row))
-                name = _text(record.get("ReservationName")).strip()
                 amount = _number(record.get("PreTaxCost") or record.get("Cost"))
-                if not name or amount is None:
+                if amount is None:
                     continue
-                key = name.lower()
-                totals[key] = totals.get(key, 0.0) + amount
+                charge = _text(record.get("ChargeType")).lower()
+                unused = charge.startswith("unused")
+                # The same money is filed under the id and the name so either
+                # can resolve it. `add` accumulates, so a commitment matched by
+                # both keys is still only counted once against itself.
+                for field in ("BenefitId", "BenefitName", "ReservationName"):
+                    value = _text(record.get(field)).strip()
+                    if value:
+                        add(value, amount, unused)
                 currency = currency or _text(record.get("Currency"))
 
     return totals, currency, errors

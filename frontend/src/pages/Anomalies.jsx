@@ -620,6 +620,7 @@ export default function Anomalies() {
         currency={currency}
         tenantId={selectedTenantId}
         siblings={allRows}
+        comparison={window_}
         onClose={() => setSelected(null)}
         onStatusChange={onStatusChange}
       />

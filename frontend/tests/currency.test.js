@@ -1,35 +1,36 @@
 /**
- * Amount formatting and the compact/exact display mode.
+ * Amount formatting and the app-wide display currency.
  *
- * The mode is app-wide and lives outside React, so the risk is a call site that
- * quietly ignores it — or a chart axis that respects it and overflows. Both are
- * pinned here.
+ * Two risks live here. The first is a call site that quietly ignores the
+ * display currency, which would put a ₹ figure and a $ figure in the same
+ * column. The second is worse: a figure converted but still labelled with the
+ * currency it was billed in, which is undetectable by eye. Both are pinned.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  COMPACT,
-  EXACT,
+  canConvert,
+  convertAmount,
+  currencySymbol,
   formatAmount,
   formatAmountFull,
   formatRate,
-  getAmountMode,
-  setAmountMode,
+  getDisplayCurrency,
+  setDisplayCurrency,
+  setRates,
+  subscribeCurrency,
 } from '../src/utils/currency';
+import { exactAmount } from '../src/utils/exact';
 
-afterEach(() => setAmountMode(COMPACT));
+// One dollar buys this much of each. Deliberately unrounded so a conversion
+// that silently used 1.0 could not pass.
+const RATES = { USD: 1, INR: 80, EUR: 0.9, GBP: 0.8 };
 
-describe('compact mode', () => {
-  it('abbreviates so a table column stays readable', () => {
-    setAmountMode(COMPACT);
-    expect(formatAmount(123456.789, 'INR')).toBe('₹1.23 L');
-    expect(formatAmount(3204.56, 'USD')).toBe('USD 3.20K');
-  });
-});
+afterEach(() => setDisplayCurrency(null));
 
-describe('exact mode', () => {
-  it('shows the whole grouped figure instead of an abbreviation', () => {
-    setAmountMode(EXACT);
+describe('as billed, the default', () => {
+  it('leaves every amount in the currency Azure invoiced it in', () => {
+    expect(getDisplayCurrency()).toBe(null);
     expect(formatAmount(123456.789, 'INR')).toBe('₹1,23,456.79');
     expect(formatAmount(3204.56, 'USD')).toBe('USD 3,204.56');
   });
@@ -37,33 +38,119 @@ describe('exact mode', () => {
   it('keeps decimals, so a total reconciles against an invoice', () => {
     // "₹1,23,457" against an invoice reading ₹1,23,456.79 looks like a data
     // error rather than the rounding choice it actually is.
-    setAmountMode(EXACT);
     expect(formatAmount(123456.79, 'INR')).toBe('₹1,23,456.79');
   });
 
-  it('never applies to chart axes, which a full figure would overflow', () => {
-    setAmountMode(EXACT);
+  it('abbreviates for chart axes, which a full figure would overflow', () => {
     expect(formatAmount(123456.789, 'INR', true)).toBe('₹1.23 L');
+    expect(formatAmount(3204.56, 'USD', true)).toBe('USD 3.20K');
   });
 });
 
-describe('mode persistence', () => {
-  it('remembers the choice so it survives a reload', () => {
-    setAmountMode(EXACT);
-    expect(getAmountMode()).toBe(EXACT);
+describe('a chosen display currency', () => {
+  it('converts and relabels together, never one without the other', () => {
+    // The failure this guards against is a converted number still wearing the
+    // billed currency's symbol, which no reader could ever catch.
+    setRates(RATES, { as_of: '2026-09-01' });
+    setDisplayCurrency('USD');
+    expect(formatAmount(8000, 'INR')).toBe('USD 100.00');
+    expect(formatAmountFull(8000, 'INR')).toBe('USD 100.00');
   });
 
-  it('falls back to compact for an unrecognised value', () => {
-    setAmountMode('nonsense');
-    expect(getAmountMode()).toBe(COMPACT);
+  it('converts through the dollar, so any pair works', () => {
+    setRates(RATES);
+    setDisplayCurrency('EUR');
+    // 8000 INR is 100 USD is 90 EUR.
+    expect(convertAmount(8000, 'INR').value).toBeCloseTo(90, 6);
+    expect(convertAmount(8000, 'INR').currency).toBe('EUR');
+  });
+
+  it('leaves an amount alone when it is already in the display currency', () => {
+    setRates(RATES);
+    setDisplayCurrency('INR');
+    expect(convertAmount(8000, 'INR')).toEqual({ value: 8000, currency: 'INR' });
+  });
+
+  it('brings two billing currencies onto one scale', () => {
+    // The whole point: a tenant with a US and an Indian subscription had ₹ and
+    // $ figures in the same table, and a total that added them together.
+    setRates(RATES);
+    setDisplayCurrency('USD');
+    expect(formatAmount(8000, 'INR')).toBe('USD 100.00');
+    expect(formatAmount(100, 'USD')).toBe('USD 100.00');
+  });
+
+  it('applies to unit rates as well as totals', () => {
+    setRates(RATES);
+    setDisplayCurrency('USD');
+    expect(formatRate(80, 'INR')).toBe('USD 1.00');
+  });
+
+  it('applies to chart axis symbols', () => {
+    setRates(RATES);
+    setDisplayCurrency('USD');
+    expect(currencySymbol('INR')).toBe('$');
+  });
+});
+
+describe('when a rate is missing', () => {
+  it('leaves the amount billed rather than inventing a conversion', () => {
+    // A figure converted at a guessed rate is indistinguishable from a real
+    // one. Refusing is the only honest option.
+    setRates({ USD: 1, INR: 80 });
+    setDisplayCurrency('JPY');
+    expect(formatAmount(8000, 'INR')).toBe('₹8,000.00');
+    expect(convertAmount(8000, 'INR').unconverted).toBe(true);
+  });
+
+  it('says in advance which currencies it can convert', () => {
+    setRates({ USD: 1, INR: 80 });
+    setDisplayCurrency('USD');
+    expect(canConvert('INR')).toBe(true);
+    expect(canConvert('JPY')).toBe(false);
+  });
+});
+
+describe('the hover tooltip', () => {
+  it('always shows what was billed, and says the figure above was converted', () => {
+    // This is the one place that deliberately disagrees with the number beside
+    // it, because it exists to be checked against an invoice — and an invoice
+    // is issued in the billed currency.
+    setRates(RATES);
+    setDisplayCurrency('USD');
+    expect(exactAmount(8000, 'INR'))
+      .toBe('INR 8,000.00 as billed — shown above converted to USD');
+  });
+
+  it('says nothing extra when no conversion is in force', () => {
+    expect(exactAmount(8000, 'INR')).toBe('INR 8,000.00');
+  });
+});
+
+describe('propagating a change', () => {
+  it('notifies subscribers, which is what re-renders the page', () => {
+    // Formatting happens in plain functions that never see props, so without
+    // this every figure would keep its old currency until a navigation.
+    const seen = vi.fn();
+    const stop = subscribeCurrency(seen);
+    setDisplayCurrency('USD');
+    expect(seen).toHaveBeenCalledTimes(1);
+    stop();
+    setDisplayCurrency('EUR');
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it('remembers the choice so it survives a reload', () => {
+    setDisplayCurrency('EUR');
+    expect(getDisplayCurrency()).toBe('EUR');
   });
 
   it('still works where storage is unavailable', () => {
     // Private browsing and blocked third-party storage both throw here. Losing
-    // the preference across reloads is acceptable; crashing every amount on the
-    // page is not.
-    expect(() => setAmountMode(EXACT)).not.toThrow();
-    expect(getAmountMode()).toBe(EXACT);
+    // the preference across reloads is acceptable; crashing every amount on
+    // the page is not.
+    expect(() => setDisplayCurrency('USD')).not.toThrow();
+    expect(getDisplayCurrency()).toBe('USD');
   });
 });
 

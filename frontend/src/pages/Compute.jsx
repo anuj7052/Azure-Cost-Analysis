@@ -145,6 +145,30 @@ function Pct({ value, telemetry }) {
   return <span className="text-[11px] text-slate-500" title={telemetry?.reason || why}>{why}</span>;
 }
 
+/**
+ * Memory used, as a percentage of what the machine was built with.
+ *
+ * The three ways this can be missing are three different sentences, not one
+ * dash: no agent inside the guest, no size in the catalogue, or the metric was
+ * published and said nothing. Each is shown in the cell itself, because "—" in
+ * a RAM column reads as "this VM uses no memory", which is never true.
+ */
+const MEM_SHORT = {
+  NO_AGENT: 'No agent',
+  NO_SIZE: 'Size unknown',
+  NO_DATA: 'No data',
+};
+
+function Mem({ reading, field }) {
+  const value = reading?.[field];
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return <span className="tabular-nums">{value.toFixed(1)}%</span>;
+  }
+  const why = MEM_SHORT[reading?.status];
+  if (!why) return <span className="text-slate-600">—</span>;
+  return <span className="text-[11px] text-slate-500" title={reading?.note || why}>{why}</span>;
+}
+
 /** A titled group of label/value pairs in the detail panel. */
 function Section({ title, children }) {
   return (
@@ -184,6 +208,9 @@ function Diag({ label, value }) {
 
 /** A percentage for a Metric tile, or null so the tile shows its own dash. */
 const pct = (v) => (typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(1)}%` : null);
+
+/** A quantity of memory in GiB, or null so the tile shows its own dash. */
+const gib = (v) => (typeof v === 'number' && Number.isFinite(v) ? `${v} GiB` : null);
 
 /** An ISO timestamp as a short local date, or an empty string. */
 function shortTime(iso) {
@@ -357,6 +384,16 @@ export default function Compute() {
     {
       key: 'cpu_p99', header: 'CPU p99', align: 'right',
       render: (r) => <Pct value={r.cpu_p99} telemetry={r.telemetry} />,
+    },
+    {
+      key: 'memory_used_pct', header: 'RAM avg', align: 'right',
+      sortValue: (r) => r.memory_used_pct,
+      render: (r) => <Mem reading={r.utilization?.memory} field="used_pct_avg" />,
+    },
+    {
+      key: 'memory_used_pct_peak', header: 'RAM peak', align: 'right',
+      sortValue: (r) => r.memory_used_pct_peak,
+      render: (r) => <Mem reading={r.utilization?.memory} field="used_pct_peak" />,
     },
     {
       key: 'monthly_cost', header: 'Cost / mo', align: 'right',
@@ -621,6 +658,7 @@ export default function Compute() {
         const t = vm.telemetry || {};
         const sig = vm.utilization?.signals || {};
         const rs = vm.right_sizing || {};
+        const mem = vm.utilization?.memory;
         const measured = t.status === 'VALID' || t.status === 'PARTIAL_DATA'
           || t.status === 'INSUFFICIENT_DATA';
 
@@ -706,6 +744,34 @@ export default function Compute() {
               <Callout tone="info" className="mt-4" title="No CPU chart is drawn for this machine">
                 {t.reason || 'Percentage CPU was not read for this VM.'} Drawing a line
                 here would invent data that Azure never returned.
+              </Callout>
+            )}
+
+            {/* Memory, which is a separate answer from CPU and is missing for
+                separate reasons. A VM can be quiet on CPU and full on RAM, and
+                that machine must never be proposed for a downsize. */}
+            {mem?.status === 'OK' || mem?.status === 'NO_SIZE' ? (
+              <>
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <Metric label="RAM installed" value={gib(mem.installed_gb)} />
+                  <Metric label="RAM used, average" value={pct(mem.used_pct_avg)} />
+                  <Metric label="RAM used, peak" value={pct(mem.used_pct_peak)} />
+                  <Metric label="Free at peak" value={gib(mem.free_gb_min)} />
+                </div>
+                <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+                  {mem.note || (
+                    <>
+                      Azure reports free memory, not used, so the peak above is the
+                      moment least memory was available — {gib(mem.free_gb_min)} of{' '}
+                      {gib(mem.installed_gb)} — across {mem.points} readings.
+                      {!mem.confident && ' Too few readings to treat as settled.'}
+                    </>
+                  )}
+                </p>
+              </>
+            ) : (
+              <Callout tone="info" className="mt-4" title="Memory was not measured on this machine">
+                {mem?.note || 'No memory readings were returned for this VM.'}
               </Callout>
             )}
 

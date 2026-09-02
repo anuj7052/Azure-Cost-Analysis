@@ -193,14 +193,14 @@ describe('a month that is still running is never compared against a complete one
   it('does not divide identified waste by a partial bill', () => {
     // Against 2,560 of month-to-date the 3,900 of measured waste is 152% of
     // the bill and cost efficiency floors at zero for no real reason.
-    const category = estateHealth({ compute: COMPUTE, orphaned: ORPHANED, costData: RUNNING })
+    const category = estateHealth({ compute: COMPUTE, orphaned: ORPHANED, costData: RUNNING, opts: { now: NOW } })
       .categories.find(c => c.key === 'cost');
     expect(category.score).toBe(68);
     expect(category.reason).toMatch(/last complete month/);
   });
 
   it('keeps the per-subscription change column on complete months', () => {
-    const row = subscriptionHealth({ selectedIds: ['sub-a'], costData: RUNNING }).rows[0];
+    const row = subscriptionHealth({ selectedIds: ['sub-a'], costData: RUNNING, opts: { now: NOW } }).rows[0];
     expect(row.cost).toBe(9000);
     expect(row.changePct).toBeCloseTo(28.6, 0);
   });

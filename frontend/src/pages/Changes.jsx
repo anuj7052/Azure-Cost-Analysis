@@ -18,7 +18,7 @@
  *     this page that calls Azure, and doing it on every click is how a page
  *     starts getting rate-limited.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import {
@@ -28,11 +28,13 @@ import {
   Boxes, FolderOpen,
 } from 'lucide-react';
 import {
-  fetchChanges, fetchEntityHistory, fetchScans, runScan,
+  fetchChanges, fetchResourceTimeline, fetchScans, runScan,
   ignoreChange, unignoreChange, fetchActivity,
 } from '../api/client';
 import { useAppStore } from '../store/useAppStore';
+import { formatAmount } from '../utils/currency';
 import DetailPanel from '../components/Common/DetailPanel';
+import GroupActivity from '../components/Changes/GroupActivity';
 import { describeFieldChange, shortType, summariseChange } from '../utils/changeSummary';
 import { friendlyError } from '../utils/apiError';
 import {
@@ -66,6 +68,27 @@ function when(timestamp) {
   return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
 }
 
+// Timestamps that already carry a zone, which is what Azure returns. Appending
+// a Z to one of those produces an invalid date, and stripping the offset first
+// would silently shift anything not already in UTC. So the zone is detected and
+// the string handed to Date untouched when it has one.
+const HAS_ZONE = /(Z|[+-]\d{2}:?\d{2})$/;
+
+function moment(timestamp) {
+  if (!timestamp) return '—';
+  if (!HAS_ZONE.test(timestamp)) return when(timestamp);
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
+}
+
+// Where a date came from, in the words a reader would use. Shown next to every
+// date so an approximate one is never mistaken for an exact one.
+const SOURCE_LABEL = {
+  azure: 'Azure record',
+  activity: 'Activity Log',
+  snapshot: 'from scans',
+};
+
 /** The name a person would use for a group key, not the raw value. */
 function groupLabel(column, value, subscriptionNames) {
   if (!value || value === UNASSIGNED) return UNASSIGNED;
@@ -98,6 +121,44 @@ function CountBadges({ added = 0, removed = 0, modified = 0 }) {
 }
 
 /** One selectable column of the cascade. */
+const VIEWS = [
+  { key: 'list', label: 'List', icon: Boxes },
+  { key: 'timeline', label: 'Timeline', icon: History },
+];
+
+/**
+ * The same choice as a Column, laid out horizontally.
+ *
+ * The timeline needs the full width, so selection has to stop being a column
+ * without ceasing to exist. Each chip keeps its change count, because that is
+ * what tells the reader which group is worth opening - a list of bare names
+ * gives no reason to pick one over another.
+ */
+function ChipRow({ label, rows, selected, onSelect, labelFor }) {
+  if (!rows.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      {rows.map(row => (
+        <button
+          key={row.key}
+          onClick={() => onSelect(row.key)}
+          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] transition ${
+            row.key === selected
+              ? 'border-blue-500/60 bg-slate-800 text-white'
+              : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <span className="max-w-[14rem] truncate">{labelFor(row.key)}</span>
+          <span className="text-slate-500">{row.items.length}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Column({ title, rows, selected, onSelect, labelFor, collapsed, onToggle }) {
   if (collapsed) {
     return (
@@ -381,34 +442,120 @@ function ActivityUsers({ tenantId, subscriptionIds, resourceId }) {
 }
 
 /**
- * Everything that ever happened to one resource.
+ * Everything that ever happened to one resource, with what it cost.
  *
  * This is the view a diff cannot give: a diff says a VM was resized, a history
- * says it has been resized four times this quarter.
+ * says it has been resized four times this quarter — and says what each resize
+ * did to the bill.
+ *
+ * Three sources feed it and they are not equally reliable, so none of them is
+ * allowed to pretend otherwise. Azure's own creation stamp is exact. The
+ * Activity Log is exact and names a person, but only reaches back ninety days.
+ * Our snapshots reach back for ever and are only as precise as the scan
+ * interval. Every date below carries a badge saying which one it came from,
+ * because a column mixing second-accurate and week-accurate dates with nothing
+ * to tell them apart teaches people to trust none of it.
  */
+function LifecycleDate({ label, entry, tone }) {
+  if (!entry) {
+    return (
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+        <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="mt-0.5 text-[11px] text-slate-600">—</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+      <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
+      <p className={`mt-0.5 text-[12px] font-semibold ${tone}`}>{moment(entry.at)}</p>
+      <p
+        className="mt-1 inline-flex items-center gap-1 text-[10px] text-slate-500"
+        title={entry.detail}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${
+            entry.exact ? 'bg-emerald-400' : 'bg-amber-400'
+          }`}
+        />
+        {SOURCE_LABEL[entry.source] || entry.source}
+        {!entry.exact && ' · approximate'}
+      </p>
+      {!!entry.by && (
+        <p className="mt-1 truncate text-[10px] text-slate-400" title={entry.by}>
+          by {entry.by}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The cost either side of one change, or nothing if we could not price it. */
+function CostSwing({ event, currency }) {
+  if (event.cost_before == null && event.cost_after == null) return null;
+
+  const delta = event.cost_delta;
+  const rising = delta != null && delta > 0;
+  const falling = delta != null && delta < 0;
+
+  return (
+    <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+      <span className="text-slate-500">
+        {formatAmount(event.cost_before ?? 0, currency)} → {formatAmount(event.cost_after ?? 0, currency)}
+      </span>
+      {delta != null && (
+        <span
+          className={`font-semibold ${
+            rising ? 'text-red-300' : falling ? 'text-emerald-300' : 'text-slate-400'
+          }`}
+        >
+          {rising ? '+' : ''}{formatAmount(delta, currency)}
+          {event.cost_delta_pct != null && ` (${rising ? '+' : ''}${event.cost_delta_pct}%)`}
+        </span>
+      )}
+      {/* A period still being billed against a finished one is not a
+          like-for-like number, and reading it as one turns a half-month into
+          an imaginary saving. */}
+      {event.cost_after_partial && (
+        <span className="text-[10px] text-amber-400/80" title="This period is still being billed, so the figure will keep rising.">
+          period in progress
+        </span>
+      )}
+    </p>
+  );
+}
+
 function EntityHistory({ tenantId, resource }) {
   // Keyed by resource id rather than paired with a separate loading flag. The
   // flag version had to be set synchronously inside the effect to avoid showing
   // the previous resource's history for a frame; deriving it instead means the
   // stale result simply cannot be rendered.
   const [result, setResult] = useState({ id: null, data: null });
+  const [granularity, setGranularity] = useState('monthly');
 
   useEffect(() => {
     let cancelled = false;
     const id = resource.resource_id;
-    fetchEntityHistory(tenantId, id)
+    fetchResourceTimeline(tenantId, id, { granularity })
       .then(data => { if (!cancelled) setResult({ id, data }); })
       .catch(() => { if (!cancelled) setResult({ id, data: null }); });
     return () => { cancelled = true; };
-  }, [tenantId, resource.resource_id]);
+  }, [tenantId, resource.resource_id, granularity]);
 
   const data = result.data;
+
+  // Switching to daily refetches, but the events and the lifecycle dates do not
+  // depend on granularity. Only the cost strip is stale, so only the cost strip
+  // shows that it is loading — clearing the whole timeline to change a toggle
+  // would throw away the thing the reader is looking at.
+  const costPending = !!data && data.cost?.granularity !== granularity;
 
   if (result.id !== resource.resource_id) {
     return (
       <p className="flex items-center gap-2 text-[11px] text-slate-400">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Reading history…
+        Reading history, costs and the Activity Log…
       </p>
     );
   }
@@ -417,8 +564,65 @@ function EntityHistory({ tenantId, resource }) {
     return <p className="text-[11px] text-slate-400">No history recorded for this resource.</p>;
   }
 
+  const life = data.lifecycle || {};
+  const currency = data.cost?.currency || 'USD';
+  const summary = data.cost?.summary || {};
+
   return (
     <>
+      {/* ── When it was born, changed and died ───────────────────────── */}
+      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <LifecycleDate label="Created" entry={life.created} tone="text-emerald-300" />
+        <LifecycleDate label="Last changed" entry={life.last_changed} tone="text-amber-300" />
+        <LifecycleDate label="Deleted" entry={life.deleted} tone="text-red-300" />
+      </div>
+
+      {/* ── What it costs ────────────────────────────────────────────── */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+        <span className="text-[10px] uppercase tracking-wide text-slate-500">Cost</span>
+        {costPending ? (
+          <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Reading {granularity} cost…
+          </span>
+        ) : (
+          <>
+            <span className="text-[12px] font-semibold text-slate-200">
+              {formatAmount(summary.latest ?? 0, currency)}
+              <span className="ml-1 text-[10px] font-normal text-slate-500">
+                {summary.latest_period || 'latest period'}
+              </span>
+            </span>
+            <span className="text-[11px] text-slate-500">
+              {formatAmount(summary.total ?? 0, currency)} over {summary.periods || 0}{' '}
+              {granularity === 'daily' ? 'days' : 'months'}
+            </span>
+          </>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {['monthly', 'daily'].map(option => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setGranularity(option)}
+              className={`rounded px-2 py-0.5 text-[10px] capitalize transition-colors ${
+                granularity === option
+                  ? 'bg-blue-500/15 text-blue-300'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+              // Daily is the throttle-prone read, so it is never the default.
+              title={
+                option === 'daily'
+                  ? 'Day by day for the last 90 days. Slower, and shows the exact day the bill moved.'
+                  : 'Month by month for the last 12 months.'
+              }
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <p className="mb-2 text-[11px] text-slate-500">
         First seen {when(data.first_seen)} · last seen {when(data.last_seen)} ·
         present in {data.scan_count} capture{data.scan_count === 1 ? '' : 's'}
@@ -451,6 +655,37 @@ function EntityHistory({ tenantId, resource }) {
                     ))}
                   </ul>
                 )}
+
+                <CostSwing event={event} currency={currency} />
+
+                {/* Who touched it between the two captures. Every candidate is
+                    listed rather than one being named as the cause: on a busy
+                    resource, picking one would frequently be wrong, and a
+                    wrong name in an audit trail is worse than no name. */}
+                {!!event.activity?.length && (
+                  <div className="mt-1">
+                    {event.by ? (
+                      <p className="text-[11px] text-slate-400">
+                        by <span className="text-slate-300">{event.by}</span>
+                        {' · '}{event.activity[0].summary}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-[10px] text-slate-500">
+                          {event.activity.length} operations in this window — any could
+                          be responsible:
+                        </p>
+                        <ul className="mt-0.5 space-y-0.5">
+                          {event.activity.slice(0, 4).map(a => (
+                            <li key={`${a.at}-${a.caller}`} className="truncate text-[11px] text-slate-400">
+                              {moment(a.at)} · {a.caller || 'unknown'} · {a.summary}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </li>
           );
@@ -463,8 +698,73 @@ function EntityHistory({ tenantId, resource }) {
       <p className="mt-3 text-[11px] text-slate-600">
         Captures where nothing changed are omitted.
       </p>
+
+      {/* Anything Azure would not tell us. Said out loud rather than left as a
+          gap, because a blank where a cost should be reads as "this is free". */}
+      {!!data.notes?.length && (
+        <ul className="mt-2 space-y-1">
+          {data.notes.map(note => (
+            <li key={note} className="flex gap-1.5 text-[10px] text-slate-500">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500/70" />
+              {note}
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   );
+}
+
+/**
+ * How far back to compare.
+ *
+ * A range is what people actually ask -- "what changed this quarter" -- and it
+ * is the default because the alternative was worse than it looked. Comparing
+ * the two most recent captures sounds sensible until you notice that scans
+ * taken minutes apart produce an empty diff, which the page then presented as
+ * a stable estate. Somebody who scans twice in a row to check the scanner
+ * works would open this page and conclude nothing had ever changed.
+ *
+ * Each date still resolves to a real capture and the page reports which ones,
+ * so a range never hides what was actually compared.
+ */
+const RANGES = [
+  { key: '7d', label: 'Last 7 days', days: 7 },
+  { key: '30d', label: 'Last 30 days', days: 30 },
+  { key: '90d', label: 'Last 3 months', days: 90 },
+  { key: '180d', label: 'Last 6 months', days: 180 },
+  { key: '365d', label: 'Last 12 months', days: 365 },
+  { key: 'custom', label: 'Custom range…' },
+  { key: 'captures', label: 'Pick two captures…' },
+];
+
+const DEFAULT_RANGE = '30d';
+
+function isoDay(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * The `from_date` / `to_date` a range asks for, or null to compare captures.
+ *
+ * A custom range with only one end filled in returns null rather than half a
+ * query: the browser fires a change event on every keystroke in a date field,
+ * and sending `2026-0` as a date produces an error message that looks like a
+ * broken page.
+ */
+function rangeParams(range) {
+  if (range.preset === 'captures') return null;
+  if (range.preset === 'custom') {
+    return range.from && range.to
+      ? { from_date: range.from, to_date: range.to }
+      : null;
+  }
+  const days = RANGES.find(r => r.key === range.preset)?.days || 30;
+  const to = new Date();
+  return {
+    from_date: isoDay(new Date(to.getTime() - days * 86400000)),
+    to_date: isoDay(to),
+  };
 }
 
 export default function Changes() {
@@ -477,16 +777,31 @@ export default function Changes() {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [pair, setPair] = useState({ before: '', after: '' });
+  const [range, setRange] = useState({ preset: DEFAULT_RANGE, from: '', to: '' });
   const [grouping, setGrouping] = useState('subscription');
   const [kindFilter, setKindFilter] = useState('all');
   const [showIgnored, setShowIgnored] = useState(false);
   const [sel, setSel] = useState({ primary: null, secondary: null });
+  // Two ways to read the same selection. The list answers "what changed" at a
+  // glance; the timeline answers "what happened here", which needs the room the
+  // three columns are using. Rather than cram both on screen, the toggle picks
+  // one - and it stays on the current selection, so switching view never loses
+  // the reader's place.
+  const [view, setView] = useState('list');
   const [collapsed, setCollapsed] = useState({});
   const [open, setOpen] = useState(null);
   const [rawJson, setRawJson] = useState(false);
   const [wrap, setWrap] = useState(false);
   const [busyField, setBusyField] = useState(null);
   const [help, setHelp] = useState(false);
+
+  // A resource named in the URL, put there by the anomaly drawer. Held in a ref
+  // rather than state because it is a one-shot instruction, not something the
+  // page renders: turning it into state would re-open the drawer every time
+  // somebody closed it.
+  const deepLink = useRef(
+    new URLSearchParams(window.location.search).get('resource') || '',
+  );
 
   const subscriptionNames = useMemo(() => {
     const map = {};
@@ -498,10 +813,16 @@ export default function Changes() {
 
   const load = async (overrides = {}) => {
     if (!selectedTenantId) return;
+    const dates = rangeParams(range);
     const params = {
       show_ignored: showIgnored,
-      ...(pair.before ? { before: Number(pair.before) } : {}),
-      ...(pair.after ? { after: Number(pair.after) } : {}),
+      // A range and an explicit capture pair are two ways of asking the same
+      // question, and sending both lets the server pick one silently. Only
+      // one is ever sent, and which one is whatever the reader last chose.
+      ...(dates || {
+        ...(pair.before ? { before: Number(pair.before) } : {}),
+        ...(pair.after ? { after: Number(pair.after) } : {}),
+      }),
       ...overrides,
     };
     setLoading(true);
@@ -512,6 +833,25 @@ export default function Changes() {
       ]);
       setData(diff);
       setScans(history.filter(s => s.status === 'complete'));
+
+      // Arriving from an anomaly's "what changed here" list, with one resource
+      // named in the URL. Opening it saves the reader hunting for a row they
+      // were already looking at. Consumed here rather than in an effect so it
+      // fires once on the load that can satisfy it, and consumed before the
+      // match so a resource outside this window does not retry for ever.
+      if (deepLink.current) {
+        const target = deepLink.current.toLowerCase();
+        deepLink.current = '';
+        const match = toEntries(diff).find(
+          e => (e.resource_id || '').toLowerCase() === target,
+        );
+        if (match) {
+          setOpen(match);
+          setRawJson(false);
+        } else {
+          toast('That resource did not change in this comparison window.');
+        }
+      }
     } catch (err) {
       toast.error(friendlyError(err));
     } finally {
@@ -520,7 +860,7 @@ export default function Changes() {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ },
-    [selectedTenantId, showIgnored]);
+    [selectedTenantId, showIgnored, range.preset, range.from, range.to]);
 
   const scan = async () => {
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) {
@@ -690,31 +1030,85 @@ export default function Changes() {
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <label className="block">
               <span className="mb-1 block text-[11px] font-medium text-slate-400">
-                Older capture
+                Period
               </span>
               <select
-                value={pair.before}
-                onChange={e => setPair(p => ({ ...p, before: e.target.value }))}
+                value={range.preset}
+                onChange={e => {
+                  // Leaving a stale capture pair behind would send both a range
+                  // and a pair, and the reader would have no way to tell which
+                  // one produced the answer on screen.
+                  setPair({ before: '', after: '' });
+                  setRange(r => ({ ...r, preset: e.target.value }));
+                }}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
               >
-                <option value="">Second most recent</option>
-                {scans.map(s => <option key={s.id} value={s.id}>{scanOption(s)}</option>)}
+                {RANGES.map(r => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
               </select>
             </label>
 
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-medium text-slate-400">
-                Newer capture
-              </span>
-              <select
-                value={pair.after}
-                onChange={e => setPair(p => ({ ...p, after: e.target.value }))}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-              >
-                <option value="">Most recent</option>
-                {scans.map(s => <option key={s.id} value={s.id}>{scanOption(s)}</option>)}
-              </select>
-            </label>
+            {range.preset === 'custom' && (
+              <>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-medium text-slate-400">
+                    From
+                  </span>
+                  <input
+                    type="date"
+                    value={range.from}
+                    max={range.to || undefined}
+                    onChange={e => setRange(r => ({ ...r, from: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-medium text-slate-400">
+                    To
+                  </span>
+                  <input
+                    type="date"
+                    value={range.to}
+                    min={range.from || undefined}
+                    onChange={e => setRange(r => ({ ...r, to: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                  />
+                </label>
+              </>
+            )}
+
+            {range.preset === 'captures' && (
+              <>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-medium text-slate-400">
+                    Older capture
+                  </span>
+                  <select
+                    value={pair.before}
+                    onChange={e => setPair(p => ({ ...p, before: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                  >
+                    <option value="">Second most recent</option>
+                    {scans.map(s => <option key={s.id} value={s.id}>{scanOption(s)}</option>)}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-medium text-slate-400">
+                    Newer capture
+                  </span>
+                  <select
+                    value={pair.after}
+                    onChange={e => setPair(p => ({ ...p, after: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                  >
+                    <option value="">Most recent</option>
+                    {scans.map(s => <option key={s.id} value={s.id}>{scanOption(s)}</option>)}
+                  </select>
+                </label>
+              </>
+            )}
 
             <label className="block">
               <span className="mb-1 block text-[11px] font-medium text-slate-400">
@@ -742,12 +1136,15 @@ export default function Changes() {
                   ? <><Loader2 className="h-4 w-4 animate-spin" />Comparing…</>
                   : <><GitCompareArrows className="h-4 w-4" />Compare</>}
               </button>
-              {(pair.before || pair.after) && (
+              {(range.preset !== DEFAULT_RANGE || pair.before || pair.after) && (
                 <button
-                  onClick={() => { setPair({ before: '', after: '' }); load({ before: null, after: null }); }}
+                  onClick={() => {
+                    setPair({ before: '', after: '' });
+                    setRange({ preset: DEFAULT_RANGE, from: '', to: '' });
+                  }}
                   className="text-xs text-slate-400 underline underline-offset-2 hover:text-slate-200"
                 >
-                  Latest two
+                  Reset
                 </button>
               )}
             </div>
@@ -823,6 +1220,24 @@ export default function Changes() {
                 <span className="text-amber-300/80">{data.ignored_count} ignored</span>
               </>
             )}
+
+            <div className="ml-auto flex rounded-lg border border-slate-700 p-0.5">
+              {VIEWS.map(v => {
+                const Icon = v.icon;
+                return (
+                  <button
+                    key={v.key}
+                    onClick={() => setView(v.key)}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] transition ${
+                      view === v.key ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {v.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
@@ -849,6 +1264,40 @@ export default function Changes() {
             })}
           </div>
 
+          {view === 'timeline' ? (
+            <div className="space-y-3">
+              {/* The columns become chips here. Navigation still has to be
+                  available - a timeline for a group you cannot change is a dead
+                  end - but it no longer deserves a third of the width once the
+                  history is the thing being read. */}
+              <ChipRow
+                label={shape.label}
+                rows={primaryRows}
+                selected={activePrimary?.key}
+                onSelect={key => setSel({ primary: key, secondary: null })}
+                labelFor={key => groupLabel(shape.primary, key, subscriptionNames)}
+              />
+              {shape.secondary && (
+                <ChipRow
+                  label="Resource groups"
+                  rows={secondaryRows}
+                  selected={activeSecondary?.key}
+                  onSelect={key => setSel(s => ({ ...s, secondary: key }))}
+                  labelFor={key => key}
+                />
+              )}
+
+              <GroupActivity
+                group={(shape.secondary ? activeSecondary?.key : activePrimary?.key) || 'Selection'}
+                items={resourceRows}
+                subscriptionId={resourceRows[0]?.subscription_id || ''}
+                subscriptionIds={selectedSubscriptionIds}
+                tenantId={selectedTenantId}
+                detectedAt={data.after?.started_at}
+                onOpen={item => { setOpen(item); setRawJson(false); }}
+              />
+            </div>
+          ) : (
           <div className="flex gap-3">
             <Column
               title={shape.label}
@@ -917,6 +1366,7 @@ export default function Changes() {
               </div>
             </section>
           </div>
+          )}
         </>
       )}
 

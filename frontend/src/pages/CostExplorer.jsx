@@ -4,7 +4,6 @@ import { useAppStore } from '../store/useAppStore';
 import DataQuality from '../components/Common/DataQuality';
 import CostTrendChart from '../components/Charts/CostTrendChart';
 import ServiceBreakdownChart from '../components/Charts/ServiceBreakdownChart';
-import BoqGenerator from '../components/Boq/BoqGenerator';
 import { formatAmount } from '../utils/currency';
 import { Amount } from '../components/Common/Amount';
 import { DIMENSIONS, aggregate, totalOf, linearForecast, currentMonthKey } from '../utils/breakdown';
@@ -450,8 +449,6 @@ export default function CostExplorer() {
 
       {tab === 'resources' && (
         <div className="space-y-4">
-          <BoqGenerator />
-
           {servicesLoading ? (
             <Card><TableSkeleton rows={12} cols={6} /></Card>
           ) : (

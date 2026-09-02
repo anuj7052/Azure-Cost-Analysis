@@ -28,8 +28,22 @@ def production(**overrides) -> Settings:
         "APP_SECRET_KEY": "x" * 48,
         "AZURE_CLIENT_ID": "a-real-client-id",
         "CORS_ORIGINS": "https://app.example.com",
+        # Stated rather than left to default: Settings still reads the
+        # developer's own .env, and a local convenience flag must not decide
+        # whether a test about production passes.
+        "AZURE_CLI_AUTH": False,
     }
     return Settings(**{**base, **overrides})
+
+
+def test_cli_sign_in_is_refused_in_production():
+    """
+    The CLI identity belongs to the machine, not the caller. Left on in a
+    hosted deployment, one customer would read another's Azure estate.
+    """
+    problems = production_config_errors(production(AZURE_CLI_AUTH=True))
+
+    assert any("AZURE_CLI_AUTH" in p for p in problems)
 
 
 def test_a_correctly_configured_production_deployment_has_no_complaints():

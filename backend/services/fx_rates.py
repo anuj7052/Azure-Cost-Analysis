@@ -192,6 +192,89 @@ async def daily_rates(
     }
 
 
+async def latest_rates(
+    db: aiosqlite.Connection, quotes: List[str]
+) -> Dict[str, Any]:
+    """
+    Today's USD rate for each of several currencies, in one read.
+
+    This exists for the display-currency switch, which needs to convert money
+    that Azure billed in one currency into whichever one the reader chose. That
+    is a different question from `daily_rates`: it wants one number per
+    currency, right now, for a handful of currencies at once — not a month of
+    daily history for one of them.
+
+    The rate is deliberately a single current one rather than a per-month
+    historical rate. A converted figure is an indication of scale in a familiar
+    unit, not a restatement of the invoice, and pretending otherwise by mixing
+    a dozen historical rates into one total would produce a number that
+    reconciles against nothing at all. `as_of` and `stale` are returned so the
+    UI can say exactly that.
+
+    A currency whose rate could not be established is simply absent from
+    `rates`. It is never defaulted to 1.0, which would silently report dollars
+    as rupees.
+    """
+    wanted = [q.upper() for q in quotes if q and q.upper() != BASE]
+    out: Dict[str, float] = {BASE: 1.0}
+    if not wanted:
+        return {"base": BASE, "rates": out, "as_of": _iso(date.today()),
+                "source": SOURCE, "stale": False, "note": None}
+
+    today = date.today()
+    fetched: Dict[str, float] = {}
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{FRANKFURTER_URL}/latest",
+                params={"base": BASE, "symbols": ",".join(sorted(set(wanted)))},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        day = payload.get("date") or _iso(today)
+        fetched = {
+            quote.upper(): float(rate)
+            for quote, rate in (payload.get("rates") or {}).items()
+        }
+        for quote, rate in fetched.items():
+            await _store(db, quote, {day: rate})
+    except Exception as exc:
+        log.warning("Could not fetch latest FX rates: %s", exc)
+
+    out.update(fetched)
+
+    # Whatever the ECB did not answer for, fall back to the newest rate already
+    # recorded. A rate from last week converts far better than no rate at all,
+    # provided the page says how old it is.
+    stale_from: Optional[str] = None
+    missing = [q for q in wanted if q not in out]
+    for quote in missing:
+        row = await db.execute(
+            "SELECT rate_day, rate FROM fx_rates WHERE base = ? AND quote = ? "
+            "ORDER BY rate_day DESC LIMIT 1",
+            (BASE, quote),
+        )
+        found = await row.fetchone()
+        if found:
+            out[quote] = float(found[1])
+            stale_from = max(stale_from or "", str(found[0]))
+
+    unresolved = [q for q in wanted if q not in out]
+    return {
+        "base": BASE,
+        "rates": out,
+        "as_of": _iso(today) if fetched else (stale_from or _iso(today)),
+        "source": SOURCE,
+        "source_url": "https://frankfurter.dev",
+        "stale": not fetched,
+        "note": (
+            f"No exchange rate is available for {', '.join(unresolved)}, so "
+            "amounts billed in it are left in their own currency."
+            if unresolved else None
+        ),
+    }
+
+
 def summarise(series: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Opening, closing, extremes and net movement of a daily rate series."""
     if not series:

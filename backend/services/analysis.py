@@ -258,7 +258,53 @@ def top_services(monthly: Dict[str, Dict], top_n: int = 10) -> List[Dict]:
     return result
 
 
-def resource_cost_index(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def latest_billing_month(records: List[Dict[str, Any]]) -> tuple[str, bool]:
+    """
+    Which month to read as "what this costs a month", and whether it is still
+    running.
+
+    A month-to-date query is not a month. Asked on the 1st it covers a single
+    day, and Azure's billing pipeline is a day or two behind, so it comes back
+    empty and every resource on the page reads as free. Asked on the 3rd it
+    covers three days, and the figure is labelled "monthly" while being about
+    a tenth of one. Both are worse than saying nothing.
+
+    So the last *complete* month is preferred, and the month in progress is
+    only used when it is all there is -- flagged, so the caller can say which
+    of the two it is showing rather than presenting a part-month as a monthly
+    rate.
+
+    Returns ("", False) when the records carry no cost at all.
+    """
+    from datetime import date
+
+    totals: Dict[str, float] = defaultdict(float)
+    for r in records:
+        month = _parse_usage_date(
+            r.get("BillingMonth") or r.get("UsageDate") or r.get("Date") or ""
+        )
+        if not month or len(month) != 7:
+            continue
+        cost = float(r.get("PreTaxCost") or r.get("Cost") or r.get("totalCost") or 0.0)
+        totals[month] += cost
+
+    # A month present but billed at zero is still a month Azure answered for;
+    # a month with no rows at all is not.
+    months = sorted(m for m in totals if totals[m] > 0)
+    if not months:
+        return "", False
+
+    running = date.today().strftime("%Y-%m")
+    complete = [m for m in months if m != running]
+    if complete:
+        return complete[-1], False
+    return months[-1], True
+
+
+def resource_cost_index(
+    records: List[Dict[str, Any]],
+    month: str | None = None,
+) -> Dict[str, Dict[str, Any]]:
     """
     Index Cost Management rows grouped by ResourceId so each resource can be
     shown with what it actually cost, which service billed it, and the meters
@@ -267,10 +313,21 @@ def resource_cost_index(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, An
     Keys are lower-cased resource ids: Azure is inconsistent about the casing
     of the id between Resource Graph and Cost Management, and matching on the
     raw string silently loses most of the rows.
+
+    Without `month` every record given is summed, which is what a caller
+    showing "cost over the selected period" wants. Pass a month to get that one
+    month only -- necessary for anything labelled a monthly cost, because
+    summing a two-month query would report double.
     """
     index: Dict[str, Dict[str, Any]] = {}
 
     for r in records:
+        if month:
+            row_month = _parse_usage_date(
+                r.get("BillingMonth") or r.get("UsageDate") or r.get("Date") or ""
+            )
+            if row_month != month:
+                continue
         resource_id = _first(r, "ResourceId", "resourceId", "Resource")
         if not resource_id:
             continue

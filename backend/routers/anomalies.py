@@ -23,7 +23,9 @@ from pydantic import BaseModel, Field
 from auth.dependencies import get_current_user
 from core.db import get_db
 from services import anomalies as engine
+from services import anomaly_causes as causes
 from services import anomaly_tracking as tracking
+from services import changes as changes_svc
 from services import cost_periods
 from services.analysis import to_cost_rows
 from services.cost_client import gather_by_subscription, query_usage, summarise_errors
@@ -42,6 +44,24 @@ class AnalyzeRequest(BaseModel):
     to_date: Optional[str] = None
     comparison: str = cost_periods.COMPARE_PREVIOUS_MONTH
     threshold_pct: float = Field(default=engine.DEFAULT_THRESHOLD_PCT, ge=0, le=1000)
+
+
+class ExplainRequest(BaseModel):
+    """
+    One anomaly, described well enough to go looking for what happened near it.
+
+    The window is the anomaly's own comparison window, passed back rather than
+    recomputed, so the evidence covers exactly the period the figures came
+    from. Recomputing it here would let the two drift apart on a custom range,
+    and a list of changes from a different fortnight is worse than none.
+    """
+    tenant_id: str
+    from_date: str
+    to_date: str
+    subscription_id: str = ""
+    resource_group: str = ""
+    service: str = ""
+    direction: str = engine.DIRECTION_INCREASE
 
 
 class StatusRequest(BaseModel):
@@ -165,6 +185,75 @@ async def analyze(
         "currency": currency,
         "threshold_pct": body.threshold_pct,
         "coverage": build_coverage(body.subscription_ids, errors, source="Azure Cost Management"),
+    }
+
+
+@router.post("/explain")
+async def explain(
+    body: ExplainRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    What else changed where and when this cost moved.
+
+    Read entirely from the scan snapshots already in our database. No Azure
+    call is made, which matters more here than anywhere else on the page: this
+    runs when somebody expands one anomaly among dozens, and a request per
+    expansion against an API that rate limits would make the feature unusable
+    exactly when the page is busiest.
+
+    The answer is evidence, never a cause. Cost Management can say a resource
+    group's compute bill doubled; it cannot say the VM resize on the 14th did
+    it. Both facts side by side are worth a great deal and the inference is the
+    reader's to make -- so the wording here, and in the UI, stops short of
+    making it for them.
+    """
+    account_id = current_user["account_id"]
+
+    diff = await changes_svc.diff_by_date(
+        db=db,
+        user_id=account_id,
+        tenant_id=body.tenant_id,
+        from_date=body.from_date,
+        to_date=body.to_date,
+    )
+
+    if not diff.get("comparable"):
+        return {
+            "evidence": [],
+            "summary": (
+                "There are not two completed scans covering this period, so "
+                "there is nothing to compare. Run scans regularly and this "
+                "will fill in."
+            ),
+            "comparable": False,
+            "note": diff.get("note"),
+            "before": diff.get("before"),
+            "after": diff.get("after"),
+        }
+
+    # Suppressed changes stay suppressed here too. Somebody who marked a
+    # nightly tag rewrite as expected should not meet it again as a candidate
+    # explanation for every anomaly in that resource group.
+    rules = await changes_svc.list_ignores(db, account_id, body.tenant_id)
+    diff = changes_svc.apply_ignores(diff, rules, show_ignored=False)
+
+    scope = {
+        "subscription_id": body.subscription_id,
+        "resource_group": body.resource_group,
+        "service": body.service,
+    }
+    evidence = causes.explain(diff, scope, body.direction)
+
+    return {
+        "evidence": evidence,
+        "summary": causes.summarise(evidence, body.direction),
+        "comparable": True,
+        "note": diff.get("note"),
+        "before": diff.get("before"),
+        "after": diff.get("after"),
+        "scope": scope,
     }
 
 

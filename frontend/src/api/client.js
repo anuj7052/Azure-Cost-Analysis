@@ -2,6 +2,41 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { msalInstance, managementRequest, loginRequest, graphRequest } from '../auth/msalConfig';
 import { errorDetail, errorMessage } from '../utils/apiError';
+import * as inflight from './inflight';
+
+/**
+ * Re-establish a lapsed sign-in, silently, and at most once.
+ *
+ * The redirect is normally invisible: Microsoft still holds a session cookie,
+ * so it re-issues and returns the user to the same URL without asking them
+ * anything. If that cookie has gone too, they get a real sign-in page, which is
+ * the honest outcome - the difference is that they arrive there because their
+ * Microsoft session genuinely ended, not because this app threw their tokens
+ * away.
+ *
+ * The guard is the important part. Recovery navigates away and comes back, so
+ * without a marker that survives the navigation a still-broken sign-in would
+ * bounce the user between the app and Microsoft forever. `sessionStorage` is
+ * the right home for it: it survives the redirect and dies with the tab, so a
+ * genuine failure is attempted once per visit and then left alone for the
+ * error message to explain.
+ */
+const RECOVERY_MARK = 'aca:signin-recovery';
+let recovering = false;
+
+function beginSilentRecovery(account) {
+  if (recovering || sessionStorage.getItem(RECOVERY_MARK)) return;
+  recovering = true;
+  sessionStorage.setItem(RECOVERY_MARK, String(Date.now()));
+  msalInstance
+    .acquireTokenRedirect({ ...loginRequest, account })
+    .catch(() => { recovering = false; });
+}
+
+/** Called once a request succeeds, so the next lapse is allowed its own retry. */
+function clearRecoveryMark() {
+  if (sessionStorage.getItem(RECOVERY_MARK)) sessionStorage.removeItem(RECOVERY_MARK);
+}
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -100,13 +135,51 @@ async function getToken(interactive = false) {
 async function getSignInToken() {
   const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
   if (!account) return null;
-  if (account.idToken) return account.idToken;
+
+  // Check the expiry before trusting the cached copy.
+  //
+  // MSAL fills `account.idToken` when the user signs in and refreshes it only
+  // as a side effect of a silent acquisition happening to run. Nothing keeps it
+  // current on its own, so this used to hand the server a token it correctly
+  // rejected as expired. The two-minute margin matches the management token
+  // above, so a token cannot lapse between being read and being received.
+  const expiresAt = (account.idTokenClaims?.exp || 0) * 1000;
+  if (account.idToken && Date.now() < expiresAt - 120_000) return account.idToken;
+
   try {
     const result = await msalInstance.acquireTokenSilent({ ...loginRequest, account });
-    return result.idToken || null;
+    if (result.idToken) return result.idToken;
   } catch {
-    return null;
+    // Re-establish the sign-in rather than send a token we know is dead.
+    //
+    // Reaching this point already means the cached token has expired, so any
+    // failure to renew it - whatever the cause - leaves nothing usable. The
+    // reason is deliberately not inspected. Renewal runs in a hidden iframe,
+    // which browsers abort under third-party-cookie rules, and that surfaces as
+    // a timeout rather than as MSAL's "interaction required". Keying the
+    // recovery on the error class therefore missed the single most common way
+    // this fails, and the app sat in a 401 loop instead of fixing itself.
+    //
+    // This is what made the app look like it signed people out on its own. A
+    // single-page app's refresh token lives twenty-four hours and cannot be
+    // extended, so roughly once a day silent renewal stops working for
+    // everybody. MSAL still reports the account as signed in, because the
+    // account record is cached separately from the tokens - so the app looked
+    // authenticated while every request failed with "Token has expired", and
+    // the only visible way out was the Sign out button.
+    //
+    // A redirect fixes it without involving the user: it is a top-level
+    // navigation, so their Microsoft session cookie is sent as first-party,
+    // Microsoft re-issues immediately, and they land back on the page they were
+    // on. They see a flicker, not a sign-in form - and never a sign-out they
+    // did not ask for.
+    beginSilentRecovery(account);
   }
+
+  // Send the stale token rather than nothing while recovery is under way. It
+  // earns "Token has expired", which names the problem; sending no token at all
+  // earns a bare "Not authenticated", which names nothing.
+  return account.idToken || null;
 }
 
 // Routes our own server answers without ever calling Azure on the caller's
@@ -237,7 +310,7 @@ export async function requestDirectoryConsent() {
 }
 
 // Attach Bearer token to every request
-api.interceptors.request.use(async (config) => {
+async function prepareRequest(config) {
   const url = config.url || '';
 
   // Give Azure-backed fan-out routes the longer budget, unless the call site
@@ -291,29 +364,76 @@ api.interceptors.request.use(async (config) => {
   }
 
   return config;
+}
+
+/**
+ * Count the request as in flight, and make sure it stops counting.
+ *
+ * Registered here rather than at the call sites so that nothing can be slow
+ * invisibly -- a request that forgets to report itself is exactly the one that
+ * leaves somebody staring at an empty panel.
+ *
+ * The release has to happen in three places, and missing any of them leaves the
+ * indicator spinning forever over an app that has finished. Two are the
+ * response interceptors below; the third is here, because `prepareRequest` can
+ * reject before the request is ever sent and the `Cancel` it throws carries no
+ * `config` for the response handler to read an id from.
+ */
+api.interceptors.request.use(async (config) => {
+  config.__inflightId = inflight.begin(config.url || '');
+  try {
+    return await prepareRequest(config);
+  } catch (err) {
+    inflight.end(config.__inflightId);
+    throw err;
+  }
 });
 
 /**
- * Tell the user when their access has lapsed.
+ * Tell the user when a credential has lapsed, and which one.
  *
- * An expired credential fails every request at once, so pages just went blank
- * or kept showing cached figures with no explanation. The two causes need
- * different actions, so they get different messages: a pasted session token is
- * replaced in Settings, whereas an expired Microsoft sign-in needs a new login.
+ * Two completely different things produce a 401 here and they were being
+ * treated as one. A pasted tenant session token is a *data-source* credential:
+ * it says which Azure directory we may read, and it expiring says nothing
+ * whatsoever about who the user is. The Microsoft sign-in is the *identity*.
+ * Conflating them meant an expired tenant token told a perfectly signed-in
+ * person that their sign-in had gone and they should sign out - advice that
+ * destroyed a working session to fix an unrelated problem.
+ *
+ * So each names its own credential and offers only actions that address it.
+ * Neither tells anyone to sign out, because neither is fixed by signing out.
  * One alert per burst, since a single page load can fire a dozen requests.
  */
 let lastExpiryAlert = 0;
+
+/**
+ * Whether a 401 is about the tenant's stored session token rather than the
+ * caller's sign-in. The server says so in the message it already returns - see
+ * `token_resolver.resolve_tenant_token`, which is the only thing that speaks of
+ * a "session token for this tenant".
+ */
+export function isTenantTokenExpiry(detail) {
+  return /session token/i.test(detail || '');
+}
 
 function alertSessionExpired(detail) {
   const now = Date.now();
   if (now - lastExpiryAlert < 15000) return;
   lastExpiryAlert = now;
 
-  const sessionToken = /session token/i.test(detail || '');
+  if (isTenantTokenExpiry(detail)) {
+    toast.error(
+      'This tenant\u2019s session token has expired. Renew it in Settings, or switch to another tenant. You are still signed in.',
+      { id: 'session-expired', duration: 10000 },
+    );
+    return;
+  }
+
+  // The sign-in itself. A renewal is attempted automatically on the next
+  // request, so this does not ask for a new login - it says what is happening
+  // and what to do only if it keeps happening.
   toast.error(
-    sessionToken
-      ? 'Session token expired — paste a fresh one in Settings to keep reading this tenant.'
-      : 'Your sign-in has expired. Sign out and sign in again to continue.',
+    'Your sign-in is being renewed. If pages stay empty, reload once to continue.',
     { id: 'session-expired', duration: 8000 },
   );
 }
@@ -343,14 +463,28 @@ function alertRateLimited(err) {
   );
 }
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    inflight.end(res.config?.__inflightId);
+    // A working request proves the sign-in recovered, so let the next lapse
+    // have its own attempt instead of inheriting this one's spent marker.
+    clearRecoveryMark();
+    return res;
+  },
   (err) => {
+    inflight.end(err.config?.__inflightId);
     if (err.response?.status === 401) {
-      // The cached management token is useless now; drop it so the next request
-      // tries to renew instead of replaying the dead one.
-      _cachedToken = null;
-      _tokenExpiry = 0;
-      alertSessionExpired(errorMessage(err));
+      const detail = errorMessage(err);
+
+      // Only discard the cached Azure token when the caller's own credential
+      // is what failed. A tenant's session token expiring is somebody else's
+      // credential going stale; throwing away this user's working management
+      // token because of it forced a needless renewal on every other tenant
+      // they can see.
+      if (!isTenantTokenExpiry(detail)) {
+        _cachedToken = null;
+        _tokenExpiry = 0;
+      }
+      alertSessionExpired(detail);
     }
 
     if (err.response?.status === 429) alertRateLimited(err);
@@ -396,12 +530,6 @@ export const fetchMe = () => api.get('/me').then(r => r.data);
  * erasure of everything consent was covering, not as a flag being flipped.
  */
 export const updateProfile = (body) => api.patch('/me', body).then(r => r.data);
-
-/** This person's own sign-in history. */
-export const fetchMySessions = () => api.get('/me/sessions').then(r => r.data);
-
-/** Everything held about the signed-in person, for them to keep. */
-export const exportMyData = () => api.get('/me/export').then(r => r.data);
 
 /** Close this person's open sessions before the Microsoft sign-out redirect. */
 export const endMySession = () => api.post('/me/sign-out').then(r => r.data);
@@ -499,6 +627,16 @@ export const fetchCosts = (body) =>
 /** Per-meter monthly rows — the granularity the month comparison needs. */
 export const fetchCostRows = (body) =>
   api.post('/costs/rows', body).then(r => r.data);
+
+/**
+ * The same rows for a single service, but named per resource.
+ *
+ * A separate call because the resource name and the usage quantity cannot be
+ * asked for in one Cost Management query; this trades the quantity away to
+ * find out which machine the money went to.
+ */
+export const fetchServiceResources = (body) =>
+  api.post('/costs/resources', body).then(r => r.data);
 
 export const fetchRgCosts = (body) =>
   api.post('/costs/rg', body).then(r => r.data);
@@ -720,10 +858,40 @@ export const fetchChanges = (tenantId, { before, after, from_date, to_date, grou
     },
   }).then(r => r.data);
 
+/**
+ * What changed in the estate while this cost moved.
+ *
+ * Answered from our own scan snapshots, so it costs no Azure call and can be
+ * opened per anomaly without the page rate-limiting itself. What comes back is
+ * evidence, never a cause: billing records what was charged, not who did what.
+ */
+export const explainAnomaly = (body) =>
+  api.post('/anomalies/explain', body).then(r => r.data);
+
 /** Every recorded change for one resource, newest first. */
 export const fetchEntityHistory = (tenantId, resourceId) =>
   api.get('/changes/history', {
     params: { tenant_id: tenantId, resource_id: resourceId },
+  }).then(r => r.data);
+
+/**
+ * The same history, plus what the resource cost around each change and who
+ * made it.
+ *
+ * Deliberately not under `/changes`: that prefix is a local route answered
+ * from our own database and it keeps working when Azure is throttling
+ * everybody. This one reads Cost Management and the Activity Log, so it needs
+ * a management token and belongs on its own prefix where it gets one.
+ *
+ * `granularity` is 'monthly' or 'daily'. Daily is the expensive question --
+ * did the bill step up on the exact day it changed -- so it is only asked when
+ * somebody explicitly opens it.
+ */
+export const fetchResourceTimeline = (tenantId, resourceId, { granularity = 'monthly' } = {}) =>
+  api.post('/timeline/resource', {
+    tenant_id: tenantId,
+    resource_id: resourceId,
+    granularity,
   }).then(r => r.data);
 
 /** Which changes are currently being suppressed, and who suppressed them. */
@@ -751,7 +919,7 @@ export const unignoreChange = (tenantId, resourceId, field = '') =>
  * The only source that records the actor behind a change — snapshot diffs see
  * results, this sees the operations that produced them.
  */
-export const fetchActivity = (tenantId, subscriptionIds, { days = 7, resourceId, writesOnly = true } = {}) =>
+export const fetchActivity = (tenantId, subscriptionIds, { days = 7, resourceId, resourceGroup, writesOnly = true } = {}) =>
   api.get('/activity', {
     params: {
       tenant_id: tenantId,
@@ -759,24 +927,14 @@ export const fetchActivity = (tenantId, subscriptionIds, { days = 7, resourceId,
       days,
       writes_only: writesOnly,
       ...(resourceId ? { resource_id: resourceId } : {}),
+      // Only sent when no resource id is, because a resource id already names
+      // the group and Azure rejects the pair. Narrowing to a group is what lets
+      // a whole resource group be attributed in one call instead of one per
+      // resource.
+      ...(resourceGroup && !resourceId ? { resource_group: resourceGroup } : {}),
     },
     paramsSerializer: { indexes: null },
   }).then(r => r.data);
-
-/** Build a Bill of Quantities from what is actually running in a subscription. */
-export const generateBoqFromSubscription = (body) =>
-  api.post('/boq/from-subscription', body).then(r => r.data);
-
-/**
- * Download a BOQ as an .xlsx laid out like the pricing calculator's own export.
- *
- * The BOQ on screen is posted back rather than rebuilt server-side: rebuilding
- * would re-run the throttled resource and cost queries, and the download would
- * then be free to disagree with the figures the user is looking at.
- */
-export const downloadBoqEstimate = (boq, title = 'Your Estimate') =>
-  api.post('/boq/export/estimate.xlsx', { ...boq, title }, { responseType: 'blob' })
-    .then(r => r.data);
 
 /**
  * Why a billed unit rate differs from Microsoft's published one.
@@ -794,6 +952,24 @@ export const fetchPriceHistory = (params = {}) =>
 /** The dollar's daily rate against a currency, for one month. */
 export const fetchFxRates = (quote, month) =>
   api.get('/prices/fx', { params: { quote, month } }).then(r => r.data);
+
+/** Whether the machine's `az login` can stand in for stored credentials. */
+export const fetchCliStatus = () => api.get('/tenants/cli').then(r => r.data);
+
+/** Start a device-code `az login` and get back the code to type. */
+export const startCliLogin = (tenantId) =>
+  api.post('/tenants/cli/login', null, tenantId ? { params: { tenant_id: tenantId } } : undefined)
+    .then(r => r.data);
+
+/** How the sign-in that is already running is getting on. */
+export const fetchCliLogin = () => api.get('/tenants/cli/login').then(r => r.data);
+
+/** Abandon a sign-in rather than leaving `az` waiting on the server. */
+export const cancelCliLogin = () => api.delete('/tenants/cli/login').then(r => r.data);
+
+/** Today's dollar rate for several currencies, for the display-currency switch. */
+export const fetchLatestFxRates = (quotes) =>
+  api.get('/prices/fx/latest', { params: { quotes: quotes.join(',') } }).then(r => r.data);
 
 /** Capture the estate now and store it as a point-in-time snapshot. */
 export const runScan = (body) => api.post('/scans', body).then(r => r.data);

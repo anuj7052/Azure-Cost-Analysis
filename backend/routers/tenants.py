@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 import aiosqlite
 from auth.dependencies import get_current_user, require_workspace_admin
+from core.config import settings
+from services import azure_cli
 from services.azure_mgmt import (
     get_sp_token, is_expired, list_subscriptions, read_token_claims, token_expiry,
 )
@@ -45,6 +47,28 @@ async def get_tenants(
                 ))
                 seen_ids.add(row["tenant_id"])
 
+    # Every directory the machine's `az login` can reach, when that is turned
+    # on. Enumerating them is safe here in a way it would not be for a
+    # delegated login, because the operator and the caller are the same person
+    # -- which is the only configuration in which the flag may be set at all.
+    if settings.AZURE_CLI_AUTH:
+        try:
+            for entry in await azure_cli.list_tenants():
+                if entry["tenant_id"] in seen_ids:
+                    continue
+                results.append(TenantInfo(
+                    tenant_id=entry["tenant_id"],
+                    tenant_name=entry["tenant_name"],
+                    source="azure_cli",
+                    account=entry["account"],
+                    subscription_count=entry["subscription_count"],
+                ))
+                seen_ids.add(entry["tenant_id"])
+        except azure_cli.CliUnavailable:
+            # The list is context, not the point of the call. A signed-out CLI
+            # must not empty a page that has stored credentials to show.
+            pass
+
     # Pasted session tokens win over a delegated entry for the same
     #    tenant, because the user added them to reach something their own login
     #    could not.
@@ -71,6 +95,73 @@ async def get_tenants(
             seen_ids.add(row["tenant_id"])
 
     return results
+
+
+@router.get("/cli")
+async def get_cli_status(current_user: dict = Depends(get_current_user)):
+    """
+    Whether the machine's Azure CLI can be used instead of stored credentials.
+
+    Three outcomes, kept apart on purpose: turned off, installed but signed
+    out, and ready. A single disabled button covering all three is what leaves
+    somebody re-reading the documentation for a setting they already applied.
+    """
+    if not settings.AZURE_CLI_AUTH:
+        return {
+            "enabled": False, "available": azure_cli.cli_installed(),
+            "signed_in": False, "account": "", "tenants": [],
+            "reason": (
+                "CLI sign-in is switched off. Set AZURE_CLI_AUTH=true in the "
+                "backend environment to use it. It is only safe when the "
+                "person running this service is the person using it."
+            ),
+        }
+    return {"enabled": True, **await azure_cli.status()}
+
+
+def _require_cli_enabled():
+    if not settings.AZURE_CLI_AUTH:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "CLI sign-in is switched off. Set AZURE_CLI_AUTH=true in the "
+                "backend environment and restart to use it."
+            ),
+        )
+
+
+@router.post("/cli/login", dependencies=[Depends(require_workspace_admin)])
+async def start_cli_login(tenant_id: str | None = None):
+    """
+    Begin a device-code sign-in and return the code to type.
+
+    Nothing secret travels through this service: it starts the CLI, reads the
+    code the CLI printed, and reports what happened. The password is entered
+    at Microsoft, in the operator's own browser.
+
+    Signing the host in is signing *everybody* in, since the CLI identity is
+    the machine's rather than the caller's, so this is restricted to a
+    workspace administrator on top of the deployment-level flag.
+    """
+    _require_cli_enabled()
+    try:
+        return await azure_cli.begin_login(tenant_id)
+    except azure_cli.CliUnavailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/cli/login", dependencies=[Depends(require_workspace_admin)])
+async def get_cli_login(current_user: dict = Depends(get_current_user)):
+    """Where the sign-in that is already running has got to."""
+    _require_cli_enabled()
+    return azure_cli.login_status()
+
+
+@router.delete("/cli/login", dependencies=[Depends(require_workspace_admin)])
+async def cancel_cli_login():
+    """Abandon a sign-in, so the waiting `az` process does not outlive the page."""
+    _require_cli_enabled()
+    return await azure_cli.cancel_login()
 
 
 @router.post(

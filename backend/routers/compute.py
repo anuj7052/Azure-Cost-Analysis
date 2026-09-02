@@ -20,6 +20,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import aiosqlite
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -27,7 +28,7 @@ from auth.dependencies import get_current_user, require_workspace_admin
 from core import db as db_module
 from core.db import get_db
 from services import azure_metrics, compute_intel, vm_resize
-from services.analysis import resource_cost_index
+from services.analysis import latest_billing_month, resource_cost_index
 from services.azure_errors import azure_error
 from services.cost_client import query_costs
 from services.orphaned import run_graph_query
@@ -136,6 +137,69 @@ async def _price_lookup(
     return rates
 
 
+# The installed RAM of every size, keyed `(subscription, region)`.
+#
+# Held for the life of the process on purpose. Azure's SKU catalogue is a
+# description of the hardware on offer, not a measurement — a D4s_v5 will not
+# quietly become a different amount of memory between two page loads — and the
+# unfiltered catalogue is a large, slow read that would otherwise be repeated
+# on every refresh of the fleet.
+_SKU_RAM: Dict[tuple, Dict[str, float]] = {}
+
+
+async def _ram_by_sku(token: str, subscription_id: str, region: str) -> Dict[str, float]:
+    """Installed RAM in bytes for each VM size available in one region."""
+    key = (subscription_id, region)
+    if key in _SKU_RAM:
+        return _SKU_RAM[key]
+    try:
+        async with httpx.AsyncClient() as client:
+            skus = await vm_resize.list_skus(client, token, subscription_id, region)
+    except Exception as exc:
+        # A missing size catalogue costs the memory percentages and nothing
+        # else, so it is logged and left empty rather than failing the fleet.
+        log.warning("VM size catalogue unavailable for %s/%s: %s", subscription_id, region, exc)
+        return {}
+    sizes: Dict[str, float] = {}
+    for sku in skus:
+        described = vm_resize.describe_sku(sku)
+        if described.get("memory_gb"):
+            sizes[(described.get("name") or "").lower()] = described["memory_gb"] * (1024 ** 3)
+    _SKU_RAM[key] = sizes
+    return sizes
+
+
+async def _attach_ram(token: str, fleet: List[Dict[str, Any]]) -> bool:
+    """
+    Tell each VM how much memory it was built with.
+
+    Azure Monitor reports *available* memory in bytes and nothing else, so
+    without the installed total there is no percentage to report — only a
+    number of free gigabytes, which says nothing on its own about whether the
+    machine is short of memory. The catalogue is read once per subscription and
+    region rather than once per VM.
+
+    Returns whether every size that was needed could be resolved.
+    """
+    pairs = {(vm["subscription_id"], vm["region"]) for vm in fleet
+             if vm.get("subscription_id") and vm.get("region")}
+    results = await asyncio.gather(*(
+        _ram_by_sku(token, sub, region) for sub, region in pairs
+    ), return_exceptions=True)
+    catalogue = {
+        pair: (result if isinstance(result, dict) else {})
+        for pair, result in zip(pairs, results)
+    }
+    complete = True
+    for vm in fleet:
+        sizes = catalogue.get((vm.get("subscription_id"), vm.get("region")), {})
+        ram = sizes.get((vm.get("sku") or "").lower())
+        vm["ram_bytes"] = ram
+        if ram is None:
+            complete = False
+    return complete
+
+
 @router.post("")
 async def analyse_compute(
     body: ComputeRequest,
@@ -151,7 +215,8 @@ async def analyse_compute(
     """
     token = await resolve_tenant_token(body.tenant_id, current_user, db)
 
-    sources = {"inventory": "ok", "cost": "ok", "metrics": "ok", "prices": "ok"}
+    sources = {"inventory": "ok", "cost": "ok", "metrics": "ok", "prices": "ok",
+               "sizes": "ok"}
 
     try:
         fleet = await _fleet(token, body.subscription_ids)
@@ -172,14 +237,18 @@ async def analyse_compute(
     for sub_id in body.subscription_ids:
         try:
             cost_records.extend(await query_costs(
-                token=token, subscription_id=sub_id, months=1,
+                token=token, subscription_id=sub_id, months=2,
                 group_by=["ResourceId", "ServiceName"], granularity="Monthly",
             ))
         except Exception as exc:
             log.warning("compute cost lookup failed for %s: %s", sub_id, exc)
             sources["cost"] = "partial"
 
-    cost_index = resource_cost_index(cost_records)
+    # Two months asked for, one month read. A month-to-date window is empty on
+    # the 1st and a fraction of a month for days afterwards, and every figure
+    # derived from it here -- the monthly cost, its annualisation, the saving
+    # from a resize -- would be wrong by that fraction.
+    cost_index = resource_cost_index(cost_records, month=latest_billing_month(cost_records)[0])
     currency = next((r.get("Currency") for r in cost_records if r.get("Currency")),
                     body.currency)
 
@@ -202,6 +271,12 @@ async def analyse_compute(
             len(fleet), len(cost_records),
         )
         sources["cost"] = "unmatched"
+
+    # ── installed memory, per size ──
+    # Ahead of the metrics fetch because the memory readings are meaningless
+    # without it, and it is a cheap cached read after the first call.
+    if not await _attach_ram(token, fleet):
+        sources["sizes"] = "partial"
 
     # ── utilization ──
     metrics_by_id: Dict[str, Dict[str, Any]] = {}

@@ -190,7 +190,7 @@ export default function Sidebar() {
               </button>
 
               {open && (
-                <div className="mb-2 ml-4 mt-0.5 space-y-0.5 border-l border-slate-800 pl-2">
+                <div className="mb-2 ml-4 mt-0.5 space-y-0.5 border-l border-slate-800 pl-2 animate-fade-in">
                   {section.items.map(item => (
                     <NavLink key={item.to} to={item.to} end={item.to === '/'} className={itemClass}>
                       <item.icon className="h-4 w-4 shrink-0" />

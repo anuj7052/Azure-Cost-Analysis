@@ -17,6 +17,18 @@ class Settings(BaseSettings):
     AZURE_CLIENT_ID: str = ""
     AZURE_CLIENT_SECRET: str = ""
     AZURE_TENANT_ID: str = "common"
+
+    # Use the machine's `az login` as a credential source, so no service
+    # principal and no pasted session token are needed for any tenant the CLI
+    # account can reach.
+    #
+    # Off by default and refused in production, deliberately. The CLI identity
+    # belongs to whoever runs the process, not to whoever is calling the API,
+    # so on a hosted deployment every user would silently borrow the server's
+    # rights. That is only safe when the operator and the user are the same
+    # person -- which is exactly the case this exists for.
+    AZURE_CLI_AUTH: bool = False
+
     APP_SECRET_KEY: str = INSECURE_SECRET_KEY
     CORS_ORIGINS: str = "http://localhost:5174,http://127.0.0.1:5174"
     DB_PATH: str = "./data/azure_cost.db"
@@ -97,6 +109,13 @@ def production_config_errors(config: "Settings") -> List[str]:
         problems.append(
             "AZURE_CLIENT_ID is required in production. Without it the API "
             "cannot restrict which application's tokens it accepts."
+        )
+
+    if config.AZURE_CLI_AUTH:
+        problems.append(
+            "AZURE_CLI_AUTH must be off in production. It lends the machine's "
+            "own `az login` identity to every caller, so on a shared "
+            "deployment one user would read another customer's Azure estate."
         )
 
     insecure_origins = [

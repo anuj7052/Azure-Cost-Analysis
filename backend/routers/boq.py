@@ -13,7 +13,7 @@ from services.azure_errors import azure_error
 from core.db import get_db
 from models.schemas import CostQueryRequest, GeneratedBoqResponse
 from services import iac_service, integration_service
-from services.analysis import resource_cost_index
+from services.analysis import latest_billing_month, resource_cost_index
 from services.boq_builder import build_boq
 from services.boq_chat_service import BoqChatService
 from services.boq_parser import BOQ_EXTENSIONS, parse_boq_file
@@ -226,7 +226,7 @@ async def boq_from_subscription(
             cost_records.extend(await query_costs(
                 token=token,
                 subscription_id=sub_id,
-                months=1,
+                months=2,
                 group_by=["ResourceId", "ServiceName", "Meter"],
                 granularity="Monthly",
             ))
@@ -234,7 +234,10 @@ async def boq_from_subscription(
             log.warning("BOQ cost lookup failed for %s: %s", sub_id, exc)
             continue
 
-    costs = resource_cost_index(cost_records)
+    # A month-to-date window is not a month: on the 1st it is empty and on the
+    # 3rd it is a tenth of the figure it would be labelled as. Two months are
+    # fetched and the last complete one is read.
+    costs = resource_cost_index(cost_records, month=latest_billing_month(cost_records)[0])
     currency = next((r.get("Currency") for r in cost_records if r.get("Currency")), "USD")
 
     priced = []

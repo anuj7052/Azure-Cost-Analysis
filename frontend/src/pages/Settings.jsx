@@ -1,12 +1,12 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X, GitCompareArrows, KeyRound, Download } from 'lucide-react';
+import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X, GitCompareArrows, KeyRound, Download, Terminal } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import { deleteTenant, downloadSetupGuide, uploadCSV } from '../api/client';
+import { deleteTenant, downloadSetupGuide, fetchCliStatus, uploadCSV } from '../api/client';
 import AddTenantModal from '../components/TenantManager/AddTenantModal';
 import IntegrationsPanel from '../components/Settings/IntegrationsPanel';
-import YourDataPanel from '../components/Settings/YourDataPanel';
 import AddSessionTokenModal from '../components/TenantManager/AddSessionTokenModal';
+import AzureCliLoginModal from '../components/TenantManager/AzureCliLoginModal';
 import PortalGuide from '../components/Common/PortalGuide';
 import { EXPORT_GUIDE } from '../components/Common/portalGuides';
 import CurrencyApiBar from '../components/Common/CurrencyApiBar';
@@ -30,7 +30,7 @@ function expiryLabel(expiresAt) {
 export default function Settings() {
   const {
     tenants, subscriptions, selectedSubscriptionIds, toggleSubscription,
-    removeTenantFromList, loadCosts, imported, addImport, clearImported, setImportCurrency,
+    removeTenantFromList, loadCosts, loadTenants, imported, addImport, clearImported, setImportCurrency,
     removeImportFile,
   } = useAppStore();
   const me = useAppStore(s => s.me);
@@ -47,6 +47,23 @@ export default function Settings() {
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef(null);
+
+  // Whether this deployment can borrow the machine's own `az login` instead of
+  // asking for a service principal or a pasted token. Read once: it describes
+  // the server, not the page.
+  const [cli, setCli] = useState(null);
+  const [showCliLogin, setShowCliLogin] = useState(false);
+  const refreshCli = useCallback(
+    () => fetchCliStatus().then(setCli).catch(() => {}),
+    [],
+  );
+  useEffect(() => {
+    let alive = true;
+    fetchCliStatus()
+      .then(d => { if (alive) setCli(d); })
+      .catch(() => { /* older backend -> the banner simply does not appear */ });
+    return () => { alive = false; };
+  }, []);
 
   const handleDeleteTenant = async (t) => {
     if (t.source === 'delegated') {
@@ -100,8 +117,6 @@ export default function Settings() {
         <p className="text-slate-400 text-sm mt-1">Manage tenants, subscriptions, and data sources</p>
       </div>
 
-      <YourDataPanel />
-
       {/* Tenants */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-5">
@@ -128,6 +143,19 @@ export default function Settings() {
             </button>
             {canManageTenants && (
             <>
+            {cli?.enabled && (
+              <button
+                onClick={() => setShowCliLogin(true)}
+                className={`flex items-center gap-2 text-sm px-3 py-2 rounded-xl transition border ${
+                  cli.signed_in
+                    ? 'border-slate-700 text-slate-300 hover:border-slate-600 hover:text-white'
+                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:border-emerald-500/70'
+                }`}
+              >
+                <Terminal className="w-4 h-4" />
+                {cli.signed_in ? 'Switch CLI account' : 'Azure CLI login'}
+              </button>
+            )}
             <button
               onClick={() => setShowTokenModal(true)}
               className="flex items-center gap-2 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-sm px-3 py-2 rounded-xl transition"
@@ -155,6 +183,30 @@ export default function Settings() {
           </p>
         )}
 
+        {cli && (cli.enabled || cli.available) && (
+          <div className={`mb-4 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs ${
+            cli.enabled && cli.signed_in
+              // The 300/500 steps are remapped by the light theme; the 950/200
+              // steps are not, and rendered there as olive on grey.
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+              : 'border-slate-800 bg-slate-950/60 text-slate-400'
+          }`}>
+            <Terminal className="w-4 h-4 mt-0.5 shrink-0" />
+            <p>
+              {cli.enabled && cli.signed_in ? (
+                <>
+                  Signed in through the Azure CLI as
+                  <span className="font-semibold">{` ${cli.account}`}</span>.
+                  The tenants it can reach need no service principal and no
+                  pasted token, and nothing here expires. Signing in to this
+                  product still uses your Microsoft login, because that is what
+                  says who you are.
+                </>
+              ) : cli.reason}
+            </p>
+          </div>
+        )}
+
         <div className="space-y-2">
           {tenants.length === 0 && (
             <p className="text-slate-500 text-sm text-center py-4">No tenants connected yet</p>
@@ -169,17 +221,32 @@ export default function Settings() {
                     {t.account ? `${t.account} · ` : ''}{expiryLabel(t.expires_at)}
                   </p>
                 )}
+                {t.source === 'azure_cli' && (
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {t.account ? `${t.account} · ` : ''}
+                    {t.subscription_count} subscription{t.subscription_count === 1 ? '' : 's'}
+                    {' · nothing to store, and nothing to expire'}
+                  </p>
+                )}
               </div>
+              {/* Tinted with /15 overlays rather than the 900-step solids,
+                  because the light theme remaps the 300 text steps but not
+                  the 900 backgrounds — those rendered as mud on white. */}
               <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
-                t.source === 'delegated' ? 'bg-blue-900/60 text-blue-300'
-                  : t.source === 'session_token' ? 'bg-amber-900/60 text-amber-300'
-                  : 'bg-purple-900/60 text-purple-300'
+                t.source === 'delegated' ? 'bg-blue-500/15 text-blue-300'
+                  : t.source === 'session_token' ? 'bg-amber-500/15 text-amber-300'
+                  : t.source === 'azure_cli' ? 'bg-emerald-500/15 text-emerald-300'
+                  : 'bg-violet-500/15 text-violet-300'
               }`}>
                 {t.source === 'delegated' ? 'Microsoft Login'
                   : t.source === 'session_token' ? 'Session Token'
+                  : t.source === 'azure_cli' ? 'Azure CLI'
                   : 'Service Principal'}
               </span>
-              {t.source !== 'delegated' && canManageTenants && (
+              {/* Neither of these is something this app stores, so there is
+                  nothing here to delete. Removing a CLI tenant means signing
+                  the CLI out, which is not this page's to do. */}
+              {t.source !== 'delegated' && t.source !== 'azure_cli' && canManageTenants && (
                 <button
                   onClick={() => handleDeleteTenant(t)}
                   disabled={deletingId === t.tenant_id}
@@ -408,6 +475,14 @@ export default function Settings() {
 
       {showModal && <AddTenantModal onClose={() => setShowModal(false)} />}
       {showTokenModal && <AddSessionTokenModal onClose={() => setShowTokenModal(false)} />}
+      {showCliLogin && (
+        <AzureCliLoginModal
+          onClose={() => setShowCliLogin(false)}
+          // The tenant list is what the sign-in changed, so it is refetched
+          // rather than left showing the previous account's directories.
+          onSignedIn={() => { refreshCli(); loadTenants(); }}
+        />
+      )}
     </div>
   );
 }

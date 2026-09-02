@@ -28,6 +28,13 @@ async def get_activity(
     subscription_ids: List[str] = Query(...),
     days: int = Query(7, ge=1, le=MAX_RETENTION_DAYS),
     resource_id: Optional[str] = Query(None, description="Limit to one resource"),
+    resource_group: Optional[str] = Query(
+        None,
+        description=(
+            "Limit to one resource group. Ignored when resource_id is given, "
+            "which is narrower."
+        ),
+    ),
     writes_only: bool = Query(True),
     current_user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
@@ -39,6 +46,12 @@ async def get_activity(
     activity read on some subscriptions and not others, and returning what is
     readable beats returning nothing. The shortfall is reported rather than
     silently swallowed, because a short list looks identical to a quiet week.
+
+    Narrowing by resource group is worth exposing because Azure applies it
+    itself. Reading a group's history by pulling the whole subscription and
+    discarding the rest costs the same quota as every other caller's read and
+    is slow enough to time out on a large estate - and asking per resource
+    instead would turn one request into dozens.
     """
     token = await resolve_tenant_token(tenant_id, current_user, db)
 
@@ -51,6 +64,7 @@ async def get_activity(
                 subscription_id=subscription_id,
                 days=days,
                 resource_id=resource_id,
+                resource_group=resource_group,
             ))
         except Exception as exc:
             log.warning("Activity read failed for %s: %s", subscription_id, exc)

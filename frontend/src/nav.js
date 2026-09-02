@@ -2,7 +2,7 @@ import {
   Activity, AlertTriangle, Boxes, ClipboardList, Cpu, FileCode, FolderOpen, Gauge,
   GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, Network,
   PiggyBank, Plug, Scale,
-  Search, Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
+  Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
   TrendingUp, UserCog, Users, Wallet,
 } from 'lucide-react';
 
@@ -29,10 +29,6 @@ export const SECTIONS = [
       {
         to: '/', label: 'Dashboard', icon: LayoutDashboard, overview: true,
         blurb: 'Headline spend, top services and the trend at a glance.',
-      },
-      {
-        to: '/search', label: 'Global Search', icon: Search,
-        blurb: 'Find any resource, meter or resource group by name across every subscription.',
       },
       {
         to: '/explorer', label: 'Cost Explorer', icon: TrendingUp,

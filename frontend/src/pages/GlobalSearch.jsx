@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   Search, Loader2, RadioTower, History, Boxes, AlertTriangle, Clock,
@@ -61,7 +62,11 @@ export default function GlobalSearch() {
   const selectedTenantId = useAppStore(s => s.selectedTenantId);
   const selectedSubscriptionIds = useAppStore(s => s.selectedSubscriptionIds);
 
-  const [query, setQuery] = useState('');
+  const [searchParams] = useSearchParams();
+  // The top bar navigates here with the term in the URL, which also makes a
+  // search a shareable link rather than something that only exists in one
+  // person's browser.
+  const [query, setQuery] = useState(() => searchParams.get('q') || '');
   const [includeDeleted, setIncludeDeleted] = useState(true);
   const [data, setData] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -79,6 +84,14 @@ export default function GlobalSearch() {
   };
 
   useEffect(() => { loadScans(); }, [selectedTenantId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Searching again from the top bar while already on this page changes only
+  // the URL, so without this the box would keep the first term and the second
+  // search would appear to do nothing.
+  const fromUrl = searchParams.get('q') || '';
+  useEffect(() => {
+    if (fromUrl) setQuery(fromUrl);
+  }, [fromUrl]);
 
   // Debounced so typing a resource name does not fire a request per keystroke.
   const timer = useRef();

@@ -91,24 +91,40 @@ export function useAccessToken() {
 
 export function RequireAuth({ children, signedOut }) {
   const isAuthenticated = useIsAuthenticated();
-  const { inProgress, instance } = useMsal();
+  const { inProgress } = useMsal();
   const [timedOut, setTimedOut] = useState(false);
 
-  const isLoading =
-    !timedOut && (
-      inProgress === InteractionStatus.HandleRedirect ||
-      inProgress === InteractionStatus.Login
-    );
+  const waiting =
+    inProgress === InteractionStatus.HandleRedirect ||
+    inProgress === InteractionStatus.Login;
 
-  // Safety timeout — if MSAL is stuck loading for >6s, clear state and show login
+  const isLoading = waiting && !timedOut;
+
+  /**
+   * Stop waiting on MSAL, without throwing the sign-in away.
+   *
+   * This used to call `instance.clearCache()`, which deletes the cached
+   * account and every token with it. That turned "MSAL is taking a while" into
+   * "you are now signed out": the account disappeared, `useIsAuthenticated`
+   * went false, and the user was returned to the sign-in screen having done
+   * nothing wrong. A slow network was enough to trigger it, and the damage was
+   * permanent even when MSAL would have finished a moment later.
+   *
+   * Giving up on the spinner is a display decision and nothing more. If MSAL
+   * does resolve, `isAuthenticated` turns true and the app appears; if it does
+   * not, the sign-in screen shows anyway. Neither outcome needs credentials
+   * destroyed to reach it. The wait is also longer now, because eight seconds
+   * of redirect handling is unusual but not wrong.
+   */
   useEffect(() => {
-    if (!isLoading) { setTimedOut(false); return; }
-    const t = setTimeout(() => {
-      instance.clearCache();
-      setTimedOut(true);
-    }, 6000);
-    return () => clearTimeout(t);
-  }, [isLoading, instance]);
+    if (!waiting) return undefined;
+    const t = setTimeout(() => setTimedOut(true), 8000);
+    // Reset on the way out rather than on the way in. Doing it in the effect
+    // body would set state during render and cascade; the cleanup already runs
+    // at exactly the moment the wait ends, which is when the flag stops being
+    // true of anything.
+    return () => { clearTimeout(t); setTimedOut(false); };
+  }, [waiting]);
 
   if (isLoading) {
     return (

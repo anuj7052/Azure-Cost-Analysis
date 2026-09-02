@@ -58,7 +58,7 @@ function MultiFilter({ label, options, selected, onChange }) {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-20 mt-1 max-h-72 w-64 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-xl">
+          <div className="absolute left-0 z-20 mt-1 max-h-72 w-64 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-xl animate-scale-in">
             {selected.size > 0 && (
               <button
                 onClick={() => onChange(new Set())}

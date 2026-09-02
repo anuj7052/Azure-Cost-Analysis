@@ -300,7 +300,7 @@ class UpdateUserRequest(BaseModel):
 class TenantInfo(BaseModel):
     tenant_id: str
     tenant_name: str
-    source: str = "delegated"  # "delegated" | "service_principal" | "session_token"
+    source: str = "delegated"  # "delegated" | "service_principal" | "session_token" | "azure_cli"
     expires_at: Optional[str] = None      # session tokens only
     account: Optional[str] = None         # who the session token belongs to
     subscription_count: Optional[int] = None
@@ -775,6 +775,19 @@ class OrphanedResponse(BaseModel):
     total_count: int
     total_monthly_cost: float
     currency: str = "USD"
+    # Which month the costs are actually from, and whether that month is still
+    # running. Empty when Cost Management returned nothing at all, which is a
+    # different thing from a scan that found nothing being billed.
+    cost_month: str = ""
+    cost_partial: bool = False
+    # Why the prices are missing, when they are. A failed billing query and an
+    # estate that is genuinely billing nothing produce the same empty column,
+    # and only one of them is safe to act on.
+    cost_errors: List[dict] = []
+    # How many resources Cost Management priced at all, across the whole
+    # subscription -- not how many of them are orphaned. Zero here with no
+    # errors means the billing query succeeded and returned nothing.
+    priced_count: int = 0
     errors: List[dict] = []
 
 
@@ -847,6 +860,25 @@ class CostRowsResponse(BaseModel):
     months: List[str]
     currency: str = "USD"
     errors: List[dict] = []
+
+
+class ServiceResourceRequest(BaseModel):
+    """
+    The rows behind one service, split by the resource that incurred them.
+
+    Separate from `/costs/rows` because the two queries cannot be the same one.
+    Cost Management accepts three grouping dimensions and refuses ResourceId on
+    a query that also asks for usage quantity, so the row set that powers the
+    BOQ comparison can never carry a resource name. This asks the narrower
+    question -- one service, cost only -- and gets the names back in exchange
+    for the quantities.
+    """
+    tenant_id: str
+    subscription_ids: List[str]
+    service: str = Field(min_length=1, max_length=200)
+    months: int = Field(default=6, ge=1, le=24)
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
 
 
 # ── Services ───────────────────────────────────────────────────────────────

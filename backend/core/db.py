@@ -537,6 +537,32 @@ _SCHEMAS = {
             created_at      TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP)
         )
     """,
+    # Cost Management responses, kept because re-asking is the expensive part.
+    #
+    # The Query API is the most aggressively throttled thing this app touches,
+    # and until now it was also the only expensive read with no durable store:
+    # the estate lands in scan_resources, list prices land in price_snapshots,
+    # but a bill was held in memory and mirrored to a JSON file in the system
+    # temp directory. App Service empties that on restart and does not share it
+    # between instances, so in the one environment that matters the cache was
+    # effectively per-process and per-deploy.
+    #
+    # `settled` is the column that earns this table. A closed month cannot
+    # change, so once Azure has stopped amending a window there is no such
+    # thing as a stale answer for it and the row can be kept for as long as
+    # there is room. Re-fetching immutable history every ten minutes is what
+    # was spending the rate limit.
+    "cost_cache": """
+        CREATE TABLE IF NOT EXISTS cost_cache (
+            cache_key  TEXT    NOT NULL PRIMARY KEY,
+            scope      TEXT    NOT NULL DEFAULT '',
+            period_to  TEXT    NOT NULL DEFAULT '',
+            payload    TEXT    NOT NULL DEFAULT '[]',
+            settled    INTEGER NOT NULL DEFAULT 0,
+            stored_at  REAL    NOT NULL DEFAULT 0,
+            expires_at REAL    NOT NULL DEFAULT 0
+        )
+    """,
 }
 
 # Search runs against name_lower across every scan the user owns, so without
@@ -612,6 +638,9 @@ _INDEXES = [
     "ON team_invitations (email, status)",
     "CREATE INDEX IF NOT EXISTS idx_users_owner ON users (owner_id)",
     "CREATE INDEX IF NOT EXISTS idx_provision_account ON provision_deployments (account_id, created_at DESC)",
+    # Pruning walks the cache oldest-first and evicts unsettled rows before
+    # settled ones, because a settled row is the one that saved a real call.
+    "CREATE INDEX IF NOT EXISTS idx_cost_cache_evict ON cost_cache (settled, stored_at)",
 ]
 
 
@@ -758,6 +787,7 @@ async def init_db():
         await db.execute(_SCHEMAS["resource_actions"])
         await db.execute(_SCHEMAS["anomaly_tracking"])
         await db.execute(_SCHEMAS["anomaly_events"])
+        await db.execute(_SCHEMAS["cost_cache"])
         for statement in _INDEXES:
             await db.execute(statement)
         await db.commit()

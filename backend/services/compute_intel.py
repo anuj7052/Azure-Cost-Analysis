@@ -452,6 +452,112 @@ def memory_headroom(metrics: Dict[str, Any], ram_bytes: Optional[float]) -> Opti
     return max(0.0, min(1.0, worst_free / ram_bytes))
 
 
+GIB = 1024 ** 3
+
+# Why a memory figure is missing, in the three ways it can be missing.
+#
+# These are genuinely different situations with genuinely different remedies,
+# and a single null told them apart not at all. "Install the agent", "we could
+# not determine the size of this machine" and "it is switched off" are three
+# answers, and the drawer should be able to say which one applies rather than
+# leaving a dash the reader has to interpret.
+MEM_OK = "OK"
+MEM_NO_AGENT = "NO_AGENT"
+MEM_NO_SIZE = "NO_SIZE"
+MEM_NO_DATA = "NO_DATA"
+
+MEMORY_NOTE = {
+    MEM_NO_AGENT: (
+        "Azure does not publish memory for a VM from the outside. "
+        "`Available Memory Bytes` is a guest metric, so it appears only once the "
+        "Azure Monitor Agent is installed and reporting from inside this machine."
+    ),
+    MEM_NO_SIZE: (
+        "Memory was measured, but the installed RAM of this size could not be "
+        "read from the Azure SKU catalogue, so free bytes cannot be turned into "
+        "a percentage."
+    ),
+    MEM_NO_DATA: (
+        "The memory metric is published for this VM but returned no readings in "
+        "the window."
+    ),
+}
+
+
+def memory_reading(
+    metrics: Dict[str, Any], ram_bytes: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    How much RAM this VM actually used, expressed the way a person thinks of it.
+
+    Azure reports **available** memory, not used, which inverts every statistic:
+    the moment of greatest demand is the *minimum* of the series, and the
+    quietest moment is its maximum. Reading them the obvious way round would
+    report a starved machine as having plenty of room, which is exactly the
+    mistake that would lead somebody to halve it.
+
+    Percentages are only produced when the installed RAM is known, because
+    `used = installed - available` has no meaning without the first term. The
+    absolute GiB figures are reported regardless, since they were measured.
+    """
+    entry = metrics.get("Available Memory Bytes")
+    if not isinstance(entry, dict) or not (entry.get("points") or 0):
+        published = isinstance(entry, dict)
+        status = MEM_NO_DATA if published else MEM_NO_AGENT
+        return {
+            "status": status,
+            "label": "Not measured",
+            "note": MEMORY_NOTE[status],
+            "installed_gb": round(ram_bytes / GIB, 1) if ram_bytes else None,
+            "used_pct_avg": None, "used_pct_peak": None, "used_pct_p95": None,
+            "used_gb_avg": None, "used_gb_peak": None,
+            "free_gb_min": None, "free_gb_avg": None,
+            "headroom": None, "points": 0, "confident": False,
+        }
+
+    # Available memory, so: min available == peak usage, max available == the
+    # quietest moment. p95 of *available* is a low-availability reading, which
+    # is the busy end — it pairs with CPU p95, not with the average.
+    free_min = _get(metrics, "Available Memory Bytes", "min")
+    free_avg = _get(metrics, "Available Memory Bytes", "avg")
+    free_p95 = _get(metrics, "Available Memory Bytes", "p95")
+    confident = _confident(metrics, "Available Memory Bytes")
+
+    def pct(free: Optional[float]) -> Optional[float]:
+        if free is None or not ram_bytes:
+            return None
+        return round(max(0.0, min(100.0, (1 - free / ram_bytes) * 100)), 1)
+
+    def gb(value: Optional[float]) -> Optional[float]:
+        return round(value / GIB, 2) if value is not None else None
+
+    def used_gb(free: Optional[float]) -> Optional[float]:
+        if free is None or not ram_bytes:
+            return None
+        return round(max(0.0, (ram_bytes - free)) / GIB, 2)
+
+    status = MEM_OK if ram_bytes else MEM_NO_SIZE
+    return {
+        "status": status,
+        "label": "Measured" if ram_bytes else "Measured · size unknown",
+        "note": "" if ram_bytes else MEMORY_NOTE[MEM_NO_SIZE],
+        "installed_gb": round(ram_bytes / GIB, 1) if ram_bytes else None,
+        "used_pct_avg": pct(free_avg),
+        "used_pct_peak": pct(free_min),
+        # The 95th percentile of availability is the busy end of the series, so
+        # this is deliberately not the 95th percentile of usage — it is the
+        # usage at the moment availability was near its lowest.
+        "used_pct_p95": pct(free_p95),
+        "used_gb_avg": used_gb(free_avg),
+        "used_gb_peak": used_gb(free_min),
+        "free_gb_min": gb(free_min),
+        "free_gb_avg": gb(free_avg),
+        "headroom": memory_headroom(metrics, ram_bytes),
+        "points": entry.get("points") or 0,
+        "confident": confident,
+    }
+
+
 def classify(
     metrics: Dict[str, Any],
     power_state: str = "",
@@ -921,6 +1027,7 @@ def analyse_vm(
         ram_bytes=vm.get("ram_bytes"),
         telemetry_error=telemetry_error,
     )
+    memory = memory_reading(metrics, vm.get("ram_bytes"))
 
     target = None
     savings = {"monthly": None, "annual": None, "basis": "not_applicable", "note": ""}
@@ -1058,6 +1165,7 @@ def analyse_vm(
                 "peak": verdict.get("cpu_max"),
                 "min": verdict.get("cpu_min"),
             },
+            "memory": memory,
         },
         "right_sizing": {
             "status": rightsizing,
@@ -1074,6 +1182,11 @@ def analyse_vm(
         "cpu_avg": verdict["cpu_avg"],
         "cpu_min": verdict.get("cpu_min"),
         "memory_headroom": verdict["memory_headroom"],
+        # Flat as well as nested, for the same reason the CPU figures are: the
+        # fleet table sorts on this column directly.
+        "memory_used_pct": memory["used_pct_avg"],
+        "memory_used_pct_peak": memory["used_pct_peak"],
+        "memory_gb": memory["installed_gb"],
         "recommended_sku": target,
         "action": action,
         "savings": savings,

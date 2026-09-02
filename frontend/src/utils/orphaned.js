@@ -260,16 +260,28 @@ export function evidenceRows(item) {
  * The aggregate total is the dangerous figure: it silently reads as zero for
  * every finding Cost Management did not price, so the count of those has to
  * travel with it.
+ *
+ * Which month the prices come from travels with it too. They are the last
+ * complete billing month, not the month in progress, and on the rare occasion
+ * only a part-month is available that is said outright rather than letting a
+ * few days' spend pass for a monthly rate.
  */
-export function coverageNote(items) {
+export function coverageNote(items, { month = '', partial = false } = {}) {
   const total = (items || []).length;
   if (!total) return '';
   const unpriced = unpricedCount(items);
-  if (!unpriced) return `All ${total} findings have a billed cost attached.`;
+
+  const from = !month
+    ? ''
+    : partial
+      ? ` Prices are ${month} so far this month, not a full month.`
+      : ` Prices are for ${month}, the last complete billing month.`;
+
+  if (!unpriced) return `All ${total} findings have a billed cost attached.${from}`;
   if (unpriced === total) {
-    return `None of these ${total} findings has a billed cost attached, so the totals below read as zero. The findings are still real.`;
+    return `None of these ${total} findings has a billed cost attached, so the totals below read as zero. The findings are still real.${from}`;
   }
-  return `${unpriced} of ${total} findings have no billed cost, so the totals below understate the true figure.`;
+  return `${unpriced} of ${total} findings have no billed cost, so the totals below understate the true figure.${from}`;
 }
 
 /** The headline, or an honest blank. */

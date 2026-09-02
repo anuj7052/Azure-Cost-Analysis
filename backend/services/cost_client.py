@@ -6,7 +6,13 @@ The Cost Management query API is aggressively rate limited (a handful of calls
 per subscription per minute).  Fanning out across a dozen subscriptions from
 several pages at once trips HTTP 429 almost immediately, so every request goes
 through a shared concurrency gate, an automatic retry/backoff loop that honours
-the `Retry-After` header, and a short-lived response cache.
+the `Retry-After` header, and a two-level response cache.
+
+The cache is two levels because the two problems are different. In-process
+memory answers the same question asked twice in one page load. The table behind
+`cost_cache` answers it across restarts, deploys and instances, and knows the
+difference between a period Azure has finished with and one still moving -- see
+that module for why that distinction is where most of the saving comes from.
 """
 import asyncio
 import hashlib
@@ -14,12 +20,13 @@ import json
 import logging
 import os
 import random
-import tempfile
 import time
 import httpx
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 from typing import List, Dict, Any
+
+from services import cost_cache
 
 
 MGMT_BASE = "https://management.azure.com"
@@ -48,13 +55,13 @@ MAX_RETRY_DELAY = 15.0
 # into a "2 subscriptions could not be read" banner and wrong totals, which is
 # far worse for the user than a slightly slower page.
 MAX_COOLDOWN_WAIT = 20.0
-CACHE_TTL_SECONDS = 600
-# Stale entries stay usable for a day so a throttled cold start still renders
-# yesterday's numbers instead of an empty dashboard.
-STALE_TTL_SECONDS = 24 * 60 * 60
-CACHE_FILE = os.path.join(
-    os.getenv("COST_CACHE_DIR") or tempfile.gettempdir(), "aca-cost-cache.json"
-)
+# The in-memory tier only has to survive one page load; the durable tier decides
+# how long an answer really lives, and does it per period rather than by one
+# flat number. Kept in step with it so the two cannot disagree about freshness.
+CACHE_TTL_SECONDS = cost_cache.OPEN_TTL_SECONDS
+# Stale entries stay usable so a throttled cold start still renders real numbers
+# instead of an empty dashboard.
+STALE_TTL_SECONDS = cost_cache.STALE_TTL_SECONDS
 
 _query_gate = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
 _cache: Dict[str, tuple[float, Any]] = {}
@@ -91,43 +98,6 @@ def _start_cooldown(seconds: float) -> None:
     _throttled_until = max(_throttled_until, time.time() + seconds)
 
 
-def _load_cache() -> None:
-    """
-    Restore the cache from disk. The dev server restarts on every code change and
-    a cold, empty cache during a throttling window leaves the dashboard blank —
-    persisting it means restarts no longer cost the user their data.
-    """
-    try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as fh:
-            saved = json.load(fh)
-    except (OSError, ValueError):
-        return
-    cutoff = time.time() - STALE_TTL_SECONDS
-    for key, entry in (saved or {}).items():
-        try:
-            expires_at, stored_at, value = entry
-        except (TypeError, ValueError):
-            continue
-        if stored_at >= cutoff:
-            _cache[key] = (expires_at, value)
-
-
-def _save_cache() -> None:
-    try:
-        now = time.time()
-        payload = {k: [exp, now, val] for k, (exp, val) in _cache.items()}
-        # Write via a temp file so a crash mid-write cannot corrupt the cache.
-        directory = os.path.dirname(CACHE_FILE) or "."
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=directory, delete=False
-        ) as fh:
-            json.dump(payload, fh)
-            tmp = fh.name
-        os.replace(tmp, CACHE_FILE)
-    except (OSError, TypeError, ValueError) as exc:
-        logger.debug("Could not persist cost cache: %s", exc)
-
-
 def _cache_key(url: str, body: dict) -> str:
     raw = url + json.dumps(body, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -149,8 +119,8 @@ def _cache_get_stale(key: str):
     return hit[1] if hit else None
 
 
-def _cache_put(key: str, value: Any) -> None:
-    _cache[key] = (time.time() + CACHE_TTL_SECONDS, value)
+def _cache_put(key: str, value: Any, ttl: float = CACHE_TTL_SECONDS) -> None:
+    _cache[key] = (time.time() + ttl, value)
     if len(_cache) > 500:  # keep the cache from growing unbounded
         # Only drop entries too old to serve as a throttling fallback; expired
         # but recent ones are exactly what rescues a blank dashboard.
@@ -158,7 +128,6 @@ def _cache_put(key: str, value: Any) -> None:
         for k, (exp, _) in list(_cache.items()):
             if exp < cutoff:
                 _cache.pop(k, None)
-    _save_cache()
 
 
 def _retry_delay(resp: httpx.Response | None, attempt: int) -> float:
@@ -221,6 +190,16 @@ async def _run_paged_query(url: str, headers: dict, body: dict, timeout: int) ->
     if cached is not None:
         return cached
 
+    # Nothing in this process, but this process is not the only one that has
+    # ever asked. A restart, a deploy or a second instance all arrive here with
+    # an empty dictionary and a database that already holds the answer.
+    stored = await cost_cache.load(key)
+    if stored is not None:
+        payload, fresh = stored
+        if fresh:
+            _cache_put(key, payload, cost_cache.ttl_for(body))
+            return payload
+
     # Several pages mounting at once ask for the same data. Let the first caller
     # do the work and have the rest await it, instead of firing duplicate
     # queries that only serve to trigger throttling.
@@ -258,19 +237,21 @@ async def _fetch_pages(url: str, headers: dict, body: dict, timeout: int, key: s
                 next_url = data.get("properties", {}).get("nextLink")
     except Exception:
         # Throttling, a transport blip or an Azure 5xx should never blank the
-        # dashboard when we still hold a recent answer.
+        # dashboard when we still hold a recent answer. Memory first because it
+        # is free, then the durable copy, which is the one that survives the
+        # restart that a throttling incident so often triggers.
         stale = _cache_get_stale(key)
+        if stale is None:
+            stored = await cost_cache.load(key)
+            stale = stored[0] if stored else None
         if stale is not None:
             logger.warning("Serving stale cached cost data (Azure unavailable or throttling)")
             return stale
         raise
 
-    _cache_put(key, pages)
+    _cache_put(key, pages, cost_cache.ttl_for(body))
+    await cost_cache.store(key, pages, url=url, body=body)
     return pages
-
-
-# Warm the in-memory cache from the last run so restarts don't blank the UI.
-_load_cache()
 
 
 def _build_date_range(months_back: int = 6) -> tuple[str, str]:

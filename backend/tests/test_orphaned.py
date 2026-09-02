@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from models.schemas import OrphanedRequest
 from services import orphaned as orphaned_module
 from services.orphaned import RULES, find_orphaned_resources
 
@@ -152,6 +153,105 @@ async def test_expensive_findings_are_listed_first(monkeypatch):
     disks = next(c for c in result["categories"] if c["key"] == "unattached_disks")
 
     assert [i["name"] for i in disks["items"]] == ["pricey", "cheap"]
+
+
+# ── Why the cost column is empty ───────────────────────────────────────────
+#
+# An empty cost column has two causes that look identical on screen and mean
+# opposite things: Cost Management refused to answer, or it answered and there
+# was nothing billed. The first means "look again later", the second means the
+# findings can be acted on. The endpoint has to say which.
+
+@pytest.mark.asyncio
+async def test_a_failed_billing_query_is_reported_not_swallowed(monkeypatch):
+    from routers import orphaned as router_module
+
+    async def refuse(**kwargs):
+        raise PermissionError("Cost Management Reader is not assigned")
+
+    async def no_findings(token, subs, cost_index=None):
+        return {"categories": [], "total_count": 0, "total_monthly_cost": 0.0, "errors": []}
+
+    async def fake_token(*a, **k):
+        return "tok"
+
+    monkeypatch.setattr(router_module, "query_costs", refuse)
+    monkeypatch.setattr(router_module, "find_orphaned_resources", no_findings)
+    monkeypatch.setattr(router_module, "resolve_tenant_token", fake_token)
+    monkeypatch.setattr(router_module, "subscription_names", lambda *a: {"s1": "Production"})
+
+    body = OrphanedRequest(tenant_id="t", subscription_ids=["s1"])
+    result = await router_module.get_orphaned_resources(body, {"id": 1}, None)
+
+    assert len(result.cost_errors) == 1
+    # Named, because a GUID does not tell the reader which subscription to fix.
+    assert result.cost_errors[0]["subscription_name"] == "Production"
+    assert result.priced_count == 0
+    assert result.cost_month == ""
+
+
+@pytest.mark.asyncio
+async def test_a_billing_query_that_answers_with_nothing_reports_no_error(monkeypatch):
+    from routers import orphaned as router_module
+
+    async def empty(**kwargs):
+        return []
+
+    async def no_findings(token, subs, cost_index=None):
+        return {"categories": [], "total_count": 0, "total_monthly_cost": 0.0, "errors": []}
+
+    async def fake_token(*a, **k):
+        return "tok"
+
+    monkeypatch.setattr(router_module, "query_costs", empty)
+    monkeypatch.setattr(router_module, "find_orphaned_resources", no_findings)
+    monkeypatch.setattr(router_module, "resolve_tenant_token", fake_token)
+    monkeypatch.setattr(router_module, "subscription_names", lambda *a: {})
+
+    body = OrphanedRequest(tenant_id="t", subscription_ids=["s1"])
+    result = await router_module.get_orphaned_resources(body, {"id": 1}, None)
+
+    assert result.cost_errors == []
+    assert result.priced_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_monthly_cost_is_one_month_of_the_two_that_were_fetched(monkeypatch):
+    from routers import orphaned as router_module
+
+    async def two_months(**kwargs):
+        return [
+            {"ResourceId": "/s/disk1", "BillingMonth": "20260701",
+             "PreTaxCost": 100.0, "ServiceName": "Storage", "Meter": "P10",
+             "Currency": "INR"},
+            {"ResourceId": "/s/disk1", "BillingMonth": "20260801",
+             "PreTaxCost": 120.0, "ServiceName": "Storage", "Meter": "P10",
+             "Currency": "INR"},
+        ]
+
+    seen = {}
+
+    async def capture(token, subs, cost_index=None):
+        seen["index"] = cost_index
+        return {"categories": [], "total_count": 0, "total_monthly_cost": 0.0, "errors": []}
+
+    async def fake_token(*a, **k):
+        return "tok"
+
+    monkeypatch.setattr(router_module, "query_costs", two_months)
+    monkeypatch.setattr(router_module, "find_orphaned_resources", capture)
+    monkeypatch.setattr(router_module, "resolve_tenant_token", fake_token)
+    monkeypatch.setattr(router_module, "subscription_names", lambda *a: {})
+
+    body = OrphanedRequest(tenant_id="t", subscription_ids=["s1"])
+    result = await router_module.get_orphaned_resources(body, {"id": 1}, None)
+
+    # August, not 220 -- the sum of the window would be double a month's cost.
+    assert seen["index"]["/s/disk1"]["cost"] == 120.0
+    assert result.cost_month == "2026-08"
+    assert result.cost_partial is False
+    assert result.priced_count == 1
+    assert result.currency == "INR"
 
 
 # ── Structured evidence ────────────────────────────────────────────────────

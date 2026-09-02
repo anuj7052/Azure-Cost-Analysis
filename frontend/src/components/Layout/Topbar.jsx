@@ -1,13 +1,26 @@
 import { useMsal } from '@azure/msal-react';
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../../store/useAppStore';
 import { useTheme } from '../../store/useTheme';
 import { useNav } from '../../store/useNav';
-import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Hash, Menu } from 'lucide-react';
-import { useState } from 'react';
+import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Menu, Search, Coins } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { evictAll, evictApiCache } from '../../utils/persistCache';
-import { COMPACT, EXACT, getAmountMode, setAmountMode } from '../../utils/currency';
+import { getDisplayCurrency, getRateMeta, setDisplayCurrency } from '../../utils/currency';
 import { tenantLabel } from '../../utils/tenantName';
 import SubscriptionPicker from './SubscriptionPicker';
+
+// The currencies worth offering: Azure's own pricing currency, the one this
+// product is most often billed in, and the three that cover the rest of the
+// estates it has been pointed at. "As billed" is first because it is the only
+// option that involves no exchange rate and therefore no approximation.
+const CURRENCIES = [
+  { code: null, label: 'As billed', hint: 'Each figure in the currency Azure invoiced it in' },
+  { code: 'INR', label: 'INR ₹' },
+  { code: 'USD', label: 'USD $' },
+  { code: 'EUR', label: 'EUR €' },
+  { code: 'GBP', label: 'GBP £' },
+];
 
 const ROLLING_OPTIONS = [1, 3, 6, 12];
 const ALL_MONTHS = [
@@ -34,13 +47,44 @@ export default function Topbar() {
   // For month picker — stores "YYYY-M" strings e.g. "2026-3"
   const [pickedYear]                    = useState(new Date().getFullYear());
   const [refreshing, setRefreshing]     = useState(false);
+  const navigate = useNavigate();
+  const [term, setTerm] = useState('');
+  const [currencyOpen, setCurrencyOpen] = useState(false);
+  const searchRef = useRef(null);
+
+  // ⌘K / Ctrl+K focuses the estate search from anywhere. `select()` rather
+  // than only focus, so a leftover previous query is replaced by typing
+  // instead of prepended to.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Read once per render rather than mirrored into state: `App` re-renders the
+  // whole tree on a currency change, so a local copy would only be a second
+  // source for the same fact.
+  const display = getDisplayCurrency();
+  const rateMeta = getRateMeta();
+
+  const submitSearch = (event) => {
+    event.preventDefault();
+    const q = term.trim();
+    // The page owns the search; the bar only carries the question to it. That
+    // keeps one implementation of "what does this term match" rather than a
+    // second, subtly different one in the chrome.
+    navigate(q ? `/search?q=${encodeURIComponent(q)}` : '/search');
+  };
 
   // Amount formatting lives outside React (chart axis formatters are plain
-  // functions), so flipping it needs a local state bump to force a re-render.
-  const [amountMode, setMode] = useState(getAmountMode);
-  const toggleAmounts = () => {
-    setMode(setAmountMode(amountMode === EXACT ? COMPACT : EXACT));
-  };
+  // functions), so a currency change is announced through `subscribeCurrency`
+  // and re-rendered from `App` rather than from here.
 
   // Refresh must empty the local cache, not just bypass it for the two datasets
   // this bar happens to know about: anything left behind is re-served the moment
@@ -153,7 +197,10 @@ export default function Topbar() {
                 >
                   <p className="font-medium">{dispName}</p>
                   <p className="text-xs text-slate-500">
-                    {t.source === 'delegated' ? 'Microsoft Login' : 'Service Principal'} · {t.tenant_id.slice(0, 8)}…
+                    {t.source === 'delegated' ? 'Microsoft Login'
+                      : t.source === 'azure_cli' ? 'Azure CLI'
+                      : t.source === 'session_token' ? 'Session Token'
+                      : 'Service Principal'} · {t.tenant_id.slice(0, 8)}…
                   </p>
                 </button>
               );
@@ -301,6 +348,33 @@ export default function Topbar() {
           wrapped layout it would force a pointless empty row. */}
       <div className="hidden lg:block lg:flex-1" />
 
+      {/* Estate search. Promoted out of the Cost section because it is not a
+          cost question — it answers "where is this thing", which is asked from
+          every page, and burying it three clicks deep in one section meant it
+          was reached by navigating away from whatever prompted the question.
+          ⌘K reaches it from the keyboard, because the person who asks "where
+          is this thing" a dozen times a day stops being willing to mouse to
+          it around the third time. */}
+      {/* min-w floor: with `min-w-0` a crowded row shrank this to a bare
+          magnifier overlapping the next control. Better to wrap early than
+          to render a search box nothing can be typed into. */}
+      <form onSubmit={submitSearch} className="relative min-w-[9rem] flex-1 lg:w-60 lg:max-w-xs lg:flex-none">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+        <input
+          ref={searchRef}
+          type="search"
+          value={term}
+          onChange={e => setTerm(e.target.value)}
+          placeholder="Search resources…"
+          aria-label="Search every resource in this tenant"
+          aria-keyshortcuts="Meta+K Control+K"
+          className="h-10 w-full rounded-xl border border-slate-800 bg-slate-900/80 pl-8 pr-3 text-sm text-slate-200 placeholder:text-slate-500 transition focus:border-blue-500 focus:outline-none lg:pr-10"
+        />
+        <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 font-mono text-[10px] font-medium text-slate-500 lg:inline">
+          ⌘K
+        </kbd>
+      </form>
+
       {/* Imported-file indicator */}
       {imported && (
         <div className="hidden sm:flex items-center gap-2 bg-blue-600/15 border border-blue-500/30 rounded-lg px-2.5 py-1.5">
@@ -328,24 +402,54 @@ export default function Topbar() {
         <span className="hidden md:inline">{busy ? 'Refreshing…' : 'Refresh'}</span>
       </button>
 
-      {/* Exact vs compact amounts */}
-      <button
-        onClick={toggleAmounts}
-        title={
-          amountMode === EXACT
-            ? 'Showing full amounts — click for compact (1.24L)'
-            : 'Showing compact amounts — click for full (1,23,456.79)'
-        }
-        aria-pressed={amountMode === EXACT}
-        className={`flex shrink-0 items-center gap-1.5 px-2.5 h-10 rounded-xl border text-xs font-semibold transition ${
-          amountMode === EXACT
-            ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-        }`}
-      >
-        <Hash className="w-3.5 h-3.5" />
-        <span className="hidden lg:inline">{amountMode === EXACT ? 'Full' : 'Short'}</span>
-      </button>
+      {/* Display currency. Every amount on every page is rendered through the
+          formatter this sets, so one choice here applies everywhere at once
+          and nothing needs refetching — the billed figures are unchanged. */}
+      <div className="relative shrink-0">
+        <button
+          onClick={() => setCurrencyOpen(o => !o)}
+          title={display
+            ? `Every amount converted to ${display}. Hover any figure for what was actually billed.`
+            : 'Each amount shown in the currency Azure billed it in'}
+          aria-expanded={currencyOpen}
+          className={`flex h-10 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition ${
+            display
+              ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
+              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+          }`}
+        >
+          <Coins className="h-3.5 w-3.5" />
+          <span className="hidden lg:inline">{display || 'As billed'}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+        </button>
+        {currencyOpen && (
+          <div className="absolute right-0 top-full z-50 mt-1 w-[min(17rem,calc(100vw-1.5rem))] rounded-2xl border border-slate-700 bg-slate-800 py-1 shadow-2xl">
+            {CURRENCIES.map(c => (
+              <button
+                key={c.code || 'billed'}
+                onClick={() => { setDisplayCurrency(c.code); setCurrencyOpen(false); }}
+                className={`w-full px-4 py-2.5 text-left text-sm transition hover:bg-slate-700 ${
+                  (c.code || null) === display ? 'text-blue-400' : 'text-slate-300'
+                }`}
+              >
+                <p className="font-medium">{c.label}</p>
+                {c.hint && <p className="text-xs text-slate-500">{c.hint}</p>}
+              </button>
+            ))}
+            {/* A converted figure is an indication of scale, not a restatement
+                of the invoice, and the page has to say so rather than let a
+                reader carry a converted total into an accounts conversation. */}
+            <p className="border-t border-slate-700 px-4 py-2.5 text-[11px] leading-relaxed text-slate-500">
+              {display
+                ? <>Converted at today&apos;s reference rate{rateMeta.as_of && ` (${rateMeta.as_of})`}
+                  {rateMeta.stale && ', which could not be refreshed today'}. Invoices are
+                  still issued in the billed currency — hover any amount to see it.</>
+                : <>Amounts stay in the currency each subscription was billed in. Totals
+                  that span two currencies cannot be added together.</>}
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Theme toggle */}
       <button
@@ -366,8 +470,11 @@ export default function Topbar() {
         />
       </button>
 
-      {/* User avatar */}
-      <div className="flex shrink-0 items-center gap-2 sm:ml-1">
+      {/* User avatar. `ml-auto` only matters on the wrapped tablet layout,
+          where it pushes the account to the right edge of its row instead of
+          leaving it stranded at the left; on the single-line bar the spacer
+          has already done the pushing and this resolves to zero. */}
+      <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-auto lg:ml-1">
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-xs font-bold text-[#fff] shrink-0">
           {initials}
         </div>

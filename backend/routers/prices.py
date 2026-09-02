@@ -1066,6 +1066,27 @@ async def get_price_history(
     }
 
 
+@router.get("/fx/latest")
+async def get_latest_fx_rates(
+    quotes: str = Query("INR,USD,EUR,GBP", description="Comma-separated currency codes"),
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Today's USD rate for each requested currency.
+
+    Feeds the display-currency switch in the top bar, which converts every
+    figure on every page into one unit so that two panels can be compared
+    without the reader doing the arithmetic.
+    """
+    codes = [c.strip().upper() for c in (quotes or "").split(",") if c.strip()]
+    if not codes:
+        raise HTTPException(status_code=400, detail="At least one currency is required.")
+    if len(codes) > 12:
+        raise HTTPException(status_code=400, detail="At most twelve currencies at a time.")
+    return await fx_rates.latest_rates(db, codes)
+
+
 @router.get("/fx")
 async def get_fx_rates(
     quote: str = Query("INR", description="Currency to convert USD into"),

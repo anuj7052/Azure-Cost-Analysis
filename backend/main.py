@@ -38,11 +38,13 @@ from auth.dependencies import get_current_user
 from services.user_service import needs_onboarding, tenant_counts
 from services import user_sessions
 from services import backup
+from services import cost_cache
 from models.schemas import ProfileUpdate
 from routers import (
     admin, tenants, subscriptions, costs, services, upload, bandwidth, boq,
     guide, integrations, orphaned, scans, changes, activity, prices, security,
     compute, anomalies, team, provision, actions, network, commitments,
+    timeline,
 )
 
 log = logging.getLogger("app")
@@ -63,6 +65,7 @@ API_ROUTERS = [
     scans.router,
     scans.search_router,
     changes.router,
+    timeline.router,
     activity.router,
     prices.router,
     security.router,
@@ -121,6 +124,19 @@ async def lifespan(app: FastAPI):
         # A failed sweep must not stop the app from serving. It is logged so
         # it can be noticed, rather than swallowed so it cannot.
         log.exception("session retention sweep failed")
+
+    # Trim the cost cache on the same trigger and for the same reason.
+    #
+    # Settled periods are kept deliberately long, which is the point of that
+    # cache but also means it only ever grows unless something removes rows.
+    # Startup is when a restart has just cost us the in-process tier anyway, so
+    # it is the cheapest moment to pay for housekeeping.
+    try:
+        evicted = await cost_cache.prune()
+        if evicted:
+            log.info("cost cache entries evicted", extra={"count": evicted})
+    except Exception:
+        log.exception("cost cache prune failed")
 
     log.info("api started", extra={"environment": settings.ENVIRONMENT})
 

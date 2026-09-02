@@ -1,14 +1,17 @@
-import { useEffect, lazy, Suspense } from 'react';
+import { useEffect, useReducer, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, RequireAuth, LoginScreen } from './auth/AuthProvider';
 import Sidebar from './components/Layout/Sidebar';
 import Topbar from './components/Layout/Topbar';
+import GlobalProgress from './components/Common/GlobalProgress';
 import AssistantWidget from './components/Assistant/AssistantWidget';
 import { useAppStore } from './store/useAppStore';
 import { useTheme } from './store/useTheme';
 import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 import { clearSecurityCache } from './components/Security/securityData';
+import { fetchLatestFxRates } from './api/client';
+import { setRates, subscribeCurrency } from './utils/currency';
 
 // Lazy load pages — only loaded when user navigates to them
 const Dashboard      = lazy(() => import('./pages/Dashboard'));
@@ -71,9 +74,11 @@ const PageLoader = () => (
 /**
  * Shown when the account lookup fails.
  *
- * The two realistic causes need different actions, so both are offered rather
- * than guessing: the session may simply need re-establishing (sign in again),
- * or the backend may have been unreachable for one request (retry).
+ * Retry leads, because the common cause is a credential that has just been
+ * renewed and an immediate second attempt succeeds. Signing out is kept as the
+ * last resort it actually is, and is no longer the most prominent thing on the
+ * screen: this used to be where a recoverable token error turned into somebody
+ * signing out of a session that was still perfectly good.
  */
 function AccountLoadFailed({ error, onRetry }) {
   const { instance } = useMsal();
@@ -83,21 +88,23 @@ function AccountLoadFailed({ error, onRetry }) {
       <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
         <h1 className="text-lg font-semibold text-white">Could not load your account</h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-400">{error}</p>
+        <p className="mt-3 text-sm leading-relaxed text-slate-500">
+          You are still signed in. This is usually a credential that needs
+          renewing, so try again first — signing out is rarely what fixes it.
+        </p>
 
-        <div className="mt-6 flex gap-3">
-          <button
-            onClick={onRetry}
-            className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
-          >
-            Try again
-          </button>
-          <button
-            onClick={() => { clearSecurityCache(); instance.clearCache(); instance.logoutRedirect(); }}
-            className="flex-1 rounded-xl border border-slate-700 py-2.5 text-sm font-medium text-slate-300 transition hover:text-white"
-          >
-            Sign out
-          </button>
-        </div>
+        <button
+          onClick={onRetry}
+          className="mt-6 w-full rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
+        >
+          Try again
+        </button>
+        <button
+          onClick={() => { clearSecurityCache(); instance.clearCache(); instance.logoutRedirect(); }}
+          className="mt-3 w-full rounded-xl py-2 text-xs font-medium text-slate-500 transition hover:text-slate-300"
+        >
+          Sign out instead
+        </button>
       </div>
     </div>
   );
@@ -160,6 +167,50 @@ function AppShell() {
   const loadMe          = useAppStore(s => s.loadMe);
   const me              = useAppStore(s => s.me);
   const meError         = useAppStore(s => s.meError);
+
+  /*
+   * Why the currency switch re-renders from here.
+   *
+   * Amounts are formatted by plain functions -- chart axis formatters never
+   * see props, and neither do the dozens of `fmt(...)` helpers scattered
+   * through the pages -- so the display currency cannot live in component
+   * state. It lives at module scope, and changing it has to invalidate every
+   * rendered figure at once. Forcing a render at the root does exactly that,
+   * and is why no page needs to refetch or reload: the underlying amounts have
+   * not changed, only the unit they are shown in.
+   */
+  const [, bump] = useReducer(n => n + 1, 0);
+  useEffect(() => subscribeCurrency(bump), []);
+
+  // Navigating opens the new page at its top. A router keeps the window's
+  // scroll position across route changes, so arriving from the bottom of a
+  // long table otherwise lands the reader mid-way down a page they have never
+  // seen — which reads as a broken link, not as a preserved position. Both
+  // scrollers are reset because the page scrolls at the window on short
+  // content and inside <main> on tall.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.querySelector('main')?.scrollTo(0, 0);
+  }, [location.pathname]);
+
+  // Rates are fetched once per session and cached in localStorage, so the very
+  // first render after a reload already converts rather than showing billed
+  // figures and then jumping.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let alive = true;
+    (async () => {
+      try {
+        const data = await fetchLatestFxRates(['INR', 'USD', 'EUR', 'GBP']);
+        if (alive) setRates(data?.rates, data);
+      } catch {
+        // No rates means the picker can only offer "as billed", which the
+        // formatter already falls back to. Nothing else on the page depends
+        // on this, so it must not surface as an error.
+      }
+    })();
+    return () => { alive = false; };
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (isAuthenticated) loadMe();
@@ -267,6 +318,9 @@ function AppShell() {
       </div>
       {/* Outside <main> so it stays put while the page behind it scrolls. */}
       <AssistantWidget />
+      {/* Also outside <main>, and mounted once for the whole app: it reports
+          on requests, which do not stop when the route changes. */}
+      <GlobalProgress />
     </div>
   );
 }

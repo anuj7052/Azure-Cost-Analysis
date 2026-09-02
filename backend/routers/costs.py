@@ -29,7 +29,7 @@ from services.analysis import (
 )
 from models.schemas import (
     CostQueryRequest, CostQueryResponse,
-    CostRow, CostRowsResponse,
+    CostRow, CostRowsResponse, ServiceResourceRequest,
     RgCostRequest, RgCostResponse, RgCostItem,
     DailyCostRequest, DailyCostResponse, DailyCostItem,
     PricingResponse, ReservedDetailResponse,
@@ -133,6 +133,57 @@ async def get_cost_rows(
         raise HTTPException(status_code=502, detail=summarise_errors(errors, "cost detail"))
 
     rows = [CostRow(**r) for r in to_cost_rows(records)]
+    months = sorted({r.month for r in rows})
+    currency = next((r.get("Currency") for r in records if r.get("Currency")), "USD")
+    return CostRowsResponse(rows=rows, months=months, currency=currency, errors=errors)
+
+
+@router.post("/resources", response_model=CostRowsResponse)
+async def get_service_resources(
+    body: ServiceResourceRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    The resources behind one service, each with the meters it was billed on.
+
+    `/costs/rows` cannot answer this. Cost Management allows three grouping
+    dimensions and will not return a usage quantity alongside ResourceId, so
+    the row set the rest of the page runs on stops at the resource group. Asked
+    on its own, for one service at a time, the same API will name the resource.
+    The quantities are the price of that, and are simply absent here.
+
+    The service filter is applied after the fact rather than as a query filter
+    because Azure's dimension filter matches the service name exactly, and the
+    name shown on screen came from these same records -- comparing it against
+    itself, case-insensitively, cannot miss what a stricter filter would.
+    """
+    token = await _get_token(body.tenant_id, current_user, db)
+    wanted = body.service.strip().lower()
+
+    async def read_sub(sub_id: str):
+        return await query_costs(
+            token=token,
+            subscription_id=sub_id,
+            months=body.months,
+            group_by=["ResourceId", "ServiceName", "Meter"],
+            granularity="Monthly",
+            from_date=body.from_date,
+            to_date=body.to_date,
+        )
+
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+
+    if not records and errors:
+        raise HTTPException(
+            status_code=502, detail=summarise_errors(errors, "resource detail")
+        )
+
+    rows = [
+        CostRow(**r)
+        for r in to_cost_rows(records)
+        if (r.get("service") or "").strip().lower() == wanted
+    ]
     months = sorted({r.month for r in rows})
     currency = next((r.get("Currency") for r in records if r.get("Currency")), "USD")
     return CostRowsResponse(rows=rows, months=months, currency=currency, errors=errors)

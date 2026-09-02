@@ -190,6 +190,60 @@ class TestJoiningCost:
         c.attach_costs(items, {}, "USD")
         assert items[0]["monthly_cost"] is None
 
+    def test_the_resource_id_is_preferred_over_the_display_name(self):
+        # A renamed commitment keeps its old name in past cost rows, so joining
+        # on the name alone loses its money entirely.
+        row = reservation("ri-a")
+        row["properties"]["displayName"] = "renamed-yesterday"
+        items = [c.normalise_reservation(row, TODAY)]
+        c.attach_costs(items, {row["id"]: 500.0}, "USD")
+        assert items[0]["monthly_cost"] == 500.0
+
+    def test_the_trailing_guid_of_the_id_also_matches(self):
+        # The two APIs disagree on how much of the path they return.
+        row = reservation("ri-a")
+        row["properties"]["displayName"] = "renamed-yesterday"
+        items = [c.normalise_reservation(row, TODAY)]
+        c.attach_costs(items, {"RI-A": 250.0}, "USD")
+        assert items[0]["monthly_cost"] == 250.0
+
+    def test_the_unused_portion_is_carried_when_azure_billed_it(self):
+        items = [c.normalise_reservation(reservation("ri-a"), TODAY)]
+        c.attach_costs(items, {"ri-a": {"cost": 1000.0, "unused": 250.0}}, "USD")
+        assert items[0]["monthly_cost"] == 1000.0
+        assert items[0]["measured_wastage"] == 250.0
+
+    def test_no_measured_wastage_is_recorded_when_none_was_reported(self):
+        # Absent must not become zero: "Azure billed no waste" and "we never
+        # asked" are different answers and only one of them is reassuring.
+        items = [c.normalise_reservation(reservation("ri-a"), TODAY)]
+        c.attach_costs(items, {"ri-a": 1000.0}, "USD")
+        assert items[0]["measured_wastage"] is None
+
+
+class TestWastageOf:
+    def test_azures_own_figure_wins_over_the_derived_one(self):
+        item = c.normalise_reservation(reservation("ri-a", used=50.0), TODAY)
+        item["monthly_cost"] = 1000.0
+        item["measured_wastage"] = 120.0
+        assert c.wastage_of(item, 30) == (120.0, "measured")
+
+    def test_it_falls_back_to_cost_times_the_unused_share(self):
+        item = c.normalise_reservation(reservation("ri-a", used=60.0), TODAY)
+        item["monthly_cost"] = 1000.0
+        assert c.wastage_of(item, 30) == (400.0, "derived")
+
+    def test_a_measured_figure_survives_missing_utilisation(self):
+        # The whole point of preferring the billed number: it exists in tenants
+        # where the utilisation API returns nothing at all.
+        item = c.normalise_reservation(reservation("ri-a"), TODAY)
+        item["measured_wastage"] = 75.0
+        assert c.wastage_of(item, 30) == (75.0, "measured")
+
+    def test_nothing_known_stays_unknown(self):
+        item = c.normalise_reservation(reservation("ri-a"), TODAY)
+        assert c.wastage_of(item, 30) == (None, "")
+
 
 class TestSummary:
     def build(self, *specs):
