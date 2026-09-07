@@ -39,6 +39,19 @@ describe('friendlyError', () => {
     expect(msg).not.toContain('Traceback');
   });
 
+  it('keeps a 5xx explanation the server wrote on purpose', () => {
+    // A 502 from a router that reached Azure and was refused names the role
+    // needed to fix it. Replacing that with "please try again" sends the
+    // reader off to retry something that fails identically every time.
+    const msg = friendlyError(fail(502, {
+      error: {
+        code: 'azure_unavailable',
+        message: 'Could not read the Activity Log. The credential needs the Reader role.',
+      },
+    }));
+    expect(msg).toContain('Reader role');
+  });
+
   it('separates an unreachable service from a rejected request', () => {
     expect(friendlyError({ message: 'Network Error' })).toContain('could not reach');
   });

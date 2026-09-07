@@ -3,7 +3,7 @@ import {
   MISSING, percent, money, termLabel, expiryLabel, filterCommitments, usedAt,
   wastageOf, byResourceType, worstWaste, utilisationTone, utilisationBar,
   utilisationVerdict, GRAINS, TYPE_FILTERS, KIND_LABEL, KIND_FULL,
-  EXPIRY_TONE, EXPIRY_LABEL, POOR_BELOW, GOOD_ABOVE,
+  EXPIRY_TONE, EXPIRY_LABEL, POOR_BELOW, GOOD_ABOVE, sortCommitments,
 } from '../src/utils/commitments';
 
 const item = (over = {}) => ({
@@ -235,6 +235,50 @@ describe('ranking what to look at first', () => {
     const many = Array.from({ length: 10 }, (_, i) =>
       item({ id: `/x${i}`, utilisation: { 30: 10 } }));
     expect(worstWaste(many, 30, 3)).toHaveLength(3);
+  });
+});
+
+describe('ordering the inventory by a column', () => {
+  const rows = [
+    item({ name: 'b', id: '/b', monthly_cost: 500, days_to_expiry: 10 }),
+    item({ name: 'a', id: '/a', monthly_cost: 900, days_to_expiry: 300 }),
+    item({ name: 'c', id: '/c', monthly_cost: null, days_to_expiry: null }),
+  ];
+
+  it('sorts text alphabetically', () => {
+    expect(sortCommitments(rows, 'name', 'asc').map(r => r.name)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('sorts numbers as numbers', () => {
+    expect(sortCommitments(rows, 'cost', 'desc').slice(0, 2).map(r => r.name))
+      .toEqual(['a', 'b']);
+  });
+
+  it('sinks unmeasured rows to the bottom in both directions', () => {
+    // Sorting ascending by cost should surface the cheapest commitment, not
+    // the ones whose cost Cost Management never returned.
+    const up = sortCommitments(rows, 'cost', 'asc');
+    const down = sortCommitments(rows, 'cost', 'desc');
+    expect(up[up.length - 1].name).toBe('c');
+    expect(down[down.length - 1].name).toBe('c');
+  });
+
+  it('reads utilisation for the chosen window', () => {
+    const out = sortCommitments([
+      item({ name: 'busy', id: '/1', utilisation: { 7: 99, 30: 10 } }),
+      item({ name: 'idle', id: '/2', utilisation: { 7: 20, 30: 95 } }),
+    ], 'utilisation', 'asc', 7);
+    expect(out.map(r => r.name)).toEqual(['idle', 'busy']);
+  });
+
+  it('leaves the list untouched for a column it does not know', () => {
+    expect(sortCommitments(rows, 'nonsense').map(r => r.name)).toEqual(['b', 'a', 'c']);
+  });
+
+  it('does not reorder the caller\'s array in place', () => {
+    const original = [...rows];
+    sortCommitments(rows, 'name', 'asc');
+    expect(rows).toEqual(original);
   });
 });
 

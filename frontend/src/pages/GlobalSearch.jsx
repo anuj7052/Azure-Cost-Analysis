@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { runScan, fetchScans, searchResources } from '../api/client';
 import { useAppStore } from '../store/useAppStore';
+import DetailPanel from '../components/Common/DetailPanel';
+import ResourceTimeline from '../components/Common/ResourceTimeline';
 
 /** Azure type ids are verbose; the last segment is the part people recognise. */
 function shortType(type) {
@@ -22,9 +24,13 @@ function when(timestamp) {
   return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
 }
 
-function ResultRow({ item }) {
+function ResultRow({ item, onOpen }) {
   return (
-    <tr className="border-b border-slate-800/50 last:border-0 hover:bg-slate-800/30">
+    <tr
+      onClick={() => onOpen(item)}
+      title="Open this resource's history"
+      className="cursor-pointer border-b border-slate-800/50 last:border-0 hover:bg-slate-800/30"
+    >
       <td className="px-5 py-3">
         <div className="flex items-center gap-2">
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.live ? 'bg-emerald-400' : 'bg-red-400'}`} />
@@ -72,6 +78,10 @@ export default function GlobalSearch() {
   const [searching, setSearching] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scans, setScans] = useState([]);
+  // The resource whose history is open. Search is the one place that can name
+  // any resource in the estate, live or deleted — and it was the one place
+  // where clicking one did nothing.
+  const [open, setOpen] = useState(null);
 
   const loadScans = async () => {
     if (!selectedTenantId) return;
@@ -273,7 +283,7 @@ export default function GlobalSearch() {
                 </thead>
                 <tbody>
                   {data.results.map(item => (
-                    <ResultRow key={item.resource_id} item={item} />
+                    <ResultRow key={item.resource_id} item={item} onOpen={setOpen} />
                   ))}
                 </tbody>
               </table>
@@ -285,6 +295,17 @@ export default function GlobalSearch() {
       {query.trim().length === 1 && (
         <p className="text-xs text-slate-500">Enter at least two characters.</p>
       )}
+
+      <DetailPanel
+        open={!!open}
+        onClose={() => setOpen(null)}
+        title={open?.name || 'Resource'}
+        subtitle={[shortType(open?.type), open?.resource_group].filter(Boolean).join(' · ')}
+      >
+        {open && (
+          <ResourceTimeline tenantId={selectedTenantId} resourceId={open.resource_id} />
+        )}
+      </DetailPanel>
     </div>
   );
 }

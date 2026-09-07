@@ -3,17 +3,23 @@ import { useAppStore } from '../store/useAppStore';
 import { formatAmount } from '../utils/currency';
 import { Amount } from '../components/Common/Amount';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { FolderOpen, TrendingUp, Calendar } from 'lucide-react';
+import { FolderOpen, TrendingUp, Calendar, History } from 'lucide-react';
+import DetailPanel from '../components/Common/DetailPanel';
+import GroupTimeline from '../components/Common/GroupTimeline';
 
 export default function ResourceGroups() {
   const {
     selectedTenantId, selectedSubscriptionIds, months, dateKey,
     rgData, rgLoading, rgError, loadRgCosts,
-    dailyData, dailyLoading, loadDailyCosts, dailyRg,
+    dailyData, dailyLoading, loadDailyCosts,
   } = useAppStore();
 
   const [selectedRg, setSelectedRg] = useState(null);
   const [drillView, setDrillView] = useState('monthly'); // 'monthly' | 'daily'
+  // The resource group whose history is open. Separate from the drill-down
+  // selection because they answer different questions: the drill-down says
+  // what this group spends, the history says what was done to it.
+  const [historyRg, setHistoryRg] = useState(null);
 
   useEffect(() => {
     if (selectedTenantId && selectedSubscriptionIds.length > 0) {
@@ -89,6 +95,7 @@ export default function ResourceGroups() {
                   <th className="pb-2 font-medium text-right">Total Cost</th>
                   <th className="pb-2 font-medium text-right">% of Total</th>
                   <th className="pb-2 font-medium text-right">Top Service</th>
+                  <th className="pb-2 font-medium text-right">History</th>
                 </tr>
               </thead>
               <tbody>
@@ -122,6 +129,17 @@ export default function ResourceGroups() {
                       </td>
                       <td className="py-3 text-right text-slate-400 text-xs">
                         {topSvc ? `${topSvc[0]} (${fmt(topSvc[1])})` : '—'}
+                      </td>
+                      <td className="py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setHistoryRg(rg.rg_name); }}
+                          title="Everything created, changed or deleted in this resource group"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 transition hover:border-slate-600 hover:text-white"
+                        >
+                          <History className="h-3.5 w-3.5" />
+                          Timeline
+                        </button>
                       </td>
                     </tr>
                   );
@@ -224,6 +242,21 @@ export default function ResourceGroups() {
           )}
         </div>
       )}
+
+      <DetailPanel
+        open={!!historyRg}
+        onClose={() => setHistoryRg(null)}
+        title={historyRg || 'Resource group'}
+        subtitle="Everything created, changed or deleted here"
+      >
+        {historyRg && (
+          <GroupTimeline
+            tenantId={selectedTenantId}
+            subscriptionIds={selectedSubscriptionIds}
+            resourceGroup={historyRg}
+          />
+        )}
+      </DetailPanel>
     </div>
   );
 }

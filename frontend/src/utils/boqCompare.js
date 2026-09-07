@@ -331,9 +331,12 @@ function compareLines(budgetLines, usageRows, span) {
         addPart(entry, row);
         claimedBy.matches.push(entry);
       }
-    } else if (cost > 0) {
+    } else if (cost !== 0) {
       // Charged, but no estimate line claims this SKU.
       // Zero-cost meters (prepaid reservations, included quotas) are noise here.
+      // A credit is not noise: it is negative money on a meter no line names,
+      // and dropping it here while the row-level attributions below keep it is
+      // exactly how the summary total and the breakdown come to disagree.
       const entry = unmatched.get(id) || { id, ...meterIdentity(row), cost: 0, bytes: 0, parts: [] };
       entry.cost += cost;
       entry.bytes += bytes;
@@ -414,6 +417,55 @@ export function bucketFor(name) {
     }
   }
   return best || OTHER;
+}
+
+/**
+ * How each sortable column of the category table reads a category.
+ *
+ * The report arrives worst-overrun-first, which answers "what went wrong" and
+ * nothing else. "Which category do we spend the most on" and "where is the
+ * budget sitting unused" had no answer short of reading every row, so the
+ * columns sort.
+ *
+ * Variance sorts on the signed number rather than its size, because the
+ * distinction between spending ₹50K too much and ₹50K too little is the entire
+ * point of the column and an absolute sort would interleave them.
+ */
+export const CATEGORY_SORTERS = {
+  label: c => String(c.label || '').toLowerCase(),
+  budgeted: c => c.budgeted,
+  actual: c => c.actual,
+  variance: c => c.variance,
+  variancePct: c => c.variancePct,
+};
+
+/**
+ * Order the category table by one column.
+ *
+ * A category with no percentage against it -- nothing budgeted, so there is no
+ * "vs budget" to speak of -- sinks to the bottom in both directions rather than
+ * flipping between the top and the bottom. Sorting by overrun should surface
+ * the worst overrun, not the rows where the question does not apply.
+ *
+ * Returns a new array; the report is memoised in the page and sorting its
+ * categories in place would mutate a value React believes is unchanged.
+ */
+export function sortCategories(categories, key, direction = 'desc') {
+  const read = CATEGORY_SORTERS[key];
+  if (!read) return categories || [];
+  const sign = direction === 'desc' ? -1 : 1;
+  const absent = v => v === null || v === undefined || v === ''
+    || (typeof v === 'number' && Number.isNaN(v));
+
+  return [...(categories || [])].sort((a, b) => {
+    const left = read(a);
+    const right = read(b);
+    if (absent(left) && absent(right)) return 0;
+    if (absent(left)) return 1;
+    if (absent(right)) return -1;
+    if (typeof left === 'number' && typeof right === 'number') return (left - right) * sign;
+    return String(left).localeCompare(String(right)) * sign;
+  });
 }
 
 /**
@@ -520,12 +572,6 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
     const variance = round(spent - budgeted);
     const detail = compareLines(b?.lines || [], a?.rows || [], divisor);
     const label = b?.label || a?.label || OTHER.label;
-    // Where a category budgets things that cannot be split per resource
-    // (a backup policy, a support retainer), leftover charges are covered by
-    // that pooled budget rather than being unbudgeted. The row-level verdict
-    // has to agree with that, or the breakdown totals would contradict the
-    // headline "Not in your BOQ" figure sitting directly above them.
-    const pooled = detail.pooledLines.length > 0;
     return {
       key,
       label,
@@ -545,10 +591,14 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
       pooledVariance: detail.pooledVariance,
       unmatched: detail.unmatched,
       unmatchedTotal: detail.unmatchedTotal,
-      // Charges no BOQ line pays for. Where the category has budget lines that
-      // simply can't be split per resource, the leftover is covered by that
-      // pooled budget instead, so it isn't counted as "not in the BOQ".
-      notInBoqTotal: detail.pooledLines.length ? 0 : detail.unmatchedTotal,
+      // Charges no BOQ line pays for. There is one definition of that and only
+      // one: no line named this SKU. A category may also hold budget lines that
+      // can't be split per resource (a backup policy, a support retainer), and
+      // `pooledBudget` below says how much -- but that lump sum is context for
+      // the reader, not a reason to net the charge out of this total. Netting
+      // it out here while the row-level `attributions` still carried it is what
+      // made the full breakdown disagree with the figure above it.
+      notInBoqTotal: detail.unmatchedTotal,
       // Every usage row in this category, carrying the verdict the category
       // table reached, so the same money can be regrouped by any dimension.
       attributions: detail.attributions.map(item => ({
@@ -559,7 +609,7 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
         bytes: item.bytes,
         boqLine: item.boqLine,
         boqName: item.boqName,
-        coverage: item.matched ? 'line' : pooled ? 'pooled' : 'none',
+        coverage: item.matched ? 'line' : 'none',
       })),
       traffic: trafficSummary(a?.rows || [], divisor),
       actualServices: [...(a?.services || new Map())]
@@ -574,7 +624,6 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
   // Every individual charge with no BOQ line behind it, flattened so it can be
   // shown as one list regardless of which category it landed in.
   const notInBoq = categories
-    .filter(c => c.notInBoqTotal > 0)
     .flatMap(c => c.unmatched.map(u => ({ ...u, category: c.label, categoryKey: c.key })))
     .sort((a, b) => b.cost - a.cost);
 

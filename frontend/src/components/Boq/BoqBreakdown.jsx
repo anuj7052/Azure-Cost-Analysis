@@ -1,6 +1,9 @@
 import { Fragment, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Download, Filter, Info, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Info } from 'lucide-react';
 import { formatAmount } from '../../utils/currency';
+import {
+  MultiFilter, FilterSelect, SearchBox, ClearFilters, ControlRow, FilterIcon, PillButton,
+} from './FilterControls';
 import {
   DIMENSIONS, COVERAGE_FILTERS, optionsFor, filterAttributions,
   groupAttributions, breakdownCsv,
@@ -14,87 +17,44 @@ import {
  * person chasing a specific overrun wants one resource. All three are the same
  * money, so all three are computed from the same row-level attributions rather
  * than from separate queries — two views of one bill must never disagree.
+ *
+ * One deliberate difference from the card at the top of the page: this panel
+ * asks how accurate the estimate is, so a charge no BOQ line names counts as
+ * not in the BOQ even where a lump-sum budget absorbs the money. That is a
+ * stricter test than the category variance, and the panel says so on screen
+ * rather than leaving the two figures to be discovered as a contradiction.
  */
 
 const COVERAGE_TONE = {
   line: 'text-emerald-300',
-  pooled: 'text-slate-300',
   none: 'text-red-300',
 };
 
 const COVERAGE_TEXT = {
   line: 'Matched to a BOQ line',
-  pooled: 'Covered by pooled budget',
   none: 'Not in BOQ',
 };
 
-/** A multi-select filter rendered as a compact dropdown of checkboxes. */
-function MultiFilter({ label, options, selected, onChange }) {
-  const [open, setOpen] = useState(false);
-  if (options.length <= 1) return null;
+/** Two verdicts on screen, so the middle case reads as what it is: unnamed. */
+const verdictOf = (row) => (row.coverage === 'line' ? 'line' : 'none');
 
-  const toggle = (value) => {
-    const next = new Set(selected);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
-    onChange(next);
-  };
 
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-          selected.size > 0
-            ? 'border-blue-500/30 bg-blue-600/20 text-blue-300'
-            : 'border-slate-800 text-slate-400 hover:bg-slate-800/60 hover:text-white'
-        }`}
-      >
-        {label}
-        {selected.size > 0 && <span className="text-blue-400">{selected.size}</span>}
-        <ChevronDown className="h-3 w-3" />
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-20 mt-1 max-h-72 w-64 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-xl animate-scale-in">
-            {selected.size > 0 && (
-              <button
-                onClick={() => onChange(new Set())}
-                className="mb-1 w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
-              >
-                Clear {label.toLowerCase()}
-              </button>
-            )}
-            {options.map(opt => (
-              <label
-                key={opt}
-                className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(opt)}
-                  onChange={() => toggle(opt)}
-                  className="accent-blue-500"
-                />
-                <span className="truncate" title={opt}>{opt}</span>
-              </label>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function Bar({ matched, pooled, notInBoq, actual }) {
-  if (actual <= 0) return null;
-  const pct = (v) => `${Math.max((v / actual) * 100, 0)}%`;
+/**
+ * The matched/unmatched split of one group, as a bar.
+ *
+ * Segments are clamped at zero and scaled against the positive part rather
+ * than against `actual`. Azure issues credits as negative charges -- a hybrid
+ * benefit line can leave a whole group negative -- and dividing by that gave a
+ * negative width, which the browser drops silently: the bar simply vanished,
+ * and a missing bar looks like missing data rather than a refund.
+ */
+function Bar({ matched, notInBoq }) {
+  const up = Math.max(matched, 0) + Math.max(notInBoq, 0);
+  if (up <= 0) return null;
+  const pct = (v) => `${(Math.max(v, 0) / up) * 100}%`;
   return (
     <span className="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
       <span className="block h-full bg-emerald-500/70" style={{ width: pct(matched) }} />
-      <span className="block h-full bg-slate-500/60" style={{ width: pct(pooled) }} />
       <span className="block h-full bg-red-500/70" style={{ width: pct(notInBoq) }} />
     </span>
   );
@@ -173,8 +133,11 @@ export default function BoqBreakdown({ report, currency }) {
         <div>
           <h2 className="text-sm font-semibold text-slate-300">Full breakdown</h2>
           <p className="text-xs text-slate-500 mt-0.5 max-w-2xl leading-relaxed">
-            The same spend as above, regrouped. Every charge carries the verdict
-            the category table reached, so no two views here can disagree.
+            The same spend as above, regrouped, and scored on one question: does
+            a line in your BOQ actually name this charge? Anything it does not
+            name is counted as not in the BOQ here — a stricter test than the
+            category variance above, which lets a lump-sum budget line absorb
+            charges it never listed.
           </p>
         </div>
         <button
@@ -187,70 +150,33 @@ export default function BoqBreakdown({ report, currency }) {
       </div>
 
       {/* Group by */}
-      <div className="space-y-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-          Group by
-        </span>
-        <div className="flex flex-wrap gap-1.5">
-          {DIMENSIONS.map(d => (
-            <button
-              key={d.key}
-              onClick={() => { setDimension(d.key); setExpanded({}); }}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                dimension === d.key
-                  ? 'border border-blue-500/30 bg-blue-600/25 text-blue-300'
-                  : 'border border-slate-800 text-slate-400 hover:bg-slate-800/60 hover:text-white'
-              }`}
-            >
-              {d.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <ControlRow label="Group by">
+        {DIMENSIONS.map(d => (
+          <PillButton
+            key={d.key}
+            active={dimension === d.key}
+            onClick={() => { setDimension(d.key); setExpanded({}); }}
+          >
+            {d.label}
+          </PillButton>
+        ))}
+      </ControlRow>
 
       {/* Filters */}
-      <div className="space-y-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-          Filter
-        </span>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Filter className="h-3.5 w-3.5 text-slate-600" />
-          <MultiFilter label="Resource group" options={rgOptions} selected={resourceGroups} onChange={setResourceGroups} />
-          <MultiFilter label="Service" options={serviceOptions} selected={services} onChange={setServices} />
-          <MultiFilter label="Region" options={regionOptions} selected={regions} onChange={setRegions} />
-          <MultiFilter label="Subscription" options={subOptions} selected={subscriptions} onChange={setSubscriptions} />
-
-          <select
-            value={coverage}
-            onChange={(e) => setCoverage(e.target.value)}
-            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 focus:border-blue-500/40 focus:outline-none"
-          >
-            {COVERAGE_FILTERS.map(c => (
-              <option key={c.key} value={c.key}>{c.label}</option>
-            ))}
-          </select>
-
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-600" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search resource, meter, service…"
-              className="w-56 rounded-lg border border-slate-800 bg-slate-900 py-1.5 pl-8 pr-3 text-xs text-slate-200 placeholder:text-slate-600 focus:border-blue-500/40 focus:outline-none"
-            />
-          </div>
-
-          {activeFilters > 0 && (
-            <button
-              onClick={clearAll}
-              className="flex items-center gap-1 rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-400 transition hover:bg-slate-700 hover:text-white"
-            >
-              <X className="h-3 w-3" />
-              Clear {activeFilters}
-            </button>
-          )}
-        </div>
-      </div>
+      <ControlRow label="Filter">
+        <FilterIcon />
+        <MultiFilter label="Resource group" options={rgOptions} selected={resourceGroups} onChange={setResourceGroups} />
+        <MultiFilter label="Service" options={serviceOptions} selected={services} onChange={setServices} />
+        <MultiFilter label="Region" options={regionOptions} selected={regions} onChange={setRegions} />
+        <MultiFilter label="Subscription" options={subOptions} selected={subscriptions} onChange={setSubscriptions} />
+        <FilterSelect value={coverage} onChange={setCoverage} options={COVERAGE_FILTERS} />
+        <SearchBox
+          value={search}
+          onChange={setSearch}
+          placeholder="Search resource, meter, service…"
+        />
+        <ClearFilters count={activeFilters} onClear={clearAll} />
+      </ControlRow>
 
       {/* What this grouping can and cannot tell you */}
       <div className="flex items-start gap-2.5 rounded-xl border border-slate-800 bg-slate-800/30 px-3.5 py-2.5">
@@ -259,12 +185,32 @@ export default function BoqBreakdown({ report, currency }) {
       </div>
 
       {/* Totals for the current slice */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Tile label="Actual / month" value={fmt(result.total)} hint={`${result.groups.length} ${result.dimension.label.toLowerCase()}(s)`} />
-        <Tile label="Matched to a BOQ line" value={fmt(result.matchedTotal)} tone="text-emerald-300" />
-        <Tile label="Covered by pooled budget" value={fmt(result.pooledTotal)} tone="text-slate-300" />
-        <Tile label="Not in BOQ" value={fmt(result.notInBoqTotal)} tone={result.notInBoqTotal > 0 ? 'text-red-300' : 'text-emerald-300'} />
+        <Tile
+          label="Named by a BOQ line"
+          value={fmt(result.matchedTotal)}
+          hint={result.total > 0 ? `${Math.round((result.matchedTotal / result.total) * 100)}% of this slice — how much of the bill the estimate got right` : undefined}
+          tone="text-emerald-300"
+        />        <Tile
+          label="Not in BOQ"
+          value={fmt(result.notInBoqTotal)}
+          hint={result.notInBoqTotal > 0 ? 'no line in the estimate lists these charges' : 'every charge is listed in the estimate'}
+          tone={result.notInBoqTotal > 0 ? 'text-red-300' : 'text-emerald-300'}
+        />
       </div>
+
+      {/* Credits are why this total can be smaller than the column below it
+          adds up to. Said out loud, because the alternative is a reader who
+          checks the arithmetic, finds it wrong, and stops trusting the page. */}
+      {result.creditTotal < 0 && (
+        <p className="rounded-xl border border-slate-800 bg-slate-800/30 px-3.5 py-2.5 text-[11px] leading-relaxed text-slate-400">
+          This slice includes {fmt(Math.abs(result.creditTotal))} of credits — charges
+          Azure billed as negative, such as a hybrid benefit or a refund. They are
+          subtracted from the totals above, so the columns add up to less than the
+          positive charges alone.
+        </p>
+      )}
 
       {result.groups.length === 0 ? (
         <p className="rounded-xl border border-slate-800 bg-slate-800/30 px-4 py-8 text-center text-sm text-slate-400">
@@ -318,11 +264,19 @@ export default function BoqBreakdown({ report, currency }) {
                           {!g.variance ? '—' : `${g.variance > 0 ? '+' : '−'}${fmt(Math.abs(g.variance))}`}
                         </td>
                       )}
-                      <td className={`py-3 text-right font-medium ${g.notInBoq > 0 ? 'text-red-300' : 'text-slate-600'}`}>
-                        {g.notInBoq > 0 ? fmt(g.notInBoq) : '—'}
+                      <td className={`py-3 text-right font-medium ${
+                        g.notInBoq > 0 ? 'text-red-300'
+                          : g.notInBoq < 0 ? 'text-emerald-300' : 'text-slate-600'
+                      }`}>
+                        {/* A credit is shown as the negative number it is.
+                            Rendering it as an em dash hid it from the column
+                            while it still counted in the total above, so the
+                            two could not be reconciled by adding the column
+                            up -- which is the first thing anybody does. */}
+                        {g.notInBoq === 0 ? '—' : fmt(g.notInBoq)}
                       </td>
                       <td className="py-3 pl-4">
-                        <Bar matched={g.matched} pooled={g.pooled} notInBoq={g.notInBoq} actual={g.actual} />
+                        <Bar matched={g.matched} notInBoq={g.notInBoq} />
                       </td>
                       <td className="py-3 text-right text-xs text-slate-500">{g.share}%</td>
                     </tr>
@@ -344,10 +298,10 @@ export default function BoqBreakdown({ report, currency }) {
                                   {r.service}{r.meter ? ` · ${r.meter}` : ''}
                                 </span>
                                 <span className="w-16 shrink-0 text-[10px] text-slate-600">{r.region || '—'}</span>
-                                <span className={`w-40 shrink-0 text-[10px] ${COVERAGE_TONE[r.coverage]}`}>
+                                <span className={`w-40 shrink-0 text-[10px] ${COVERAGE_TONE[verdictOf(r)]}`}>
                                   {r.coverage === 'line' && r.boqLine
                                     ? `→ ${r.boqLine}`
-                                    : COVERAGE_TEXT[r.coverage]}
+                                    : COVERAGE_TEXT[verdictOf(r)]}
                                 </span>
                                 <span className="w-20 shrink-0 text-right font-medium text-slate-200">
                                   {fmt(r.monthlyCost)}

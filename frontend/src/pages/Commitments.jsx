@@ -18,11 +18,11 @@
  * they propose cancelling a reservation, and an estimate would look identical
  * on screen to a measurement.
  */
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   PiggyBank, TrendingDown, CalendarClock, Percent, Wallet, Loader2,
   ShoppingCart, Info, ChevronRight, ChevronDown, ExternalLink, Search,
-  AlertTriangle, Ban,
+  AlertTriangle, Ban, ArrowUp, ArrowDown, ChevronsUpDown, X,
 } from 'lucide-react';
 import { fetchCommitments } from '../api/client';
 import {
@@ -30,13 +30,14 @@ import {
 } from '../components/Security/SecurityShell';
 import { useAppStore } from '../store/useAppStore';
 import CommitmentRules from '../components/Commitments/CommitmentRules';
+import CommitmentDetail from '../components/Commitments/CommitmentDetail';
 import { friendlyError } from '../utils/apiError';
 import { cancellationImpact } from '../utils/commitmentRules';
 import {
   GRAINS, TYPE_FILTERS, KIND_LABEL, KIND_FULL, EXPIRY_TONE, EXPIRY_LABEL,
   MISSING, percent, money, termLabel, expiryLabel, filterCommitments, usedAt,
   wastageOf, wastageBasis, byResourceType, worstWaste, utilisationTone, utilisationBar,
-  utilisationVerdict,
+  utilisationVerdict, sortCommitments,
 } from '../utils/commitments';
 
 /**
@@ -48,9 +49,16 @@ import {
  * differently from a cost so that "you cannot" and "you can, but" are never
  * mistaken for one another.
  */
+/*
+ * Tinted with a /10 overlay on the 500 step rather than a 950 background.
+ * The light theme remaps the slate ramp and the 300/400 accent steps but not
+ * the 900/950 ones, so `bg-rose-950/30` stayed a dark plum on a white page and
+ * read as mud. An overlay works on both themes because it is the surface
+ * underneath doing the work.
+ */
 const IMPACT_TONE = {
-  blocker: { icon: Ban, wrap: 'border-rose-900/60 bg-rose-950/30', text: 'text-rose-300' },
-  cost: { icon: AlertTriangle, wrap: 'border-amber-900/60 bg-amber-950/20', text: 'text-amber-300' },
+  blocker: { icon: Ban, wrap: 'border-rose-500/40 bg-rose-500/10', text: 'text-rose-300' },
+  cost: { icon: AlertTriangle, wrap: 'border-amber-500/40 bg-amber-500/10', text: 'text-amber-300' },
   note: { icon: Info, wrap: 'border-slate-800 bg-slate-900/60', text: 'text-slate-400' },
 };
 
@@ -116,6 +124,37 @@ function Bar({ used }) {
         {known ? percent(used) : MISSING}
       </span>
     </div>
+  );
+}
+
+/**
+ * A column heading that sorts.
+ *
+ * The arrow is drawn faintly on every sortable column rather than only on the
+ * active one, because a control that appears on hover is a control nobody
+ * knows is there. `aria-sort` carries the same state to a screen reader, which
+ * cannot see the arrow at all.
+ */
+function SortHead({ label, column, sort, onSort, align = 'left', title, pad = 'px-3' }) {
+  const active = sort.key === column;
+  const Glyph = active ? (sort.dir === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown;
+  return (
+    <th
+      className={`${pad} py-2 font-medium ${align === 'right' ? 'text-right' : ''}`}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        title={title}
+        onClick={() => onSort(column)}
+        className={`inline-flex items-center gap-1 uppercase tracking-wide transition hover:text-slate-200 ${
+          align === 'right' ? 'flex-row-reverse' : ''
+        } ${active ? 'text-slate-200' : ''}`}
+      >
+        {label}
+        <Glyph size={11} className={active ? 'text-sky-400' : 'text-slate-600'} />
+      </button>
+    </th>
   );
 }
 
@@ -209,6 +248,20 @@ function Recommendation({ rec, currency }) {
   );
 }
 
+/*
+ * The page answers three separate questions, and stacking them made the third
+ * one unreachable: four full-height summary cards, a row of expiring cards and
+ * a filter bar sat above the inventory, so the table everybody came for started
+ * below the fold on a laptop. They are sections now rather than one long
+ * scroll. The counts are on the tabs because a section worth opening and an
+ * empty one should not look the same from the outside.
+ */
+const VIEWS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'details', label: 'Commitment details' },
+  { key: 'rules', label: 'Cancellation rules' },
+];
+
 export default function Commitments() {
   const tenantId = useAppStore(s => s.selectedTenantId);
   const subscriptionIds = useAppStore(s => s.selectedSubscriptionIds);
@@ -222,9 +275,20 @@ export default function Commitments() {
   const [type, setType] = useState('all');
   const [hideExpired, setHideExpired] = useState(true);
   const [query, setQuery] = useState('');
-  // Only one row's cancellation impact is open at a time. Several at once turns
-  // the table into a wall of warnings with no row visible between them.
-  const [impactFor, setImpactFor] = useState(null);
+  // Untouched, this keeps the order the backend sent -- worst utilisation
+  // first -- so the page still opens on the problem rather than on an
+  // alphabetical list. A column is only applied once somebody asks for it.
+  const [sort, setSort] = useState({ key: '', dir: 'asc' });
+  // The full record for one commitment, in a panel rather than a row. Held by
+  // id rather than by object so a refresh replaces what is on screen instead
+  // of pinning the reader to the copy that was fetched when they opened it.
+  const [detailFor, setDetailFor] = useState(null);
+  // Which tab the drawer opens on. Clicking the row wants the record; clicking
+  // "What happens" wants the cancellation rules and nothing else.
+  const [detailTab, setDetailTab] = useState('overview');
+  // Opens on the inventory rather than the summary. Somebody arriving here has
+  // usually already been told there is a problem and wants the list.
+  const [view, setView] = useState('details');
 
   const ready = Boolean(tenantId) && (subscriptionIds || []).length > 0;
 
@@ -253,10 +317,38 @@ export default function Commitments() {
   const currency = data?.currency || '';
   const summary = data?.summary || {};
 
-  const rows = useMemo(
+  const filtered = useMemo(
     () => filterCommitments(items, { type, hideExpired, query }),
     [items, type, hideExpired, query],
   );
+  const rows = useMemo(
+    () => (sort.key ? sortCommitments(filtered, sort.key, sort.dir, grain) : filtered),
+    [filtered, sort, grain],
+  );
+
+  /*
+   * First click on a column sorts the way that column is usually read: text
+   * from A, money and waste from the largest. Sorting cost ascending puts the
+   * cheapest reservation at the top, which is never why anybody clicks "Monthly
+   * cost".
+   */
+  function toggleSort(key) {
+    setSort(prev => {
+      if (prev.key === key) return { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
+      const descFirst = ['cost', 'wastage', 'utilisation'].includes(key);
+      return { key, dir: descFirst ? 'desc' : 'asc' };
+    });
+  }
+
+  const filtersOn = type !== 'all' || Boolean(query.trim()) || !hideExpired || Boolean(sort.key);
+
+  function clearFilters() {
+    setType('all');
+    setQuery('');
+    setHideExpired(true);
+    setSort({ key: '', dir: 'asc' });
+  }
+
   const groups = useMemo(() => byResourceType(rows, grain), [rows, grain]);
   const worst = useMemo(() => worstWaste(rows, grain, 5), [rows, grain]);
   const expiredCount = useMemo(
@@ -273,7 +365,7 @@ export default function Commitments() {
     <div className="mx-auto max-w-screen-2xl space-y-4 p-6">
       <PageHeader
         title="Commitments"
-        subtitle="Reservations and savings plans: how much of what you bought is actually being used, what lapses soon, and what Azure suggests buying. Utilisation is Azure's own figure; cost is an amortised Cost Management query."
+        subtitle="What you have bought up front, how much of it is being used, and what lapses soon."
         onRun={() => run()}
         loading={loading}
         disabled={!ready}
@@ -300,6 +392,36 @@ export default function Commitments() {
 
       {data && (
         <>
+          <div className="flex flex-wrap items-center gap-1 border-b border-slate-800">
+            {VIEWS.map(v => (
+              <button
+                key={v.key}
+                onClick={() => setView(v.key)}
+                aria-current={view === v.key ? 'page' : undefined}
+                className={`-mb-px border-b-2 px-3 py-2 text-sm transition ${
+                  view === v.key
+                    ? 'border-sky-500 text-slate-100'
+                    : 'border-transparent text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {v.label}
+                {v.key === 'details' && items.length > 0 && (
+                  <span className="ml-1.5 text-[11px] text-slate-500">{items.length}</span>
+                )}
+                {/* An expiry is a deadline, so the count that matters on the
+                    summary tab is drawn in its own colour rather than as one
+                    more grey number the eye skips. */}
+                {v.key === 'overview' && (data.expiring || []).length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                    {data.expiring.length} expiring
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {view === 'overview' && (
+          <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Kpi
               icon={Percent}
@@ -373,8 +495,16 @@ export default function Commitments() {
               </div>
             </div>
           )}
+          </>
+          )}
 
-          <div className="flex flex-wrap items-center gap-3">
+          {view === 'details' && (
+          <>
+          {/* Sticky, because the inventory is long enough that the search box
+              scrolls away, and the usual response to a table that will not
+              narrow is to scroll back up hunting for the filter rather than to
+              type. */}
+          <div className="sticky top-0 z-20 -mx-6 flex flex-wrap items-center gap-3 border-b border-slate-800 bg-slate-950/90 px-6 py-3 backdrop-blur">
             <Chips options={typeOptions} value={type} onChange={setType} />
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <span>Window</span>
@@ -405,9 +535,35 @@ export default function Commitments() {
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder="Search by name, SKU or scope…"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-600"
+                className="w-full rounded-xl border border-slate-800 bg-slate-900 py-2 pl-9 pr-8 text-sm text-slate-200 placeholder:text-slate-600"
               />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 hover:text-slate-200"
+                >
+                  <X size={12} />
+                </button>
+              )}
             </div>
+            {/* Says how much of the inventory is hidden, and offers the way
+                back. A filtered table and a small estate look identical, and
+                somebody who forgets a filter is on concludes they own two
+                reservations. */}
+            {filtersOn && (
+              <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                <span>Showing {rows.length} of {items.length}</span>
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="rounded-lg border border-slate-700 px-2 py-1 text-slate-300 transition hover:border-slate-500 hover:text-white"
+                >
+                  Reset
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[1fr_20rem]">
@@ -416,28 +572,74 @@ export default function Commitments() {
                 <p className="border-b border-slate-800 px-4 py-3 text-sm font-medium text-slate-200">
                   Commitment inventory
                   <span className="ml-2 text-[11px] font-normal text-slate-500">
-                    worst utilisation first
+                    {sort.key ? 'sorted by the column you chose' : 'worst utilisation first'}
+                  </span>
+                  {/* Moved off the page header, which had grown into a
+                      paragraph nobody read. It belongs beside the figures it
+                      describes: "used" is Azure's own measurement and "per
+                      month" is a billing query, and a reader deciding whether
+                      to cancel something needs to know which is which. */}
+                  <span className="mt-0.5 block text-[11px] font-normal text-slate-500">
+                    Used is Azure&apos;s own figure. Per month is amortised cost from
+                    Cost Management, and is blank when that query returned nothing.
                   </span>
                 </p>
                 {rows.length === 0 ? (
-                  <p className="px-4 py-6 text-xs text-slate-500">
-                    Nothing matches those filters.
-                  </p>
+                  <div className="px-4 py-6">
+                    <p className="text-xs text-slate-500">Nothing matches those filters.</p>
+                    {filtersOn && (
+                      <button
+                        type="button"
+                        onClick={clearFilters}
+                        className="mt-3 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] text-slate-300 transition hover:border-slate-500 hover:text-white"
+                      >
+                        Clear filters and show all {items.length}
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
-                      <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+                      {/* Sticky, because the inventory is the one table here
+                          long enough to scroll a heading off the top -- and a
+                          column of percentages with no heading above it is a
+                          column of numbers nobody can read. Offset by the
+                          height of the filter bar above it, which is sticky
+                          too and would otherwise cover it. */}
+                      <thead className="sticky top-[3.25rem] z-10 bg-slate-900 text-[11px] uppercase tracking-wide text-slate-500">
                         <tr className="border-b border-slate-800">
-                          <th className="px-4 py-2 font-medium">Name</th>
-                          <th className="px-3 py-2 font-medium">Type</th>
-                          <th className="px-3 py-2 font-medium">Commitment</th>
-                          <th className="px-3 py-2 font-medium">SKU</th>
-                          <th className="px-3 py-2 font-medium">Term</th>
-                          <th className="px-3 py-2 font-medium">Expiry</th>
-                          <th className="px-3 py-2 font-medium">Utilisation ({grain}d)</th>
-                          <th className="px-3 py-2 text-right font-medium">Monthly cost</th>
-                          <th className="px-4 py-2 text-right font-medium">Wasted</th>
-                          <th className="px-4 py-2 text-right font-medium">If cancelled</th>
+                          <SortHead label="Commitment" column="name" sort={sort} onSort={toggleSort} pad="px-4" />
+                          <th className="px-3 py-2 font-medium">What it covers</th>
+                          <SortHead
+                            label="Expiry"
+                            column="expiry"
+                            sort={sort}
+                            onSort={toggleSort}
+                            title="Soonest first"
+                          />
+                          <SortHead
+                            label={`Used (${grain}d)`}
+                            column="utilisation"
+                            sort={sort}
+                            onSort={toggleSort}
+                          />
+                          <SortHead
+                            label="Per month"
+                            column="cost"
+                            sort={sort}
+                            onSort={toggleSort}
+                            align="right"
+                          />
+                          <SortHead
+                            label="Wasted"
+                            column="wastage"
+                            sort={sort}
+                            onSort={toggleSort}
+                            align="right"
+                          />
+                          <th className="px-4 py-2 text-right font-medium">
+                            <span className="sr-only">Cancellation</span>
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -445,28 +647,62 @@ export default function Commitments() {
                           const used = usedAt(item, grain);
                           const lost = wastageOf(item, grain);
                           const basis = wastageBasis(item, grain);
-                          const open = impactFor === item.id;
                           return (
-                            <Fragment key={item.id}>
-                            <tr className="border-b border-slate-800/60">
-                              <td className="max-w-[14rem] truncate px-4 py-2 text-slate-200" title={item.name}>
-                                {item.name || MISSING}
+                            /* The whole row opens the record, not just the
+                               name. A single underlined word in the first
+                               column is a target people do not find, and every
+                               cell in the row is about the same commitment.
+
+                               Reachable from the keyboard as well as the
+                               mouse: the row is the only way into the full
+                               record, so a keyboard user who could not open it
+                               could not read half of this page. */
+                            <tr
+                              key={item.id}
+                              tabIndex={0}
+                              role="button"
+                              aria-label={`Open ${item.name || 'commitment'}`}
+                              onClick={() => { setDetailTab('overview'); setDetailFor(item.id); }}
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter' && e.key !== ' ') return;
+                                e.preventDefault();
+                                setDetailTab('overview');
+                                setDetailFor(item.id);
+                              }}
+                              className="cursor-pointer border-b border-slate-800/60 hover:bg-slate-800/40 focus:bg-slate-800/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-500"
+                            >
+                              <td className="max-w-[18rem] px-4 py-2.5">
+                                {/* Name, type and SKU in one cell. They were
+                                    three columns, which pushed the two figures
+                                    people actually came for off the right edge
+                                    on a laptop — and a number nobody scrolls to
+                                    is a number nobody reads. */}
+                                <span className="flex items-center gap-1.5">
+                                  <span className="truncate text-slate-200" title={item.name}>
+                                    {item.name || MISSING}
+                                  </span>
+                                  <Kind kind={item.kind} />
+                                  <ChevronRight size={12} className="shrink-0 text-slate-600" />
+                                </span>
+                                <span className="block truncate text-[11px] text-slate-500" title={item.sku || ''}>
+                                  {item.sku || MISSING}
+                                </span>
                               </td>
-                              <td className="px-3 py-2"><Kind kind={item.kind} /></td>
-                              <td className="px-3 py-2 text-slate-400">
+                              <td className="px-3 py-2.5 text-slate-400">
                                 {item.quantity === null ? MISSING
                                   : `${item.quantity} ${item.quantity_unit}`}
+                                <span className="block text-[11px] text-slate-500">
+                                  {termLabel(item.term)}
+                                </span>
                               </td>
-                              <td className="px-3 py-2 text-slate-400">{item.sku || MISSING}</td>
-                              <td className="px-3 py-2 text-slate-400">{termLabel(item.term)}</td>
-                              <td className={`px-3 py-2 ${EXPIRY_TONE[item.expiry_band] || 'text-slate-400'}`}>
+                              <td className={`px-3 py-2.5 ${EXPIRY_TONE[item.expiry_band] || 'text-slate-400'}`}>
                                 {expiryLabel(item.days_to_expiry)}
                               </td>
-                              <td className="px-3 py-2"><Bar used={used} /></td>
-                              <td className="px-3 py-2 text-right tabular-nums text-slate-300">
+                              <td className="px-3 py-2.5"><Bar used={used} /></td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-slate-300">
                                 {money(item.monthly_cost, item.currency || currency)}
                               </td>
-                              <td className={`px-4 py-2 text-right tabular-nums ${
+                              <td className={`px-3 py-2.5 text-right tabular-nums ${
                                 lost ? 'text-rose-400' : 'text-slate-500'
                               }`}>
                                 {money(lost, item.currency || currency)}
@@ -479,25 +715,25 @@ export default function Commitments() {
                                   </span>
                                 )}
                               </td>
-                              <td className="px-4 py-2 text-right">
+                              <td className="px-4 py-2.5 text-right">
+                                {/* Opens the record on its cancellation tab
+                                    rather than unfolding a second row. An
+                                    expanding row pushed the rest of the table
+                                    down and put the rules in a 10-column cell
+                                    barely wide enough to read them. */}
                                 <button
-                                  onClick={() => setImpactFor(open ? null : item.id)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-500 hover:text-white"
-                                  aria-expanded={open}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDetailTab('cancel');
+                                    setDetailFor(item.id);
+                                  }}
+                                  title="What happens if this is cancelled"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-400 transition hover:border-slate-500 hover:text-white"
                                 >
-                                  {open ? 'Hide' : 'What happens'}
-                                  <ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} />
+                                  If cancelled
                                 </button>
                               </td>
                             </tr>
-                            {open && (
-                              <tr className="border-b border-slate-800/60 bg-slate-950/40">
-                                <td colSpan={10} className="px-4 py-3">
-                                  <Impact item={item} grain={grain} />
-                                </td>
-                              </tr>
-                            )}
-                            </Fragment>
                           );
                         })}
                       </tbody>
@@ -508,12 +744,8 @@ export default function Commitments() {
 
               {groups.length > 0 && (
                 <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
-                  <p className="mb-1 text-sm font-medium text-slate-200">
+                  <p className="mb-3 text-sm font-medium text-slate-200">
                     Utilisation by what it covers
-                  </p>
-                  <p className="mb-3 text-[11px] text-slate-500">
-                    Averaged only across commitments Azure has measured. Groups
-                    with nothing measured are left out rather than drawn at zero.
                   </p>
                   <div className="space-y-2">
                     {groups.map(group => (
@@ -541,14 +773,8 @@ export default function Commitments() {
             <div className="space-y-3">
               {worst.length > 0 && (
                 <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
-                  <p className="mb-1 flex items-center gap-2 text-sm font-medium text-slate-200">
+                  <p className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-200">
                     <TrendingDown size={14} /> Costing the most while unused
-                  </p>
-                  {/* Ranked by measured waste, not by low utilisation. A
-                      60%-used reservation costing a little is a smaller problem
-                      than an 88%-used one costing a great deal. */}
-                  <p className="mb-3 text-[11px] leading-relaxed text-slate-500">
-                    Ranked by money, not by percentage.
                   </p>
                   <div className="space-y-2">
                     {worst.map(({ item, lost }) => (
@@ -579,10 +805,7 @@ export default function Commitments() {
                 </p>
                 {(data.recommendations || []).length === 0 ? (
                   <p className="text-[11px] leading-relaxed text-slate-500">
-                    Azure returned no purchase recommendations for the selected
-                    subscriptions. That can mean your usage is already covered,
-                    or that it is too variable for Azure to recommend a
-                    commitment against.
+                    Azure returned no purchase recommendations.
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -594,17 +817,13 @@ export default function Commitments() {
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
-                <p className="flex items-start gap-2 text-[11px] leading-relaxed text-slate-400">
-                  <Info size={12} className="mt-0.5 shrink-0" />
-                  {data.note}
-                </p>
                 {(data.errors || []).map(err => (
-                  <p key={err} className="mt-2 text-[11px] leading-relaxed text-amber-300/80">
+                  <p key={err} className="mb-2 text-[11px] leading-relaxed text-amber-300/80">
                     {err}
                   </p>
                 ))}
                 {(data.partial?.cost_subscriptions || []).length > 0 && (
-                  <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                  <p className="mb-2 text-[11px] leading-relaxed text-slate-500">
                     Cost could not be read for{' '}
                     {data.partial.cost_subscriptions.length} subscription(s), so
                     some commitments show no amount.
@@ -621,6 +840,8 @@ export default function Commitments() {
               </div>
             </div>
           </div>
+          </>
+          )}
         </>
       )}
 
@@ -637,10 +858,34 @@ export default function Commitments() {
 
       {/* Reference, not measurement -- and deliberately available before any
           tenant is selected, because the question "what does it cost to get out
-          of this" is usually asked before anyone signs in to check. */}
-      <div className="border-t border-slate-800 pt-6">
-        <CommitmentRules items={items} currency={currency} />
-      </div>
+          of this" is usually asked before anyone signs in to check. That is
+          also why it is shown when nothing has been read yet rather than only
+          behind its own tab. */}
+      {(!data || view === 'rules') && (
+        <div className="border-t border-slate-800 pt-6">
+          <CommitmentRules items={items} currency={currency} />
+        </div>
+      )}
+
+      {/* Looked up in the current list rather than stored, so a refresh while
+          the panel is open shows the new figures instead of the ones that were
+          fetched when it was opened. A commitment that vanished from the list
+          closes the panel rather than freezing a record that no longer exists. */}
+      {detailFor && (() => {
+        const item = items.find(i => i.id === detailFor);
+        if (!item) return null;
+        return (
+          <CommitmentDetail
+            item={item}
+            grain={grain}
+            currency={currency}
+            initialTab={detailTab}
+            onClose={() => setDetailFor(null)}
+          >
+            <Impact item={item} grain={grain} />
+          </CommitmentDetail>
+        );
+      })()}
     </div>
   );
 }

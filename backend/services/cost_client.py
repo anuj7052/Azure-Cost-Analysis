@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import httpx
 from datetime import datetime, date
@@ -69,23 +70,143 @@ _cache: Dict[str, tuple[float, Any]] = {}
 # share a single Azure call instead of each burning a rate-limit token.
 _inflight: Dict[str, asyncio.Future] = {}
 
-# When Azure throttles us, every caller backs off until this moment instead of
-# queueing up more doomed requests (which is what makes the whole app hang).
-_throttled_until: float = 0.0
+# When Azure throttles us, callers for *that scope* back off until this moment
+# instead of queueing up more doomed requests (which is what makes the whole
+# app hang).
+#
+# Keyed by scope, because Azure meters the Query API per scope. One tenant-wide
+# cooldown meant a single busy subscription put every other subscription to
+# sleep for 15 seconds it had done nothing to earn -- and since all the sleepers
+# woke together and fired together, the cooldown was renewed before it ever
+# expired. A newly added subscription could then never land a first successful
+# read, so refreshing the page returned the same rate-limit message forever.
+_throttled_until: Dict[str, float] = {}
+
+# One in-flight cost query per scope.
+#
+# The global gate above limits how many cost queries run at once across the
+# tenant; this limits how many run at once against a single subscription, and
+# the answer is one. Azure meters the Query API per scope, so a page that fans
+# out five different cost questions at the same subscription was not getting
+# five answers - it was getting one answer and four 429s, which is why cost
+# columns came back blank while the resource list beside them was complete.
+# Queued, all five arrive; they just do not arrive simultaneously.
+_scope_gates: Dict[str, asyncio.Semaphore] = {}
+
+
+def _scope_gate(scope: str) -> asyncio.Semaphore:
+    gate = _scope_gates.get(scope)
+    if gate is None:
+        gate = asyncio.Semaphore(1)
+        _scope_gates[scope] = gate
+    return gate
+
+
+# ── Pacing ────────────────────────────────────────────────────────────────
+#
+# Everything above this point reacts to being throttled. Reacting is not
+# enough: by the time a 429 arrives the request is already spent, the retry
+# costs another one, and a scope that is being asked more often than Azure
+# allows never escapes -- every wave of retries lands as the next wave of
+# requests, so the account stays in the penalty box and cost columns stay
+# blank however patiently we back off.
+#
+# So we pace instead. Each scope gets an allowance of queries per minute and
+# waits its turn before sending, which means the limit is respected rather
+# than discovered. Azure does not publish the exact figure and it varies by
+# agreement, so the allowance is learned: it halves whenever a 429 gets
+# through and creeps back up as queries succeed. An estate that is never
+# throttled converges on the ceiling; one that is, settles just under
+# whatever its real limit turns out to be.
+SCOPE_RATE_PER_MINUTE = float(os.getenv("COST_SCOPE_QUERIES_PER_MINUTE") or 6)
+MIN_SCOPE_RATE = 1.0
+# Longer than MAX_COOLDOWN_WAIT: pacing is the normal, healthy path, so it is
+# worth waiting a little longer for a turn than for a punishment to expire.
+MAX_PACE_WAIT = 25.0
+# ...unless there is nothing to fall back on. Refusing early is only kind when
+# the caller has a cached answer to show instead; with an empty cache the same
+# refusal produces a banner where a number should be, and the reader is asked
+# to wait anyway - just without the page ever finishing on its own. A cold
+# query is therefore allowed to sit in the queue for as long as its turn takes,
+# up to the point where an HTTP client would give up regardless.
+MAX_PATIENT_WAIT = 90.0
+
+_scope_sent: Dict[str, List[float]] = {}
+_scope_rate: Dict[str, float] = {}
+
+
+def _rate_of(scope: str) -> float:
+    return _scope_rate.get(scope, SCOPE_RATE_PER_MINUTE)
+
+
+def _pace_wait(scope: str) -> float:
+    """Seconds to wait before this scope may send another query."""
+    now = time.time()
+    window = [t for t in _scope_sent.get(scope, []) if now - t < 60.0]
+    _scope_sent[scope] = window
+
+    allowance = _rate_of(scope)
+    if len(window) < allowance:
+        return 0.0
+    # The oldest query in the window has to age out before there is room.
+    return max(0.0, 60.0 - (now - window[0]))
+
+
+def _record_send(scope: str) -> None:
+    _scope_sent.setdefault(scope, []).append(time.time())
+
+
+def _penalise(scope: str) -> None:
+    """A 429 got through, so the allowance was too generous. Halve it."""
+    reduced = max(MIN_SCOPE_RATE, _rate_of(scope) / 2)
+    if reduced != _rate_of(scope):
+        logger.info(
+            "Cost query allowance for %s reduced to %.1f/min after throttling", scope, reduced,
+        )
+    _scope_rate[scope] = reduced
+
+
+def _reward(scope: str) -> None:
+    """A query succeeded, so edge the allowance back towards the ceiling."""
+    current = _rate_of(scope)
+    if current < SCOPE_RATE_PER_MINUTE:
+        _scope_rate[scope] = min(SCOPE_RATE_PER_MINUTE, current + 0.5)
+
+
+def _scope_of(url: str) -> str:
+    """The billing scope a query is aimed at - what Azure actually meters."""
+    match = re.search(r"/subscriptions/([^/?]+)", url)
+    return match.group(1) if match else "tenant"
 
 
 class RateLimited(RuntimeError):
-    """Raised when Azure is actively throttling this tenant."""
+    """
+    Raised when a cost query cannot be sent yet.
 
-    def __init__(self, retry_in: float):
+    `paced` separates the two reasons, because they are not the same event and
+    should never be reported as one. Azure refusing us is Azure's decision;
+    our own queue holding a request back is ours, and telling a user that
+    Azure is rate limiting them when Azure has said nothing of the kind sends
+    them looking for a quota problem that does not exist.
+    """
+
+    def __init__(self, retry_in: float, paced: bool = False):
         self.retry_in = max(1, int(retry_in))
-        super().__init__(
-            f"Azure Cost Management is rate limiting this account. Retry in ~{self.retry_in}s."
+        self.paced = paced
+        reason = (
+            "Too many cost queries are already queued for this subscription."
+            if paced else
+            "Azure Cost Management is rate limiting this account."
         )
+        super().__init__(f"{reason} Retry in ~{self.retry_in}s.")
 
 
-def _cooldown_remaining() -> float:
-    return max(0.0, _throttled_until - time.time())
+def _cooldown_remaining(scope: str = "") -> float:
+    now = time.time()
+    if scope:
+        return max(0.0, _throttled_until.get(scope, 0.0) - now)
+    # No scope named: the longest wait anyone is currently serving.
+    return max((v - now for v in _throttled_until.values()), default=0.0)
 
 
 def cooldown_remaining() -> float:
@@ -93,9 +214,8 @@ def cooldown_remaining() -> float:
     return _cooldown_remaining()
 
 
-def _start_cooldown(seconds: float) -> None:
-    global _throttled_until
-    _throttled_until = max(_throttled_until, time.time() + seconds)
+def _start_cooldown(scope: str, seconds: float) -> None:
+    _throttled_until[scope] = max(_throttled_until.get(scope, 0.0), time.time() + seconds)
 
 
 def _cache_key(url: str, body: dict) -> str:
@@ -137,26 +257,57 @@ def _retry_delay(resp: httpx.Response | None, attempt: int) -> float:
             value = resp.headers.get(header)
             if value:
                 try:
-                    return min(float(value), MAX_RETRY_DELAY)
+                    # Azure sometimes answers a 429 with Retry-After: 0, which
+                    # taken literally means "try again immediately" and is how a
+                    # retry becomes another 429. A second is the floor.
+                    return min(max(float(value), 1.0), MAX_RETRY_DELAY)
                 except ValueError:
                     pass
     return min(2 ** attempt, MAX_RETRY_DELAY) + random.uniform(0, 1)
 
 
-async def _post_query(client: httpx.AsyncClient, url: str, headers: dict, body: dict) -> dict:
+async def _post_query(
+    client: httpx.AsyncClient, url: str, headers: dict, body: dict, patient: bool = False,
+) -> dict:
     """POST a Cost Management query, retrying through throttling responses."""
-    cooldown = _cooldown_remaining()
+    scope = _scope_of(url)
+    async with _scope_gate(scope):
+        return await _post_query_serial(client, url, headers, body, scope, patient)
+
+
+async def _post_query_serial(
+    client: httpx.AsyncClient, url: str, headers: dict, body: dict, scope: str,
+    patient: bool = False,
+) -> dict:
+    """The query itself, with this scope's turn already taken."""
+    pace_limit = MAX_PATIENT_WAIT if patient else MAX_PACE_WAIT
+    cooldown = _cooldown_remaining(scope)
     if cooldown:
-        if cooldown > MAX_COOLDOWN_WAIT:
+        if cooldown > (MAX_PATIENT_WAIT if patient else MAX_COOLDOWN_WAIT):
             # Too long to hold the request open; let the caller fall back to
             # cached data and tell the user when to retry.
             raise RateLimited(cooldown)
+        # Wake at slightly different moments. Every waiter sleeping for exactly
+        # the same duration means they all fire in the same millisecond, which
+        # is how a cooldown renews itself indefinitely.
         logger.info("Waiting out %.1fs cost API cooldown", cooldown)
-        await asyncio.sleep(cooldown)
+        await asyncio.sleep(cooldown + random.uniform(0, 1.5))
 
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
+        # Wait for this scope's turn before spending a request. Doing this
+        # inside the retry loop matters: a retry is another query against the
+        # same allowance, and retrying without pacing is what turns one 429
+        # into a run of them.
+        pause = _pace_wait(scope)
+        if pause:
+            if pause > pace_limit:
+                raise RateLimited(pause, paced=True)
+            logger.info("Pacing cost query for %s: waiting %.1fs for its turn", scope, pause)
+            await asyncio.sleep(pause + random.uniform(0, 0.5))
+
         async with _query_gate:
+            _record_send(scope)
             try:
                 resp = await client.post(url, headers=headers, json=body)
             except httpx.TransportError as exc:      # transient network blip
@@ -164,6 +315,7 @@ async def _post_query(client: httpx.AsyncClient, url: str, headers: dict, body: 
                 resp = None
             else:
                 if resp.status_code < 400:
+                    _reward(scope)
                     return resp.json()
                 if resp.status_code not in (429, 500, 502, 503, 504):
                     resp.raise_for_status()
@@ -172,14 +324,15 @@ async def _post_query(client: httpx.AsyncClient, url: str, headers: dict, body: 
                 )
         delay = _retry_delay(resp, attempt)
         if resp is not None and resp.status_code == 429:
-            _start_cooldown(delay)
+            _penalise(scope)
+            _start_cooldown(scope, delay)
         if attempt == MAX_RETRIES - 1:
             break
         logger.warning("Cost Management throttled (attempt %s), retrying in %.1fs", attempt + 1, delay)
         await asyncio.sleep(delay)
 
-    if _cooldown_remaining():
-        raise RateLimited(_cooldown_remaining())
+    if _cooldown_remaining(scope):
+        raise RateLimited(_cooldown_remaining(scope))
     raise last_error or RuntimeError("Cost Management query failed")
 
 
@@ -200,6 +353,21 @@ async def _run_paged_query(url: str, headers: dict, body: dict, timeout: int) ->
             _cache_put(key, payload, cost_cache.ttl_for(body))
             return payload
 
+        # Not fresh, but this scope is currently being punished. Queueing
+        # behind a cooldown only to re-ask a question we already have a recent
+        # answer to spends a request we cannot spare and delays the page for
+        # nothing. A number from a few minutes ago beats a blank column, and
+        # the next unthrottled load will refresh it.
+        #
+        # Only a cooldown, not ordinary pacing: waiting a few seconds for a
+        # turn is the healthy path, and skipping the refetch every time the
+        # queue is busy would quietly turn durability into staleness.
+        scope = _scope_of(url)
+        if _cooldown_remaining(scope):
+            logger.info("Serving recent cached cost data for %s rather than queue", scope)
+            _cache_put(key, payload, cost_cache.ttl_for(body))
+            return payload
+
     # Several pages mounting at once ask for the same data. Let the first caller
     # do the work and have the rest await it, instead of firing duplicate
     # queries that only serve to trigger throttling.
@@ -211,7 +379,9 @@ async def _run_paged_query(url: str, headers: dict, body: dict, timeout: int) ->
     future: asyncio.Future = loop.create_future()
     _inflight[key] = future
     try:
-        pages = await _fetch_pages(url, headers, body, timeout, key)
+        # Nothing cached anywhere, so a refusal here leaves the caller with no
+        # answer at all. Wait for the turn instead of failing fast.
+        pages = await _fetch_pages(url, headers, body, timeout, key, patient=stored is None)
     except BaseException as exc:
         if not future.done():
             future.set_exception(exc)
@@ -226,13 +396,15 @@ async def _run_paged_query(url: str, headers: dict, body: dict, timeout: int) ->
         _inflight.pop(key, None)
 
 
-async def _fetch_pages(url: str, headers: dict, body: dict, timeout: int, key: str) -> List[dict]:
+async def _fetch_pages(
+    url: str, headers: dict, body: dict, timeout: int, key: str, patient: bool = False,
+) -> List[dict]:
     pages: List[dict] = []
     next_url = url
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             while next_url:
-                data = await _post_query(client, next_url, headers, body)
+                data = await _post_query(client, next_url, headers, body, patient)
                 pages.append(data)
                 next_url = data.get("properties", {}).get("nextLink")
     except Exception:
@@ -373,12 +545,34 @@ async def gather_by_subscription(subscription_ids, fetch, budget: float = DEFAUL
     return records, errors
 
 
-def friendly_error(exc: Exception) -> str:
-    """Turn an httpx/Azure exception into something a user can act on."""
+def friendly_error(exc: Exception, retry_after: int = 0) -> str:
+    """
+    Turn an httpx/Azure exception into something a user can act on.
+
+    `retry_after` is the delay the page will actually wait before trying again.
+    It is passed in rather than read off the exception because the two used to
+    disagree: the exception knew Azure had asked for four seconds, the retry
+    timer knew four seconds was never going to be long enough and waited five,
+    and the reader was told a number that no part of the system was using. A
+    countdown on screen is a promise; it has to be the same number the code is
+    counting.
+    """
     if isinstance(exc, RateLimited):
+        wait = retry_after or exc.retry_in
+        if getattr(exc, "paced", False):
+            # Our own queue, not Azure's refusal. Saying otherwise sends people
+            # to the Azure portal to look for a quota that is not the problem.
+            return (
+                "This subscription has more cost queries queued than it can send "
+                f"in one minute. It will be read again in about {wait}s. "
+                "Selecting fewer subscriptions or a narrower date range asks less "
+                "of it at once."
+            )
         return (
             "Azure is rate limiting cost queries for this account. "
-            f"This subscription will be read again automatically in about {exc.retry_in}s."
+            f"This subscription will be read again automatically in about {wait}s. "
+            "Refreshing sooner will not help - it asks Azure the same question "
+            "again and restarts the wait."
         )
     # asyncio.TimeoutError is an alias of TimeoutError on 3.11+, and both carry
     # an empty str(), which used to surface as a blank reason next to the
@@ -454,7 +648,7 @@ def error_entry(
         # reader nothing they can act on. A miss falls back to the id rather
         # than inventing a name.
         "subscription_name": (names or {}).get(subscription_id, ""),
-        "error": friendly_error(exc),
+        "error": friendly_error(exc, retry_after),
         "retryable": retryable,
         "retry_after_seconds": retry_after,
     }

@@ -86,16 +86,17 @@ describe('attribution', () => {
     expect(total).toBeCloseTo(1000, 2);
   });
 
-  it('treats leftovers as covered when the category has a budget that cannot be split', () => {
-    // A backup policy is real budgeted money that names no SKU, so charges it
-    // pays for must not be reported as unbudgeted.
+  it('does not call a charge covered just because the category holds a lump sum', () => {
+    // A backup policy is real budgeted money, but it names no SKU, so nothing
+    // ties this charge to it. Calling the charge covered was a guess dressed as
+    // a fact -- and one the breakdown below never agreed with.
     const report = compareBoqToUsage(
       [boq([item({ service_category: 'Backup', service_type: 'Azure Backup', description: 'Backup policy', monthly_cost: 800 })])],
       [row({ service: 'Backup', meter: 'Protected Instances', resource_name: 'vault-a' })],
       1,
     );
-    expect(report.attributions[0].coverage).toBe('pooled');
-    expect(report.notInBoqTotal).toBe(0);
+    expect(report.attributions[0].coverage).toBe('none');
+    expect(report.notInBoqTotal).toBeCloseTo(1000, 2);
   });
 });
 
@@ -126,11 +127,99 @@ describe('agreement with the headline figures', () => {
     expect(grouped.notInBoqTotal).toBeCloseTo(report.notInBoqTotal, 2);
   });
 
-  it('splits each group into matched, pooled and unbudgeted with nothing lost', () => {
+  it('splits each group into named and not-in-BOQ with nothing lost', () => {
+    // Two verdicts, not three. The breakdown asks how accurate the estimate is,
+    // and a charge no line names is missing from it whether or not a lump sum
+    // happens to absorb the money.
     const grouped = groupAttributions(report.attributions, 'resource_group');
     for (const g of grouped.groups) {
-      expect(g.matched + g.pooled + g.notInBoq).toBeCloseTo(g.actual, 2);
+      expect(g.matched + g.notInBoq).toBeCloseTo(g.actual, 2);
     }
+  });
+});
+
+describe('credits', () => {
+  /*
+   * Azure bills a hybrid benefit or a refund as a negative charge. They are
+   * real money and belong in the totals, but they are also the reason the
+   * "Not in BOQ" tile can be smaller than the column beneath it appears to add
+   * up to -- and a reader who checks that arithmetic, finds it wrong and is
+   * given no explanation stops trusting every other figure on the page.
+   */
+  const report = compareBoqToUsage(
+    [boq([item()])],
+    [
+      row({ service: 'Azure DNS', meter: 'Zone', resource_name: 'dns-a', resource_group: 'rg-dev', cost: 300 }),
+      row({ service: 'VM Licences', meter: 'Hybrid Benefit', resource_name: 'ahb', resource_group: 'rg-dev', cost: -100 }),
+    ],
+    1,
+  );
+
+  it('reports how much of the slice is credit', () => {
+    const grouped = groupAttributions(report.attributions, 'service');
+    expect(grouped.creditTotal).toBeCloseTo(-100, 2);
+  });
+
+  it('is zero when nothing was credited', () => {
+    const plain = compareBoqToUsage([boq([item()])], [row()], 1);
+    expect(groupAttributions(plain.attributions, 'service').creditTotal).toBe(0);
+  });
+
+  it('keeps a credit inside the totals rather than dropping it', () => {
+    // Netting it out of the column but not the total is exactly the bug this
+    // guards: the two must be reconcilable by adding the column up.
+    const grouped = groupAttributions(report.attributions, 'service');
+    const summed = grouped.groups.reduce((s, g) => s + g.notInBoq, 0);
+    expect(summed).toBeCloseTo(grouped.notInBoqTotal, 2);
+    expect(grouped.groups.some(g => g.notInBoq < 0)).toBe(true);
+  });
+});
+
+describe('budget that cannot be split per resource', () => {
+  /*
+   * A backup policy or a support retainer is real budget, but it names no disk
+   * and no VM size, so no individual charge can be tied to it. The report used
+   * to treat every leftover charge in such a category as covered by that lump
+   * sum and report zero not-in-BOQ, while the row-level attributions still
+   * called each charge unmatched. The summary said one thing, the breakdown
+   * said another, and the page offered no way to tell which was true.
+   *
+   * One definition now: no line named it, so it is not in the BOQ. The lump
+   * sum is still reported next to it as context.
+   */
+  const report = compareBoqToUsage(
+    [boq([item({
+      service_category: 'Backup',
+      service_type: 'Azure Backup',
+      description: 'Protected instances, no SKU named',
+      monthly_cost: 500,
+    })])],
+    [
+      row({ service: 'Backup', meter: 'Protected Instances', resource_name: 'vault-a', cost: 800 }),
+    ],
+    1,
+  );
+
+  it('counts an unmatched charge as not in the BOQ even where a lump sum exists', () => {
+    expect(report.notInBoqTotal).toBeCloseTo(800, 2);
+  });
+
+  it('still reports the lump sum so the reader can judge it', () => {
+    const backup = report.categories.find(c => c.key === 'backup');
+    expect(backup.pooledBudget).toBeCloseTo(500, 2);
+    expect(backup.pooledLines.length).toBe(1);
+  });
+
+  it('agrees with the breakdown regrouped any way at all', () => {
+    for (const d of DIMENSIONS) {
+      const grouped = groupAttributions(report.attributions, d.key);
+      expect(grouped.notInBoqTotal).toBeCloseTo(report.notInBoqTotal, 2);
+    }
+  });
+
+  it('lists the charge so the total can be checked against its parts', () => {
+    const summed = report.notInBoq.reduce((s, u) => s + u.cost, 0);
+    expect(summed).toBeCloseTo(report.notInBoqTotal, 2);
   });
 });
 
@@ -220,9 +309,11 @@ describe('filters', () => {
     expect(filterAttributions(all, { resourceGroups: new Set() })).toHaveLength(all.length);
   });
 
-  it('isolates spend with no budget line behind it', () => {
+  it('isolates spend no BOQ line names', () => {
+    // Including the charges a lump-sum budget absorbs: the filter is answering
+    // "what did the estimate fail to list", and those were never listed.
     const out = filterAttributions(all, { coverage: 'none' });
-    expect(out.every(r => r.coverage === 'none')).toBe(true);
+    expect(out.every(r => r.coverage !== 'line')).toBe(true);
     expect(out.some(r => r.service === 'Azure DNS')).toBe(true);
   });
 

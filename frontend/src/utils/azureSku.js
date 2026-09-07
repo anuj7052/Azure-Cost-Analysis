@@ -77,3 +77,31 @@ export function friendlyType(resourceType) {
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/^./, c => c.toUpperCase());
 }
+
+/**
+ * Pull the readable parts out of a resource id.
+ *
+ * An ARM id carries the answer to "what was this?" in the middle of it — the
+ * provider and type sit between `/providers/` and the resource's own name — but
+ * nobody should have to read a hundred-character path to find them. A GUID
+ * identifies a subscription to Azure; it identifies nothing at all to the
+ * person asking who touched production last Tuesday.
+ */
+export function describeResourceId(resourceId) {
+  if (!resourceId) return { name: '', service: '', resourceGroup: '' };
+  const parts = String(resourceId).split('/').filter(Boolean);
+  const at = parts.findIndex(p => p.toLowerCase() === 'providers');
+  const rgAt = parts.findIndex(p => p.toLowerCase() === 'resourcegroups');
+
+  const name = parts[parts.length - 1] || '';
+  const resourceGroup = rgAt === -1 ? '' : (parts[rgAt + 1] || '');
+  if (at === -1 || parts.length < at + 3) return { name, service: '', resourceGroup };
+
+  // Nested types read as provider/parentType/name/childType; the child is the
+  // one that describes the resource, not the parent it hangs off.
+  const namespace = parts[at + 1];
+  const tail = parts.slice(at + 2);
+  const type = tail.length >= 4 ? tail[2] : tail[0];
+  return { name, service: friendlyType(`${namespace}/${type}`), resourceGroup };
+}
+

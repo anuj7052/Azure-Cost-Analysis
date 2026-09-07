@@ -24,7 +24,16 @@ import core.db as db_module
 from services import cost_cache, cost_client
 
 
-NOW = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+#: A window that is still open, whenever the suite happens to run.
+#:
+#: This was pinned to a fixed date, which quietly stopped meaning "live" the
+#: moment the calendar passed it: August 2026 was an open month while the test
+#: was being written and a settled one a week later. The pruning test then
+#: stored two rows it believed were one settled and one live, got two settled
+#: rows, and failed on a tie-break — a red suite caused by the date rather than
+#: by the code, which is the kind of failure that teaches people to ignore
+#: failures.
+NOW = datetime.now(timezone.utc)
 
 
 def body_ending(when: datetime | str) -> dict:
@@ -260,7 +269,12 @@ class TestThroughTheClient:
     async def clean(self, store, monkeypatch):
         cost_client._cache.clear()
         cost_client._inflight.clear()
-        monkeypatch.setattr(cost_client, "_throttled_until", 0.0)
+        # Throttling and pacing are per-scope and live at module level, so a
+        # test that ran earlier could otherwise decide how many Azure calls
+        # this one is allowed to make.
+        monkeypatch.setattr(cost_client, "_throttled_until", {})
+        monkeypatch.setattr(cost_client, "_scope_sent", {})
+        monkeypatch.setattr(cost_client, "_scope_rate", {})
         # httpx reads proxy settings from the environment when the client is
         # constructed, which happens before the stubbed request is ever sent.
         # A developer machine behind a proxy would otherwise fail these tests
@@ -275,7 +289,7 @@ class TestThroughTheClient:
     def _counting_azure(monkeypatch):
         calls = []
 
-        async def fake_post(client, url, headers, body):
+        async def fake_post(client, url, headers, body, patient=False):
             calls.append(url)
             return {"properties": {"columns": [{"name": "PreTaxCost"}], "rows": [[1.0]]}}
 

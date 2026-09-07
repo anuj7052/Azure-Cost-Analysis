@@ -70,12 +70,28 @@ export const DIMENSIONS = [
   },
 ];
 
+/**
+ * Two verdicts, not three.
+ *
+ * The comparison itself keeps a middle case -- a charge with no line of its own
+ * but sitting under a lump-sum budget like a support retainer or a backup
+ * policy -- because that is the fair way to score a category's variance.
+ *
+ * It is the wrong way to score an estimate. This breakdown exists to answer
+ * "how accurate is the BOQ", and against that question a charge nothing in the
+ * file names is missing from the file, whether or not some lump sum happens to
+ * absorb the money. Three verdicts made the reader learn the word "pooled"
+ * before they could read the table, so the middle case is counted as not in the
+ * BOQ here and the difference from the headline card is stated in the panel.
+ */
 export const COVERAGE_FILTERS = [
   { key: 'all', label: 'All charges' },
   { key: 'none', label: 'Not in BOQ' },
   { key: 'line', label: 'Matched to a BOQ line' },
-  { key: 'pooled', label: 'Covered by pooled budget' },
 ];
+
+/** Whether a BOQ line actually names this charge. */
+const isMatched = (row) => row.coverage === 'line';
 
 /** Distinct values of a field across the rows, cheapest possible filter source. */
 export function optionsFor(attributions, dimensionKey) {
@@ -104,7 +120,8 @@ export function filterAttributions(attributions, filters = {}) {
     if (!inSet(services, row.service)) return false;
     if (!inSet(regions, row.region)) return false;
     if (!inSet(subscriptions, row.subscription_id)) return false;
-    if (coverage && coverage !== 'all' && row.coverage !== coverage) return false;
+    if (coverage === 'line' && !isMatched(row)) return false;
+    if (coverage === 'none' && isMatched(row)) return false;
     if (term) {
       const haystack = [
         row.resource_name, row.resource_group, row.service,
@@ -135,7 +152,6 @@ export function groupAttributions(attributions, dimensionKey, budgetByCategory =
       label: name,
       actual: 0,
       matched: 0,
-      pooled: 0,
       notInBoq: 0,
       rows: [],
       resourceGroups: new Set(),
@@ -145,8 +161,7 @@ export function groupAttributions(attributions, dimensionKey, budgetByCategory =
 
     const cost = row.monthlyCost || 0;
     entry.actual += cost;
-    if (row.coverage === 'line') entry.matched += cost;
-    else if (row.coverage === 'pooled') entry.pooled += cost;
+    if (isMatched(row)) entry.matched += cost;
     else entry.notInBoq += cost;
 
     entry.rows.push(row);
@@ -166,7 +181,6 @@ export function groupAttributions(attributions, dimensionKey, budgetByCategory =
       label: g.label,
       actual,
       matched: round(g.matched),
-      pooled: round(g.pooled),
       notInBoq: round(g.notInBoq),
       // Share of the *filtered* total, so the percentages always add to 100
       // of what is on screen rather than of some hidden larger number.
@@ -186,7 +200,13 @@ export function groupAttributions(attributions, dimensionKey, budgetByCategory =
     total: round(total),
     notInBoqTotal: round(rolled.reduce((s, g) => s + g.notInBoq, 0)),
     matchedTotal: round(rolled.reduce((s, g) => s + g.matched, 0)),
-    pooledTotal: round(rolled.reduce((s, g) => s + g.pooled, 0)),
+    // Azure bills credits -- hybrid benefit, refunds, adjustments -- as
+    // negative charges. They are real money and belong in the totals, but they
+    // are also the reason a total can be smaller than the rows above it appear
+    // to add up to, so the panel has to be able to say how much of it is this.
+    creditTotal: round(
+      attributions.reduce((s, r) => s + Math.min(r.monthlyCost || 0, 0), 0),
+    ),
     rowCount: attributions.length,
   };
 }
@@ -195,15 +215,15 @@ export function groupAttributions(attributions, dimensionKey, budgetByCategory =
 export function breakdownCsv(result, currency) {
   const header = [
     result.dimension.label, `Actual per month (${currency})`,
-    `Matched to BOQ (${currency})`, `Pooled budget (${currency})`,
-    `Not in BOQ (${currency})`, 'Share %', 'Resources', 'Services',
+    `Matched to BOQ (${currency})`, `Not in BOQ (${currency})`,
+    'Share %', 'Resources', 'Services',
   ];
   const escape = (v) => {
     const s = String(v ?? '');
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = result.groups.map(g => [
-    g.label, g.actual, g.matched, g.pooled, g.notInBoq, g.share,
+    g.label, g.actual, g.matched, g.notInBoq, g.share,
     g.resourceCount, g.serviceCount,
   ].map(escape).join(','));
   return [header.map(escape).join(','), ...lines].join('\n');

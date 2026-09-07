@@ -80,6 +80,21 @@ export function errorMessage(err) {
   return 'Something went wrong. Please try again.';
 }
 
+/**
+ * Only the part of the failure someone on this team wrote for a reader.
+ *
+ * Restricted to the envelope on purpose. `error.message` is composed by
+ * core/errors.py, which turns unhandled faults into safe copy before they
+ * leave the server. A bare `detail` has no such guarantee -- on a 500 it can
+ * be whatever the exception stringified to, up to and including a traceback --
+ * and `err.message` on a failed request is axios's "Request failed with status
+ * code 502", which is true, useless, and worse than our own generic line
+ * because it looks like it is telling you something.
+ */
+function authoredMessage(err) {
+  return body(err).error?.message || '';
+}
+
 /** The request id, for a user to quote when reporting a problem. */
 export const errorRequestId = (err) => body(err).error?.request_id || '';
 
@@ -130,7 +145,12 @@ export function friendlyError(err) {
   }
 
   if (status && status >= 500) {
-    return "We couldn't complete this right now. Please try again.";
+    // Not every 5xx is a crash. A router that reached Azure, was refused, and
+    // said which permission it needed returns 502 with that sentence -- and
+    // replacing it with "please try again" sends the reader off to retry
+    // something that will fail identically until a role is granted. Our own
+    // copy stays as the fallback for the 5xx that really are unexplained.
+    return authoredMessage(err) || "We couldn't complete this right now. Please try again.";
   }
 
   if (err?.response === undefined && err?.message) {

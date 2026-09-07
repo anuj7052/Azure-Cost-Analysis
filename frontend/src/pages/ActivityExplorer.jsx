@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   Activity, Loader2, User, AlertTriangle, XCircle, CheckCircle2, Filter, Clock,
 } from 'lucide-react';
 import { fetchActivity } from '../api/client';
+import { describeResourceId } from '../utils/azureSku';
 import { useAppStore } from '../store/useAppStore';
 
 const WINDOWS = [1, 7, 30, 90];
@@ -14,15 +15,13 @@ function when(timestamp) {
   return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
 }
 
-/** The resource name is the last segment; the full id is too long to show. */
-function resourceName(resourceId) {
-  if (!resourceId) return '';
-  const parts = resourceId.split('/').filter(Boolean);
-  return parts[parts.length - 1] || '';
-}
-
-function EventRow({ event }) {
-  const name = resourceName(event.resource_id);
+function EventRow({ event, subscriptionName }) {
+  const { name, service } = describeResourceId(event.resource_id);
+  const facts = [
+    service,
+    event.resource_group && `Resource group ${event.resource_group}`,
+    subscriptionName,
+  ].filter(Boolean);
 
   return (
     <div className="border border-slate-800 bg-slate-800/30 rounded-xl p-3">
@@ -38,16 +37,22 @@ function EventRow({ event }) {
             {name && <span className="text-slate-200"> {name}</span>}
           </p>
 
+          {facts.length > 0 && (
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-400">
+              {facts.map((fact, i) => (
+                <span key={fact}>
+                  {i > 0 && <span className="mr-1.5 text-slate-600">·</span>}
+                  {fact}
+                </span>
+              ))}
+            </p>
+          )}
+
           <p className="text-[11px] text-slate-500 mt-0.5">
             {when(event.at)}
-            {event.resource_group ? ` · ${event.resource_group}` : ''}
             {!event.succeeded && (
               <span className="text-red-400"> · {event.status || 'Failed'}</span>
             )}
-          </p>
-
-          <p className="text-[10px] text-slate-600 mt-1 truncate" title={event.operation}>
-            {event.operation}
           </p>
         </div>
       </div>
@@ -80,6 +85,7 @@ function Rank({ title, rows, labelKey }) {
 export default function ActivityExplorer() {
   const selectedTenantId = useAppStore(s => s.selectedTenantId);
   const selectedSubscriptionIds = useAppStore(s => s.selectedSubscriptionIds);
+  const subscriptions = useAppStore(s => s.subscriptions);
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -112,15 +118,23 @@ export default function ActivityExplorer() {
     return () => { cancelled = true; };
   }, [selectedTenantId, selectedSubscriptionIds.join(','), days, writesOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A subscription is chosen by name everywhere else in this app, so the log
+  // should name it too rather than make the reader match GUIDs by eye.
+  const subscriptionNames = useMemo(() => Object.fromEntries(
+    (subscriptions || []).map(s => [
+      s.subscription_id,
+      s.display_name || s.name || s.subscription_id,
+    ]),
+  ), [subscriptions]);
+
   const term = search.trim().toLowerCase();
   const events = (data?.events || []).filter(e => {
     if (!term) return true;
-    return (
-      e.caller.toLowerCase().includes(term) ||
-      e.summary.toLowerCase().includes(term) ||
-      e.resource_id.toLowerCase().includes(term) ||
-      e.resource_group.toLowerCase().includes(term)
-    );
+    const { name, service } = describeResourceId(e.resource_id);
+    return [
+      e.caller, e.summary, name, service, e.resource_group,
+      subscriptionNames[e.subscription_id],
+    ].some(field => String(field || '').toLowerCase().includes(term));
   });
 
   return (
@@ -178,7 +192,7 @@ export default function ActivityExplorer() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Filter by person, resource or operation…"
+            placeholder="Filter by person, resource, service or subscription…"
             className="h-9 w-full rounded-xl border border-slate-700 bg-slate-950/60 pl-9 pr-3 text-xs text-white placeholder-slate-600 outline-none focus:border-blue-500"
           />
         </div>
@@ -265,7 +279,11 @@ export default function ActivityExplorer() {
             ) : (
               <div className="space-y-2">
                 {events.slice(0, 200).map(event => (
-                  <EventRow key={`${event.id}-${event.at}`} event={event} />
+                  <EventRow
+                    key={`${event.id}-${event.at}`}
+                    event={event}
+                    subscriptionName={subscriptionNames[event.subscription_id]}
+                  />
                 ))}
                 {events.length > 200 && (
                   <p className="text-[11px] text-slate-600 text-center pt-2">

@@ -6,7 +6,7 @@
  * which somebody can actually do something. Both read the same daily series the
  * chart is drawn from, so neither can contradict the line above them.
  */
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ArrowDownRight, ArrowUpRight, CalendarDays, ChevronRight, CircleDot, Minus,
   PlayCircle, StopCircle, TrendingUp, X,
@@ -156,6 +156,13 @@ export function DayDetail({ days, date, budget, currency, onClose, onPickService
  */
 export function DayTimeline({ days, budget, currency, onPick, onPickService, selected }) {
   const events = useMemo(() => dayTimeline(days, budget), [days, budget]);
+  // A scrollbar inside a page that already scrolls is a trap: the wheel does
+  // one of two things depending on where the pointer happens to be, and the
+  // reader cannot tell which until it happens. The list opens at a readable
+  // length instead and grows on request.
+  const [showAll, setShowAll] = useState(false);
+  const FIRST = 6;
+
   if (events.length === 0) {
     return (
       <p className="px-5 py-6 text-center text-xs text-slate-500">
@@ -164,9 +171,12 @@ export function DayTimeline({ days, budget, currency, onPick, onPickService, sel
     );
   }
 
+  const shown = showAll ? events : events.slice(0, FIRST);
+
   return (
-    <ol className="max-h-96 overflow-y-auto px-5 py-3">
-      {events.map((e, i) => {
+    <>
+    <ol className="px-5 py-3">
+      {shown.map((e, i) => {
         const meta = KIND[e.kind] || KIND.spike;
         const Glyph = meta.icon;
         const active = selected === e.date;
@@ -174,7 +184,7 @@ export function DayTimeline({ days, budget, currency, onPick, onPickService, sel
           <li key={`${e.date}:${e.kind}`} className="relative flex gap-3 pb-3.5">
             {/* The rail, drawn between the markers rather than behind them, so
                 the last event does not trail a line into nothing. */}
-            {i < events.length - 1 && (
+            {i < shown.length - 1 && (
               <span className="absolute left-[11px] top-6 h-full w-px bg-slate-800" aria-hidden />
             )}
             <span className={`relative z-10 mt-0.5 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border bg-slate-900 ${meta.ring}`}>
@@ -223,6 +233,19 @@ export function DayTimeline({ days, budget, currency, onPick, onPickService, sel
         );
       })}
     </ol>
+    {events.length > FIRST && (
+      <div className="px-5 pb-3">
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className="w-full rounded-lg border border-slate-800 py-1.5 text-[11px] text-slate-400 transition hover:border-slate-600 hover:text-white"
+        >
+          {showAll
+            ? `Show only the ${FIRST} most recent`
+            : `Show all ${events.length} days that moved`}
+        </button>
+      </div>
+    )}
+    </>
   );
 }
 

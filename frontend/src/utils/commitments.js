@@ -128,6 +128,173 @@ export function expiryLabel(days) {
 }
 
 /**
+ * A date as a person would write it, or the words that say there is not one.
+ *
+ * Azure returns these as ISO timestamps, and the time of day a reservation was
+ * purchased has never been the answer to anybody's question.
+ */
+export function dateLabel(iso) {
+  if (!iso) return MISSING;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return MISSING;
+  return at.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/**
+ * What the commitment costs over a year, at the rate it is costing now.
+ *
+ * Twelve times a thirty-day amortised figure, which is an extrapolation and is
+ * labelled as one wherever it is shown. It is worth showing because a purchase
+ * is decided in annual terms even though the bill arrives monthly.
+ */
+export function annualised(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  return Math.round(value * 12 * 100) / 100;
+}
+
+/**
+ * The money still to run before the term ends.
+ *
+ * This is the number that decides whether an underused commitment is worth
+ * acting on: a reservation wasting a lot per month with three weeks left is a
+ * calendar entry, and the same one with two years left is a decision.
+ *
+ * Derived, and only ever from two measured values -- the amortised monthly
+ * cost and the days Azure says are left. Missing either gives nothing rather
+ * than a plausible figure, and an expired commitment has nothing left to run
+ * rather than a negative amount.
+ */
+export function remainingValue(item) {
+  const monthly = item && item.monthly_cost;
+  const days = item && item.days_to_expiry;
+  if (monthly === null || monthly === undefined) return null;
+  if (days === null || days === undefined) return null;
+  if (days <= 0) return 0;
+  return Math.round((monthly * (days / 30)) * 100) / 100;
+}
+
+/**
+ * Why a commitment has no amount against it, in the reader's terms.
+ *
+ * "Not available" is honest and completely unhelpful on its own, and every
+ * amount in the panel collapses to it together, which reads like a broken page
+ * rather than a missing permission. It is almost never broken. Amortised
+ * benefit charges land on the subscription that *consumed* the benefit, not the
+ * one that bought it, so a tenant-shared reservation charges whichever
+ * subscriptions actually ran the VMs -- and if those are not in the current
+ * selection, Cost Management correctly returns nothing.
+ *
+ * That is a selection problem with a one-click fix, and saying so is worth more
+ * than any figure this page could invent to fill the gap.
+ */
+export function costUnavailableReason(item) {
+  if (!item) return '';
+  if (item.monthly_cost !== null && item.monthly_cost !== undefined) return '';
+
+  const scope = String(item.scope_type || '').toLowerCase();
+  if (scope === 'shared') {
+    return 'This benefit is shared across the tenant, so its charges land on '
+      + 'whichever subscriptions actually used it — not on the one that bought '
+      + 'it. Select those subscriptions as well and the amounts will appear.';
+  }
+  if (scope.startsWith('management')) {
+    return 'This benefit is scoped to a management group, so its charges are '
+      + 'spread across the subscriptions underneath it. Select those as well to '
+      + 'see the amounts.';
+  }
+  const scopes = (item.scopes || []).filter(Boolean);
+  if (scopes.length > 0) {
+    return 'No amortised charges came back for the subscriptions you have '
+      + `selected. This commitment is scoped to ${scopes[0]}, so select that `
+      + 'subscription to see what it costs.';
+  }
+  return 'Cost Management returned no benefit charges for the selected '
+    + 'subscriptions. That is usually the selection rather than a missing '
+    + 'commitment — check the Cost Management Reader role if selecting more '
+    + 'subscriptions does not help.';
+}
+
+/**
+ * Every field Azure returned about one commitment, grouped the way it is read.
+ *
+ * The inventory table answers "which of these is a problem"; this answers
+ * "what exactly did we buy". They are different questions, and cramming the
+ * second into the first is how a table grows twenty columns nobody scans.
+ *
+ * Built here rather than in the drawer so the guarantee is testable: every
+ * value is either something Azure returned or the words "Not available", and
+ * the derived ones carry a note saying so. Nothing is filled in with a zero.
+ */
+export function commitmentDetail(item, grain = 30) {
+  if (!item) return [];
+  const ccy = item.currency || '';
+  const scopes = (item.scopes || []).filter(Boolean);
+  // A note explaining how a figure was worked out is worth reading beside the
+  // figure and is noise beside its absence: "twelve times the monthly figure"
+  // under the words "Not available" describes a calculation that never
+  // happened. The reason it is missing is said once, by the panel, instead of
+  // five times in five different wordings.
+  const priced = item.monthly_cost !== null && item.monthly_cost !== undefined;
+  const note = (text) => (priced ? text : '');
+
+  return [
+    {
+      title: 'What it is',
+      rows: [
+        ['Type', KIND_FULL[item.kind] || item.kind || MISSING],
+        ['SKU', item.sku || MISSING],
+        ['Covers', item.resource_type || MISSING],
+        ['Quantity', item.quantity === null || item.quantity === undefined
+          ? MISSING : `${item.quantity} ${item.quantity_unit || ''}`.trim()],
+        ['Region', item.location || 'Not region-bound'],
+        ['State', item.state || MISSING],
+      ],
+    },
+    {
+      title: 'Term',
+      rows: [
+        ['Duration', termLabel(item.term)],
+        ['Purchased', dateLabel(item.purchase_date)],
+        ['Ends', dateLabel(item.expiry)],
+        ['Time left', expiryLabel(item.days_to_expiry)],
+        // Auto-renew is the difference between a deadline and a note, so it is
+        // stated here rather than left for the reader to check in the portal.
+        ['Renews automatically', item.renew ? 'Yes' : 'No'],
+        ['Billing plan', item.billing_plan || MISSING],
+      ],
+    },
+    {
+      title: 'Amounts',
+      rows: [
+        ['Monthly cost', money(item.monthly_cost, ccy), note('Amortised over the last 30 days.')],
+        ['Yearly cost', money(annualised(item.monthly_cost), ccy),
+          note('Twelve times the monthly figure, not a quote.')],
+        ['Still to run', money(remainingValue(item), ccy),
+          note('Monthly cost for the days left on the term.')],
+        ['Wasted per month', money(wastageOf(item, grain), ccy),
+          wastageBasis(item, grain) === 'measured'
+            ? 'Billed by Azure as unused benefit.'
+            : wastageBasis(item, grain) === 'derived'
+              ? `Worked out from ${grain}-day utilisation, not billed separately.`
+              : ''],
+        ['Wasted per year', money(annualised(wastageOf(item, grain)), ccy),
+          wastageOf(item, grain) === null ? '' : 'At the current rate of underuse.'],
+      ],
+    },
+    {
+      title: 'Where it applies',
+      rows: [
+        ['Scope', item.scope_type || MISSING],
+        ['Applied to', scopes.length === 0 ? MISSING
+          : scopes.length === 1 ? scopes[0]
+            : `${scopes.length} scopes`],
+        ['Commitment ID', item.id || MISSING],
+      ],
+    },
+  ];
+}
+
+/**
  * Narrow the inventory to what the reader asked for.
  *
  * Expired commitments are hidden by default and counted rather than dropped
@@ -246,4 +413,56 @@ export function utilisationVerdict(summary, grain) {
     return `${percent(value)} used ${window}. There is some headroom left unconsumed.`;
   }
   return `${percent(value)} used ${window}. Nearly all of what you committed to is being consumed.`;
+}
+
+/**
+ * How each sortable column gets its value out of a commitment.
+ *
+ * The inventory arrives worst-utilisation-first, which answers "what is broken"
+ * and nothing else. The other two questions people bring to this table --
+ * "what costs the most" and "what lapses first" -- had no answer short of
+ * reading every row, so the columns sort.
+ *
+ * Text sorts as text and numbers as numbers; comparing a SKU with `-` would
+ * order Standard_D16s before Standard_D8s and look like a bug.
+ */
+export const SORTERS = {
+  name: item => String(item.name || '').toLowerCase(),
+  kind: item => String(item.kind || '').toLowerCase(),
+  sku: item => String(item.sku || '').toLowerCase(),
+  term: item => String(item.term || '').toLowerCase(),
+  expiry: item => item.days_to_expiry,
+  utilisation: (item, grain) => usedAt(item, grain),
+  cost: item => item.monthly_cost,
+  wastage: (item, grain) => wastageOf(item, grain),
+};
+
+/**
+ * Order the inventory by one column.
+ *
+ * Commitments with no value for that column sink to the bottom in both
+ * directions rather than flipping between the top and the bottom. Sorting
+ * ascending by cost should surface the cheapest commitment, not the ones whose
+ * cost Cost Management did not return -- those are a separate problem, and
+ * putting them first buries the answer to the question that was asked.
+ *
+ * Returns a new array; the caller's list is memoised elsewhere and sorting it
+ * in place would mutate a value React believes is unchanged.
+ */
+export function sortCommitments(items, key, direction = 'asc', grain = 30) {
+  const read = SORTERS[key];
+  if (!read) return items || [];
+  const sign = direction === 'desc' ? -1 : 1;
+  const absent = value => value === null || value === undefined || value === ''
+    || (typeof value === 'number' && Number.isNaN(value));
+
+  return [...(items || [])].sort((a, b) => {
+    const left = read(a, grain);
+    const right = read(b, grain);
+    if (absent(left) && absent(right)) return 0;
+    if (absent(left)) return 1;
+    if (absent(right)) return -1;
+    if (typeof left === 'number' && typeof right === 'number') return (left - right) * sign;
+    return String(left).localeCompare(String(right)) * sign;
+  });
 }

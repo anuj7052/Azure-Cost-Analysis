@@ -14,7 +14,15 @@ import { lockScroll, unlockScroll } from '../../utils/scrollLock';
  * surfaces. Rendered in place, the panel anchors to the card that opened it
  * rather than to the viewport.
  */
-export default function DetailPanel({ open, title, subtitle, onClose, children }) {
+/*
+ * `eyebrow` and `footer` are both optional and both default to nothing, so
+ * every existing caller renders exactly as before. They exist because a panel
+ * deep enough to need tabs also needs to say where you are above the title,
+ * and because an action that applies to the whole record belongs pinned to the
+ * bottom edge rather than buried under however much detail happens to be
+ * above it.
+ */
+export default function DetailPanel({ open, title, subtitle, eyebrow, footer, onClose, children }) {
   const panel = useRef(null);
   const returnTo = useRef(null);
 
@@ -77,8 +85,9 @@ export default function DetailPanel({ open, title, subtitle, onClose, children }
         <style>{`@keyframes slideIn { from { transform: translateX(24px); opacity: 0 } to { transform: none; opacity: 1 } }`}</style>
         <header className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4 shrink-0 sm:gap-4 sm:px-6 sm:py-5">
           <div className="min-w-0">
+            {eyebrow && <div className="mb-1 text-[11px] text-slate-500">{eyebrow}</div>}
             <h2 className="text-base font-bold text-white truncate sm:text-lg">{title}</h2>
-            {subtitle && <p className="text-xs text-slate-500 mt-1">{subtitle}</p>}
+            {subtitle && <div className="text-xs text-slate-500 mt-1">{subtitle}</div>}
           </div>
           <button
             onClick={onClose}
@@ -95,6 +104,14 @@ export default function DetailPanel({ open, title, subtitle, onClose, children }
             overscroll-contain stops the page behind scrolling once this hits
             its end. */}
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 space-y-6 sm:px-6 sm:py-5">{children}</div>
+        {/* shrink-0 for the same reason the scroller needs min-h-0: without it
+            the action bar is compressed away by a long body instead of holding
+            its own height at the bottom edge. */}
+        {footer && (
+          <footer className="shrink-0 border-t border-slate-800 bg-slate-900 px-4 py-3 sm:px-6 sm:py-4">
+            {footer}
+          </footer>
+        )}
       </aside>
     </div>,
     document.body,

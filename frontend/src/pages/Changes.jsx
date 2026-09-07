@@ -25,18 +25,19 @@ import {
   GitCompareArrows, PlusCircle, MinusCircle, PencilLine, Loader2, History,
   Clock, AlertTriangle, RadioTower, HelpCircle, EyeOff, Eye, Code2,
   ChevronRight, ChevronDown, Users, WrapText, ExternalLink, Layers, MapPin,
-  Boxes, FolderOpen,
+  Boxes, FolderOpen, ScrollText, Search,
 } from 'lucide-react';
 import {
-  fetchChanges, fetchResourceTimeline, fetchScans, runScan,
+  fetchChanges, fetchScans, runScan,
   ignoreChange, unignoreChange, fetchActivity,
 } from '../api/client';
 import { useAppStore } from '../store/useAppStore';
-import { formatAmount } from '../utils/currency';
 import DetailPanel from '../components/Common/DetailPanel';
+import ResourceTimeline from '../components/Common/ResourceTimeline';
 import GroupActivity from '../components/Changes/GroupActivity';
-import { describeFieldChange, shortType, summariseChange } from '../utils/changeSummary';
+import { shortType, summariseChange } from '../utils/changeSummary';
 import { friendlyError } from '../utils/apiError';
+import { describeResourceId } from '../utils/azureSku';
 import {
   GROUPINGS, UNASSIGNED, toEntries, groupBy, flattenBag, toPropertyTree, countLeaves,
 } from '../utils/changeTree';
@@ -124,6 +125,7 @@ function CountBadges({ added = 0, removed = 0, modified = 0 }) {
 const VIEWS = [
   { key: 'list', label: 'List', icon: Boxes },
   { key: 'timeline', label: 'Timeline', icon: History },
+  { key: 'all', label: 'Everything', icon: ScrollText },
 ];
 
 /**
@@ -442,276 +444,252 @@ function ActivityUsers({ tenantId, subscriptionIds, resourceId }) {
 }
 
 /**
- * Everything that ever happened to one resource, with what it cost.
+ * Every change in the window, in one list, with nothing to drill into first.
  *
- * This is the view a diff cannot give: a diff says a VM was resized, a history
- * says it has been resized four times this quarter — and says what each resize
- * did to the bill.
+ * The cascade answers "what happened in that resource group". This answers the
+ * question people actually arrive with — "what happened at all" — which the
+ * cascade cannot, because it only ever shows one group at a time and a reader
+ * who does not already know which group to open has nowhere to start.
  *
- * Three sources feed it and they are not equally reliable, so none of them is
- * allowed to pretend otherwise. Azure's own creation stamp is exact. The
- * Activity Log is exact and names a person, but only reaches back ninety days.
- * Our snapshots reach back for ever and are only as precise as the scan
- * interval. Every date below carries a badge saying which one it came from,
- * because a column mixing second-accurate and week-accurate dates with nothing
- * to tell them apart teaches people to trust none of it.
+ * The one thing it deliberately will not do is print a timestamp per row. A
+ * diff between two captures knows the window a change fell inside, not the
+ * moment it happened; a column of exact-looking times here would be invented.
+ * The window is stated once at the top, and the exact date - when Azure or the
+ * Activity Log knows one - lives in the resource's own history, one click away.
  */
-function LifecycleDate({ label, entry, tone }) {
-  if (!entry) {
-    return (
-      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
-        <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
-        <p className="mt-0.5 text-[11px] text-slate-600">—</p>
-      </div>
+const FEED_LIMIT = 300;
+
+function EverythingFeed({ entries, subscriptionNames, before, after, onOpen }) {
+  const [query, setQuery] = useState('');
+
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const matched = needle
+      ? entries.filter(e => [
+        e.name, e.type, e.resource_group, e.location,
+        subscriptionNames[e.subscription_id] || e.subscription_id,
+      ].some(v => (v || '').toLowerCase().includes(needle)))
+      : entries;
+
+    // Removals first, then additions, then edits: a resource that has gone is
+    // the one worth seeing before the reader stops scrolling.
+    const rank = { removed: 0, added: 1, modified: 2 };
+    return [...matched].sort(
+      (a, b) => (rank[a.kind] - rank[b.kind]) || (a.name || '').localeCompare(b.name || ''),
     );
-  }
+  }, [entries, query, subscriptionNames]);
 
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
-      <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
-      <p className={`mt-0.5 text-[12px] font-semibold ${tone}`}>{moment(entry.at)}</p>
-      <p
-        className="mt-1 inline-flex items-center gap-1 text-[10px] text-slate-500"
-        title={entry.detail}
-      >
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${
-            entry.exact ? 'bg-emerald-400' : 'bg-amber-400'
-          }`}
-        />
-        {SOURCE_LABEL[entry.source] || entry.source}
-        {!entry.exact && ' · approximate'}
-      </p>
-      {!!entry.by && (
-        <p className="mt-1 truncate text-[10px] text-slate-400" title={entry.by}>
-          by {entry.by}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** The cost either side of one change, or nothing if we could not price it. */
-function CostSwing({ event, currency }) {
-  if (event.cost_before == null && event.cost_after == null) return null;
-
-  const delta = event.cost_delta;
-  const rising = delta != null && delta > 0;
-  const falling = delta != null && delta < 0;
-
-  return (
-    <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-      <span className="text-slate-500">
-        {formatAmount(event.cost_before ?? 0, currency)} → {formatAmount(event.cost_after ?? 0, currency)}
-      </span>
-      {delta != null && (
-        <span
-          className={`font-semibold ${
-            rising ? 'text-red-300' : falling ? 'text-emerald-300' : 'text-slate-400'
-          }`}
-        >
-          {rising ? '+' : ''}{formatAmount(delta, currency)}
-          {event.cost_delta_pct != null && ` (${rising ? '+' : ''}${event.cost_delta_pct}%)`}
-        </span>
-      )}
-      {/* A period still being billed against a finished one is not a
-          like-for-like number, and reading it as one turns a half-month into
-          an imaginary saving. */}
-      {event.cost_after_partial && (
-        <span className="text-[10px] text-amber-400/80" title="This period is still being billed, so the figure will keep rising.">
-          period in progress
-        </span>
-      )}
-    </p>
-  );
-}
-
-function EntityHistory({ tenantId, resource }) {
-  // Keyed by resource id rather than paired with a separate loading flag. The
-  // flag version had to be set synchronously inside the effect to avoid showing
-  // the previous resource's history for a frame; deriving it instead means the
-  // stale result simply cannot be rendered.
-  const [result, setResult] = useState({ id: null, data: null });
-  const [granularity, setGranularity] = useState('monthly');
-
-  useEffect(() => {
-    let cancelled = false;
-    const id = resource.resource_id;
-    fetchResourceTimeline(tenantId, id, { granularity })
-      .then(data => { if (!cancelled) setResult({ id, data }); })
-      .catch(() => { if (!cancelled) setResult({ id, data: null }); });
-    return () => { cancelled = true; };
-  }, [tenantId, resource.resource_id, granularity]);
-
-  const data = result.data;
-
-  // Switching to daily refetches, but the events and the lifecycle dates do not
-  // depend on granularity. Only the cost strip is stale, so only the cost strip
-  // shows that it is loading — clearing the whole timeline to change a toggle
-  // would throw away the thing the reader is looking at.
-  const costPending = !!data && data.cost?.granularity !== granularity;
-
-  if (result.id !== resource.resource_id) {
-    return (
-      <p className="flex items-center gap-2 text-[11px] text-slate-400">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Reading history, costs and the Activity Log…
-      </p>
-    );
-  }
-
-  if (!data?.events?.length) {
-    return <p className="text-[11px] text-slate-400">No history recorded for this resource.</p>;
-  }
-
-  const life = data.lifecycle || {};
-  const currency = data.cost?.currency || 'USD';
-  const summary = data.cost?.summary || {};
-
-  return (
-    <>
-      {/* ── When it was born, changed and died ───────────────────────── */}
-      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <LifecycleDate label="Created" entry={life.created} tone="text-emerald-300" />
-        <LifecycleDate label="Last changed" entry={life.last_changed} tone="text-amber-300" />
-        <LifecycleDate label="Deleted" entry={life.deleted} tone="text-red-300" />
-      </div>
-
-      {/* ── What it costs ────────────────────────────────────────────── */}
-      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-        <span className="text-[10px] uppercase tracking-wide text-slate-500">Cost</span>
-        {costPending ? (
-          <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Reading {granularity} cost…
-          </span>
-        ) : (
-          <>
-            <span className="text-[12px] font-semibold text-slate-200">
-              {formatAmount(summary.latest ?? 0, currency)}
-              <span className="ml-1 text-[10px] font-normal text-slate-500">
-                {summary.latest_period || 'latest period'}
-              </span>
-            </span>
-            <span className="text-[11px] text-slate-500">
-              {formatAmount(summary.total ?? 0, currency)} over {summary.periods || 0}{' '}
-              {granularity === 'daily' ? 'days' : 'months'}
-            </span>
-          </>
-        )}
-        <div className="ml-auto flex items-center gap-1">
-          {['monthly', 'daily'].map(option => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => setGranularity(option)}
-              className={`rounded px-2 py-0.5 text-[10px] capitalize transition-colors ${
-                granularity === option
-                  ? 'bg-blue-500/15 text-blue-300'
-                  : 'text-slate-500 hover:text-slate-300'
-              }`}
-              // Daily is the throttle-prone read, so it is never the default.
-              title={
-                option === 'daily'
-                  ? 'Day by day for the last 90 days. Slower, and shows the exact day the bill moved.'
-                  : 'Month by month for the last 12 months.'
-              }
-            >
-              {option}
-            </button>
-          ))}
+    <section className="rounded-2xl border border-slate-800 bg-slate-900/60">
+      <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 px-4 py-3">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Filter by name, type, resource group, region or subscription"
+            className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-600"
+          />
         </div>
+        <span className="shrink-0 text-[11px] text-slate-500">
+          {rows.length} of {entries.length}
+        </span>
       </div>
 
-      <p className="mb-2 text-[11px] text-slate-500">
-        First seen {when(data.first_seen)} · last seen {when(data.last_seen)} ·
-        present in {data.scan_count} capture{data.scan_count === 1 ? '' : 's'}
+      <p className="border-b border-slate-800 px-4 py-2 text-[11px] text-slate-500">
+        Everything that moved between {when(before)} and {when(after)}. The exact moment a
+        change happened is not something a capture-to-capture comparison knows — open a
+        row for the dates Azure and the Activity Log can vouch for.
       </p>
 
-      <ol className="space-y-3">
-        {data.events.map((event, index) => {
-          const meta = KIND[event.kind] || {
-            label: 'First seen', dot: 'bg-blue-400', tone: 'text-blue-300',
-          };
+      <ul className="max-h-[38rem] divide-y divide-slate-800 overflow-y-auto">
+        {rows.length === 0 && (
+          <li className="p-4 text-sm text-slate-500">
+            {entries.length === 0
+              ? 'Nothing changed in this window.'
+              : 'No change matches that filter.'}
+          </li>
+        )}
+
+        {rows.slice(0, FEED_LIMIT).map(item => {
+          const meta = KIND[item.kind];
+          const Icon = meta.icon;
           return (
-            <li key={`${event.scan_id}-${index}`} className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <span className={`mt-1.5 h-2 w-2 rounded-full ${meta.dot}`} />
-                {index < data.events.length - 1 && (
-                  <span className="mt-1 w-px flex-1 bg-slate-800" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1 pb-1">
-                <p className={`text-[11px] font-semibold ${meta.tone}`}>
-                  {event.kind === 'first_seen' ? 'First seen' : meta.label}
-                </p>
-                <p className="text-[11px] text-slate-500">{when(event.at)}</p>
-                {!!event.changes?.length && (
-                  <ul className="mt-1 space-y-0.5">
-                    {event.changes.slice(0, 6).map(c => (
-                      <li key={c.field} className="text-[11px] text-slate-300">
-                        {describeFieldChange(c)}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                <CostSwing event={event} currency={currency} />
-
-                {/* Who touched it between the two captures. Every candidate is
-                    listed rather than one being named as the cause: on a busy
-                    resource, picking one would frequently be wrong, and a
-                    wrong name in an audit trail is worse than no name. */}
-                {!!event.activity?.length && (
-                  <div className="mt-1">
-                    {event.by ? (
-                      <p className="text-[11px] text-slate-400">
-                        by <span className="text-slate-300">{event.by}</span>
-                        {' · '}{event.activity[0].summary}
-                      </p>
-                    ) : (
-                      <>
-                        <p className="text-[10px] text-slate-500">
-                          {event.activity.length} operations in this window — any could
-                          be responsible:
-                        </p>
-                        <ul className="mt-0.5 space-y-0.5">
-                          {event.activity.slice(0, 4).map(a => (
-                            <li key={`${a.at}-${a.caller}`} className="truncate text-[11px] text-slate-400">
-                              {moment(a.at)} · {a.caller || 'unknown'} · {a.summary}
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    )}
+            <li key={`${item.kind}-${item.resource_id}`}>
+              <button
+                type="button"
+                onClick={() => onOpen(item)}
+                className={`flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-slate-800/50 ${meta.row}`}
+              >
+                <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${meta.tone}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="truncate text-sm font-medium text-slate-200">
+                      {item.name || item.resource_id}
+                    </span>
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide ${meta.tone}`}>
+                      {meta.label}
+                    </span>
                   </div>
-                )}
-              </div>
+                  <p className="truncate text-[11px] text-slate-500">
+                    {shortType(item.type)}
+                    {item.resource_group && ` · ${item.resource_group}`}
+                    {item.location && ` · ${item.location}`}
+                    {' · '}
+                    {subscriptionNames[item.subscription_id] || item.subscription_id}
+                  </p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    {summariseChange(item, item.kind)}
+                  </p>
+                </div>
+                <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-slate-600" />
+              </button>
             </li>
           );
         })}
-      </ol>
+      </ul>
 
-      {/* Only captures where something moved are listed. Showing every one
-          would bury a handful of real events under hundreds of identical
-          ones, which is how a history stops being read. */}
-      <p className="mt-3 text-[11px] text-slate-600">
-        Captures where nothing changed are omitted.
-      </p>
-
-      {/* Anything Azure would not tell us. Said out loud rather than left as a
-          gap, because a blank where a cost should be reads as "this is free". */}
-      {!!data.notes?.length && (
-        <ul className="mt-2 space-y-1">
-          {data.notes.map(note => (
-            <li key={note} className="flex gap-1.5 text-[10px] text-slate-500">
-              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500/70" />
-              {note}
-            </li>
-          ))}
-        </ul>
+      {rows.length > FEED_LIMIT && (
+        <p className="border-t border-slate-800 px-4 py-2 text-[11px] text-slate-500">
+          Showing the first {FEED_LIMIT} of {rows.length}. Narrow the filter, the period or
+          the change type to see the rest — a list this long is not read, it is scrolled past.
+        </p>
       )}
-    </>
+    </section>
+  );
+}
+
+/**
+ * What Azure remembers from before the first capture.
+ *
+ * The diff above can only compare captures, so the period before the first scan
+ * looks empty - and "empty" reads as "nothing happened", which for somebody who
+ * resized a VM two months ago is simply false. Azure's own Activity Log keeps
+ * ninety days of operations regardless of when this app started watching, so
+ * that period is not actually unknowable; it was just unasked.
+ *
+ * Loaded on a click rather than with the page. It is a per-subscription read
+ * against a quota shared with everything else here, and most visits to this
+ * page are about the recent diff, not the archaeology.
+ */
+const ACTIVITY_RETENTION_DAYS = 90;
+
+function PreHistoryActivity({
+  tenantId, subscriptionIds, until, days = ACTIVITY_RETENTION_DAYS, autoLoad = false,
+}) {
+  const [state, setState] = useState({ status: 'idle', events: [], error: '' });
+
+  // Azure keeps ninety days and no more, so a reader asking for six months is
+  // not being refused - there is nothing older to refuse them. Asking for more
+  // than the retention would return the same ninety days while implying the
+  // answer covered the whole period.
+  const span = Math.min(days, ACTIVITY_RETENTION_DAYS);
+  const truncated = days > ACTIVITY_RETENTION_DAYS;
+
+  const load = async () => {
+    if (!subscriptionIds.length) {
+      setState({ status: 'done', events: [], error: 'Select a subscription first.' });
+      return;
+    }
+    setState({ status: 'loading', events: [], error: '' });
+    try {
+      const data = await fetchActivity(tenantId, subscriptionIds, {
+        days: span, writesOnly: true,
+      });
+      // Only what the diff cannot already show. Repeating the overlap would
+      // put the same change on screen twice with two different timestamps.
+      const cutoff = new Date(`${(until || '').replace(' ', 'T')}Z`).getTime();
+      const events = (data.events || []).filter(e => {
+        const at = new Date(e.at).getTime();
+        return Number.isNaN(cutoff) || Number.isNaN(at) || at < cutoff;
+      });
+      setState({ status: 'done', events, error: '' });
+    } catch (err) {
+      setState({ status: 'done', events: [], error: friendlyError(err) });
+    }
+  };
+
+  // Normally this waits for a click: it is a per-subscription read against a
+  // shared quota, and most visits are about the diff. When there is no diff
+  // yet, that reasoning inverts - this *is* the page, and making somebody
+  // press a button to see the only content there is reads as an empty page.
+  // The parent remounts this component when the period changes, so the fetch
+  // follows the period selector without needing to watch it.
+  const started = useRef(false);
+  useEffect(() => {
+    if (autoLoad && !started.current) {
+      started.current = true;
+      load();
+    }
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [autoLoad]);
+
+  if (state.status === 'idle') {
+    return (
+      <button
+        onClick={load}
+        className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-1.5 text-[11px] text-slate-300 transition hover:text-white"
+      >
+        <History className="h-3.5 w-3.5" />
+        {until
+          ? "Read Azure's own log for that period"
+          : `Show me the last ${span} days from Azure's own log`}
+      </button>
+    );
+  }
+
+  if (state.status === 'loading') {
+    return (
+      <p className="flex items-center gap-2 text-[11px] text-slate-400">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Reading up to {span} days of the Activity Log…
+      </p>
+    );
+  }
+
+  if (state.error) return <p className="text-[11px] text-amber-300">{state.error}</p>;
+
+  if (!state.events.length) {
+    return (
+      <p className="text-[11px] text-slate-400">
+        Azure recorded no write operations in the {span} days
+        {until ? ' before the first capture' : ''}. It keeps nothing older than
+        {' '}{ACTIVITY_RETENTION_DAYS} days, so anything earlier is gone from Azure too —
+        not just from here.
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <p className="mb-1.5 text-[11px] text-slate-400">
+        {state.events.length} operation{state.events.length === 1 ? '' : 's'} Azure recorded
+        {until ? ' before the first capture' : ` in the last ${span} days`}.
+        These are operations, not diffs — the log says what was
+        asked for, not what the resource looked like either side.
+        {truncated && ` Azure keeps only ${ACTIVITY_RETENTION_DAYS} days, so the rest of the period you asked for cannot be answered by anyone.`}
+      </p>
+      <ul className="max-h-72 space-y-1 overflow-y-auto">
+        {state.events.map(e => {
+          const { name, service, resourceGroup } = describeResourceId(e.resource_id);
+          return (
+            <li key={e.id || `${e.at}-${e.resource_id}`} className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+              <span className="text-slate-500">{moment(e.at)}</span>
+              <span className={e.succeeded ? 'text-slate-300' : 'text-amber-300'}>
+                {e.summary}
+              </span>
+              {!e.succeeded && <span className="text-[10px] text-amber-400/80">failed</span>}
+              <span className="truncate text-slate-400">
+                {name}
+                {service && ` · ${service}`}
+                {(e.resource_group || resourceGroup) && ` · ${e.resource_group || resourceGroup}`}
+              </span>
+              <span className="text-slate-600">{e.caller || 'unknown caller'}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -803,6 +781,21 @@ export default function Changes() {
     new URLSearchParams(window.location.search).get('resource') || '',
   );
 
+  // Tenants whose first capture we have already taken care of this session.
+  //
+  // A tenant connected five minutes ago has no captures, so this page used to
+  // greet its owner with an empty diff and an instruction to press a button.
+  // That is a poor first impression of a feature that works perfectly well --
+  // and worse, the button is the only thing on the page that does anything, so
+  // the filters, the grouping and the detail panel all look broken rather than
+  // unused. Taking the first capture for them starts the history immediately.
+  //
+  // Keyed by tenant rather than a boolean, because switching to a second
+  // newly-connected tenant is the same situation again. A ref rather than
+  // state: it guards an action, and re-rendering because of it would be the
+  // thing that re-triggers it.
+  const autoCaptured = useRef(new Set());
+
   const subscriptionNames = useMemo(() => {
     const map = {};
     for (const sub of subscriptions || []) {
@@ -832,7 +825,22 @@ export default function Changes() {
         fetchScans(selectedTenantId, 30),
       ]);
       setData(diff);
-      setScans(history.filter(s => s.status === 'complete'));
+      const complete = history.filter(s => s.status === 'complete');
+      setScans(complete);
+
+      // Nothing has ever been captured for this tenant. Do it now rather than
+      // asking, because there is no decision to make: without a first capture
+      // this page cannot answer anything at all, and the scan is a read.
+      // Only ever fires when the history is genuinely empty, so a tenant that
+      // simply has no changes in the selected window is left alone.
+      if (
+        complete.length === 0
+        && selectedSubscriptionIds.length > 0
+        && !autoCaptured.current.has(selectedTenantId)
+      ) {
+        autoCaptured.current.add(selectedTenantId);
+        scan({ first: true });
+      }
 
       // Arriving from an anomaly's "what changed here" list, with one resource
       // named in the URL. Opening it saves the reader hunting for a row they
@@ -859,10 +867,25 @@ export default function Changes() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ },
-    [selectedTenantId, showIgnored, range.preset, range.from, range.to]);
+  useEffect(() => {
+    // A half-filled custom range is not a narrower question, it is no question
+    // at all: `rangeParams` returns null for it, and the request then falls
+    // through to the default capture pair. The reader sees a diff appear while
+    // typing a date and reasonably believes it answers the range they are
+    // halfway through entering. Wait for both ends instead.
+    if (range.preset === 'custom' && !(range.from && range.to)) return;
+    load();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [
+    selectedTenantId, showIgnored, range.preset, range.from, range.to,
+    // Picking a capture is choosing a comparison, not preparing to choose one.
+    // These were missing, so the two dropdowns under "Pick two captures" did
+    // nothing at all until Compare was pressed - which looked like a filter
+    // that did not work, because that is exactly what it was.
+    pair.before, pair.after,
+  ]);
 
-  const scan = async () => {
+  const scan = async ({ first = false } = {}) => {
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) {
       toast.error('Select a tenant and at least one subscription first.');
       return;
@@ -874,7 +897,15 @@ export default function Changes() {
         subscription_ids: selectedSubscriptionIds,
       });
       if (result.status === 'failed') toast.error(result.error || 'Scan failed.');
-      else toast.success(`Captured ${result.resource_count} resources`);
+      else if (first) {
+        // Said differently for the automatic one. "Captured 412 resources"
+        // arriving unprompted looks like something the reader did by accident;
+        // naming it as the start of the history explains why it happened.
+        toast.success(
+          `First capture taken — ${result.resource_count} resources. `
+          + 'History starts from here.',
+        );
+      } else toast.success(`Captured ${result.resource_count} resources`);
       await load();
     } catch (err) {
       toast.error(friendlyError(err));
@@ -884,6 +915,34 @@ export default function Changes() {
   };
 
   const shape = GROUPINGS.find(g => g.key === grouping) || GROUPINGS[0];
+
+  /**
+   * Why a long period produced a short window.
+   *
+   * Asking for six months and being shown forty minutes looks like a broken
+   * filter. It is not: this page can only compare captures that exist, and the
+   * estate has no record of itself before the first scan was run. Saying so is
+   * the difference between "nothing changed in six months" - which the page
+   * would otherwise appear to claim - and "six months were never watched".
+   */
+  const historyShortfall = useMemo(() => {
+    const asked = rangeParams(range)?.from_date;
+    const oldest = data?.before?.started_at;
+    if (!asked || !oldest) return '';
+    const askedAt = new Date(`${asked}T00:00:00`);
+    const gotAt = new Date(`${oldest.replace(' ', 'T')}Z`);
+    if (Number.isNaN(gotAt.getTime())) return '';
+    const missingDays = Math.floor((gotAt - askedAt) / 86400000);
+    // A day of slack: the oldest capture is never taken at midnight, and
+    // rounding that up into a warning would fire on every well-scanned range.
+    if (missingDays < 1) return '';
+    const label = RANGES.find(r => r.key === range.preset)?.label?.toLowerCase() || 'this period';
+    return (
+      `You asked for ${label}, but the oldest capture of this tenant was taken ${when(oldest)}. `
+      + `The ${missingDays} day${missingDays === 1 ? '' : 's'} before that were never captured, so `
+      + 'nothing from them can be compared. History starts building from the first scan.'
+    );
+  }, [range, data]);
 
   const entries = useMemo(() => toEntries(data), [data]);
   const visible = useMemo(
@@ -963,6 +1022,22 @@ export default function Changes() {
   const scanOption = s => `#${s.id} · ${when(s.started_at)} · ${s.resource_count} resources`;
   const toggle = key => setCollapsed(c => ({ ...c, [key]: !c[key] }));
 
+  // How many days the chosen period covers, so the Activity Log below the
+  // first-run panel answers the same question the period selector is asking.
+  // Without this the selector looked decorative to a new tenant: it drove a
+  // diff that did not exist yet and nothing the reader could see.
+  const rangeDays = useMemo(() => {
+    const preset = RANGES.find(r => r.key === range.preset);
+    if (preset?.days) return preset.days;
+    if (range.preset === 'custom' && range.from && range.to) {
+      const span = (new Date(range.to) - new Date(range.from)) / 86400000;
+      return Math.max(1, Math.round(span));
+    }
+    return ACTIVITY_RETENTION_DAYS;
+  }, [range]);
+
+  const rangeIncomplete = range.preset === 'custom' && !(range.from && range.to);
+
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5 p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -981,7 +1056,7 @@ export default function Changes() {
             How this works
           </button>
           <button
-            onClick={scan}
+            onClick={() => scan()}
             disabled={scanning}
             className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60"
           >
@@ -1191,6 +1266,17 @@ export default function Changes() {
         </div>
       )}
 
+      {rangeIncomplete && (
+        <div className="flex items-start gap-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-xs text-slate-300">
+          <Clock className="mt-px h-4 w-4 shrink-0 text-slate-500" />
+          <span>
+            Pick both dates to compare. Nothing below has changed yet — it still
+            answers the previous period, not the one you are half way through
+            entering.
+          </span>
+        </div>
+      )}
+
       {data?.note && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
           <AlertTriangle className="mt-px h-4 w-4 shrink-0" />
@@ -1199,9 +1285,61 @@ export default function Changes() {
       )}
 
       {data && !data.comparable && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-slate-400">
-          Not enough captures to compare yet. Run a scan now and another later —
-          the difference between them is this page.
+        <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-300">
+          <p className="flex items-center gap-2 font-medium text-slate-200">
+            {scanning
+              ? <><Loader2 className="h-4 w-4 animate-spin" />Taking the first capture…</>
+              : <><Clock className="h-4 w-4 text-slate-500" />History for this tenant starts now</>}
+          </p>
+
+          {/* The old copy here was a dead end: it told a new reader to scan
+              twice and come back, which is a page saying "nothing for you yet"
+              to somebody who has just connected a tenant and wants to see that
+              the product works. Two captures really are required for a diff --
+              that cannot be faked -- but the ninety days of Activity Log below
+              are real history, available immediately, and were already being
+              read on this page for a different case. */}
+          <p className="leading-relaxed text-slate-400">
+            {scans.length === 0
+              ? 'A capture writes down what exists at one moment; this page subtracts one from another, so the first comparison appears once a second capture has been taken.'
+              : 'One capture has been taken. The next one — scheduled, or from Scan now — produces the first comparison.'}
+          </p>
+
+          <div className="space-y-2 border-t border-slate-800 pt-3">
+            <p className="text-xs leading-relaxed text-slate-400">
+              You do not have to wait to see what has been happening. Azure keeps
+              its own log of every write operation for {ACTIVITY_RETENTION_DAYS} days,
+              regardless of when this app started watching — who did what, to which
+              resource, and whether it succeeded. It is a record of operations rather
+              than a diff, so it says what was asked for, not what the resource looked
+              like either side. The Period filter above narrows it.
+            </p>
+            <PreHistoryActivity
+              // Remounted when the period changes, so the reader's choice above
+              // re-reads the log rather than leaving an answer to the previous
+              // question on screen looking like an answer to this one.
+              key={`${selectedTenantId}-${rangeDays}`}
+              tenantId={selectedTenantId}
+              subscriptionIds={selectedSubscriptionIds}
+              until={data?.before?.started_at}
+              days={rangeDays}
+              autoLoad={!scanning && selectedSubscriptionIds.length > 0}
+            />
+          </div>
+        </div>
+      )}
+
+      {historyShortfall && (
+        <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-xs text-slate-300">
+          <div className="flex items-start gap-2">
+            <Clock className="mt-px h-4 w-4 shrink-0 text-slate-500" />
+            <span>{historyShortfall}</span>
+          </div>
+          <PreHistoryActivity
+            tenantId={selectedTenantId}
+            subscriptionIds={selectedSubscriptionIds}
+            until={data?.before?.started_at}
+          />
         </div>
       )}
 
@@ -1264,7 +1402,15 @@ export default function Changes() {
             })}
           </div>
 
-          {view === 'timeline' ? (
+          {view === 'all' ? (
+            <EverythingFeed
+              entries={visible}
+              subscriptionNames={subscriptionNames}
+              before={data.before?.started_at}
+              after={data.after?.started_at}
+              onOpen={item => { setOpen(item); setRawJson(false); }}
+            />
+          ) : view === 'timeline' ? (
             <div className="space-y-3">
               {/* The columns become chips here. Navigation still has to be
                   available - a timeline for a group you cannot change is a dead
@@ -1502,7 +1648,7 @@ export default function Changes() {
               <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 History
               </h4>
-              <EntityHistory tenantId={selectedTenantId} resource={open} />
+              <ResourceTimeline tenantId={selectedTenantId} resourceId={open.resource_id} />
             </section>
           </div>
         )}

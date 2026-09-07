@@ -7,7 +7,7 @@ import BoqBreakdown from '../components/Boq/BoqBreakdown';
 import BoqDashboard from '../components/Boq/BoqDashboard';
 import BoqMovement from '../components/Boq/BoqMovement';
 import { formatBytes } from '../utils/bytes';
-import { compareBoqToUsage } from '../utils/boqCompare';
+import { compareBoqToUsage, sortCategories } from '../utils/boqCompare';
 import toast from 'react-hot-toast';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell,
@@ -16,7 +16,11 @@ import { useChartTheme } from '../store/useTheme';
 import {
   Upload, FileSpreadsheet, X, AlertTriangle, TrendingDown, TrendingUp,
   CheckCircle, ChevronDown, ChevronRight, ClipboardList, Ban,
+  ArrowUp, ArrowDown, ChevronsUpDown,
 } from 'lucide-react';
+import {
+  MultiFilter, FilterSelect, SearchBox, ClearFilters, ControlRow, FilterIcon,
+} from '../components/Boq/FilterControls';
 
 const ACCEPTED = '.csv,.xlsx,.xlsm,.xls';
 
@@ -25,6 +29,15 @@ export default function Boq() {
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [focus, setFocus] = useState(null);
+  // Filtering the table by name as well as by verdict, because on an estate
+  // with a long tail of categories "where is Bandwidth" is a scroll, not a
+  // question the eye can answer.
+  const [catSearch, setCatSearch] = useState('');
+  const [pickedCategories, setPickedCategories] = useState(new Set());
+  // Untouched, this keeps the order the report was built in -- worst overrun
+  // first -- so the table still opens on the problem rather than on an
+  // alphabetical list. A column is only applied once somebody asks for it.
+  const [sort, setSort] = useState({ key: '', dir: 'desc' });
   // A BOQ is written as one month's money. Over a three-month selection there
   // are two honest ways to compare it and they answer different questions:
   // average the actuals back down to a month, or multiply the estimate up to
@@ -162,9 +175,58 @@ export default function Boq() {
     actual: { test: c => c.actual > 0, note: 'Showing every category you were charged for.' },
     extra:  { test: c => c.variance > 0, note: 'Showing only what is costing more than the BOQ allowed.' },
     rogue:  { test: c => c.notInBoqTotal > 0, note: 'Showing only categories with charges your BOQ never paid for.' },
+    saving: { test: c => c.variance < 0, note: 'Showing only categories costing less than the BOQ allowed.' },
+    unused: { test: c => c.unused, note: 'Showing only budget that was never spent.' },
     net:    { test: () => true, note: 'Showing all categories, worst overrun first.' },
   };
-  const visible = (report?.categories || []).filter(c => (focus ? FOCUS[focus].test(c) : true));
+
+  /*
+   * The same verdicts the Full breakdown filters by, offered here as buttons
+   * rather than only as a side effect of clicking a card at the top of the
+   * page. "Not in BOQ" is first among the narrowing options because it is the
+   * one question this page exists to answer.
+   */
+  const CATEGORY_VIEWS = [
+    { key: '', label: 'All categories' },
+    { key: 'rogue', label: 'Not in BOQ' },
+    { key: 'extra', label: 'Over budget' },
+    { key: 'saving', label: 'Under budget' },
+    { key: 'unused', label: 'Not used' },
+  ];
+
+  const categoryOptions = (report?.categories || [])
+    .map(c => c.label)
+    .sort((a, b) => a.localeCompare(b));
+
+  const catTerm = catSearch.trim().toLowerCase();
+  const visible = (report?.categories || []).filter(c => {
+    if (focus && !FOCUS[focus].test(c)) return false;
+    if (pickedCategories.size > 0 && !pickedCategories.has(c.label)) return false;
+    if (catTerm && !c.label.toLowerCase().includes(catTerm)) return false;
+    return true;
+  });
+  const ordered = sort.key ? sortCategories(visible, sort.key, sort.dir) : visible;
+  const activeFilters = (focus ? 1 : 0) + (catTerm ? 1 : 0)
+    + (pickedCategories.size > 0 ? 1 : 0) + (sort.key ? 1 : 0);
+
+  /*
+   * First click sorts the way the column is usually read: a name from A, money
+   * and overruns from the largest. Sorting "Difference" ascending puts the
+   * biggest underspend at the top, which is never why anybody clicks it.
+   */
+  function toggleSort(key) {
+    setSort(prev => (prev.key === key
+      ? { key, dir: prev.dir === 'desc' ? 'asc' : 'desc' }
+      : { key, dir: key === 'label' ? 'asc' : 'desc' }));
+  }
+
+  function clearView() {
+    setFocus(null);
+    setExpanded({});
+    setCatSearch('');
+    setPickedCategories(new Set());
+    setSort({ key: '', dir: 'desc' });
+  }
 
   function focusOn(key) {
     if (focus === key) { setFocus(null); return; }
@@ -523,38 +585,101 @@ export default function Boq() {
               <h2 className="text-sm font-semibold text-slate-300">
                 What is extra — category by category
               </h2>
-              {focus && (
-                <button
-                  onClick={() => { setFocus(null); setExpanded({}); }}
-                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-lg transition"
-                >
-                  <X className="w-3 h-3" />
-                  {FOCUS[focus].note} Clear
-                </button>
-              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* A filtered table and a small estate look identical, so the
+                    count says how much of the report is currently hidden. */}
+                {activeFilters > 0 && (
+                  <span className="text-[11px] text-slate-500">
+                    Showing {ordered.length} of {report.categories.length}
+                  </span>
+                )}
+              </div>
             </div>
+
+            {/* Filter — literally the same controls as the Full breakdown at
+                the foot of the page: same dropdowns, same verdict select, same
+                search box, same clear chip. Two tables of one bill that filter
+                differently teach a reader they are unrelated tools. */}
+            <ControlRow label="Filter">
+              <FilterIcon />
+              <MultiFilter
+                label="Category"
+                options={categoryOptions}
+                selected={pickedCategories}
+                onChange={setPickedCategories}
+              />
+              <FilterSelect
+                value={focus || ''}
+                onChange={(key) => { setFocus(key || null); setExpanded({}); }}
+                options={CATEGORY_VIEWS}
+              />
+              <SearchBox
+                value={catSearch}
+                onChange={setCatSearch}
+                placeholder="Search category…"
+                width="w-48"
+              />
+              <ClearFilters count={activeFilters} onClear={clearView} />
+            </ControlRow>
+            {focus && (
+              <p className="text-[11px] text-slate-500 mt-1.5 mb-4">{FOCUS[focus].note}</p>
+            )}
+            {!focus && <div className="mb-4" />}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead>
+                {/* Sticky, because opening two or three categories scrolls the
+                    headings away and leaves four columns of money with nothing
+                    above them to say which is the budget. */}
+                <thead className="sticky top-0 z-10 bg-slate-900">
                   <tr className="text-left text-slate-500 border-b border-slate-800">
                     <th className="pb-2 font-medium w-8" />
-                    <th className="pb-2 font-medium">Category</th>
-                    <th className="pb-2 font-medium text-right">BOQ budget</th>
-                    <th className="pb-2 font-medium text-right">Actual / month</th>
-                    <th className="pb-2 font-medium text-right">Difference</th>
-                    <th className="pb-2 font-medium text-right">vs budget</th>
-                    <th className="pb-2 font-medium">Status</th>
+                    <SortHead label="Category" column="label" sort={sort} onSort={toggleSort} />
+                    <SortHead label="BOQ budget" column="budgeted" sort={sort} onSort={toggleSort} align="right" />
+                    <SortHead label="Actual / month" column="actual" sort={sort} onSort={toggleSort} align="right" />
+                    <SortHead label="Difference" column="variance" sort={sort} onSort={toggleSort} align="right" />
+                    <SortHead label="vs budget" column="variancePct" sort={sort} onSort={toggleSort} align="right" />
+                    {/* pl-4, because the column to the left is right-aligned and
+                        the two headings ran together as "vs budgetStatus". */}
+                    <th className="pb-2 pl-4 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visible.map((c) => {
+                  {ordered.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-6 text-center">
+                        <p className="text-xs text-slate-500">
+                          No category matches that filter.
+                        </p>
+                        <button
+                          onClick={clearView}
+                          className="mt-3 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] text-slate-300 transition hover:border-slate-500 hover:text-white"
+                        >
+                          Show all {report.categories.length} categories
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                  {ordered.map((c) => {
                     const open = expanded[c.key];
                     const over = c.variance > 0;
                     return (
                       <Fragment key={c.key}>
+                        {/* Reachable from the keyboard as well as the mouse:
+                            the row is the only way into the lines behind a
+                            category, so a keyboard user who could not open it
+                            could not audit a single figure on the page. */}
                         <tr
+                          tabIndex={0}
+                          role="button"
+                          aria-expanded={Boolean(open)}
+                          aria-label={`${open ? 'Hide' : 'Show'} the charges behind ${c.label}`}
                           onClick={() => setExpanded(s => ({ ...s, [c.key]: !s[c.key] }))}
-                          className={`border-b border-slate-800/50 cursor-pointer transition ${
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ') return;
+                            e.preventDefault();
+                            setExpanded(s => ({ ...s, [c.key]: !s[c.key] }));
+                          }}
+                          className={`border-b border-slate-800/50 cursor-pointer transition focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500 ${
                             c.unbudgeted
                               ? 'bg-red-500/10 hover:bg-red-500/15'
                               : over
@@ -567,16 +692,25 @@ export default function Boq() {
                           </td>
                           <td className="py-3 text-slate-200 font-medium">{c.label}</td>
                           <td className="py-3 text-right text-slate-400">
-                            {c.budgeted > 0 ? fmt(c.budgeted) : '—'}
+                            {c.budgeted === 0 ? '—' : fmt(c.budgeted)}
                           </td>
-                          <td className="py-3 text-right text-white font-semibold">
-                            {c.actual > 0 ? fmt(c.actual) : '—'}
+                          {/* A credit — hybrid benefit, a refund — is billed as
+                              a negative charge and is shown as one. An em dash
+                              hid it from the column while it still counted in
+                              the total below, so the two could not be
+                              reconciled by adding the column up. */}
+                          <td className={`py-3 text-right font-semibold ${
+                            c.actual < 0 ? 'text-emerald-400' : 'text-white'
+                          }`}>
+                            {c.actual === 0 ? '—' : fmt(c.actual)}
                           </td>
                           <td className={`py-3 text-right font-semibold ${over ? 'text-red-400' : c.variance < 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
                             {c.variance === 0 ? '—' : `${over ? '+' : '−'}${fmt(Math.abs(c.variance))}`}
                           </td>
                           <td className={`py-3 text-right text-xs ${over ? 'text-red-400' : 'text-slate-500'}`}>
-                            {c.variancePct == null ? '—' : `${c.variancePct >= 0 ? '+' : ''}${Math.abs(c.variancePct) >= 999 ? '999+' : c.variancePct}%`}
+                            {c.variancePct == null
+                              ? <span title="Nothing was budgeted for this category, so there is no percentage to compare against.">—</span>
+                              : `${c.variancePct >= 0 ? '+' : ''}${Math.abs(c.variancePct) >= 999 ? '999+' : c.variancePct}%`}
                           </td>
                           <td className="py-3">
                             <StatusPill category={c} />
@@ -614,6 +748,48 @@ export default function Boq() {
               {report.months > 1 ? `, averaged over ${report.months} months to match the monthly estimate.` : '.'}
               {' '}Click any row to see the underlying lines.
             </p>
+
+            {/* The cards above and the Total row below answer different
+                questions, so they print different numbers. Left unexplained
+                that reads as a contradiction, and a reader who thinks the page
+                cannot add up has no reason to believe any of it. Say how the
+                figures relate, out loud, using the figures themselves. */}
+            {(report.extraTotal > 0 || report.notInBoqTotal > 0) && (
+              <div className="mt-4 border border-slate-800 bg-slate-950/60 rounded-xl px-4 py-3">
+                <p className="text-[11px] font-semibold text-slate-400 mb-1.5">
+                  Why these totals differ from the cards at the top
+                </p>
+                <ul className="text-[11px] text-slate-500 space-y-1">
+                  {report.extraTotal > 0 && (
+                    <li>
+                      <span className="text-slate-300 font-medium">{fmt(report.extraTotal)}</span>{' '}
+                      — everything charged above budget, adding up only the categories that went
+                      over. This is the <span className="text-slate-400">Extra over BOQ</span> card.
+                    </li>
+                  )}
+                  {report.savingTotal > 0 && (
+                    <li>
+                      <span className="text-slate-300 font-medium">
+                        {`−${fmt(report.savingTotal)}`}
+                      </span>{' '}
+                      — budget that went unspent, which the Total row below subtracts and the
+                      Extra card does not. That is the whole gap between them:{' '}
+                      {fmt(report.extraTotal)} − {fmt(report.savingTotal)} ={' '}
+                      {`${report.variance >= 0 ? '+' : '−'}${fmt(Math.abs(report.variance))}`}.
+                    </li>
+                  )}
+                  {report.notInBoqTotal > 0 && (
+                    <li>
+                      <span className="text-slate-300 font-medium">{fmt(report.notInBoqTotal)}</span>{' '}
+                      — spend on meters no BOQ line names. This is a different question, not a
+                      subtotal of the others: it cuts across every category above, including ones
+                      sitting inside their budget, so it will not add up with the columns here.
+                      The full breakdown below accounts for it charge by charge.
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Same money, any slice: resource group, service, resource, region. */}
@@ -621,6 +797,36 @@ export default function Boq() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * A column heading that sorts.
+ *
+ * The arrow is drawn faintly on every sortable column rather than only on the
+ * active one, because a control that appears on hover is a control nobody knows
+ * is there. `aria-sort` carries the same state to a screen reader, which cannot
+ * see the arrow at all.
+ */
+function SortHead({ label, column, sort, onSort, align = 'left' }) {
+  const active = sort.key === column;
+  const Glyph = active ? (sort.dir === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown;
+  return (
+    <th
+      className={`pb-2 font-medium ${align === 'right' ? 'text-right' : ''}`}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={`inline-flex items-center gap-1 transition hover:text-slate-200 ${
+          align === 'right' ? 'flex-row-reverse' : ''
+        } ${active ? 'text-slate-200' : ''}`}
+      >
+        {label}
+        <Glyph className={`w-3 h-3 ${active ? 'text-blue-400' : 'text-slate-600'}`} />
+      </button>
+    </th>
   );
 }
 
@@ -782,6 +988,13 @@ function ResourceBreakdown({ category: c, fmt }) {
           {c.lines.map((l) => {
             const verdict = explain(l);
             const tone = TONE[verdict.tone];
+            // The resource table inside WhyPanel already names every charge on
+            // this line and what it cost. Printing the invoice list underneath
+            // it as well showed the same resources a second time with a
+            // different number beside them, which reads as two answers to one
+            // question. Show the plain invoice list only when there is no
+            // resource table above it.
+            const showWhy = Boolean(l.drivers) && l.variance !== 0;
             return (
               <div key={l.id} className={`border rounded-xl p-3.5 ${tone.ring}`}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -816,11 +1029,9 @@ function ResourceBreakdown({ category: c, fmt }) {
                   </div>
                 </div>
 
-                {l.drivers && l.variance !== 0 && (
-                  <WhyPanel line={l} fmt={fmt} />
-                )}
+                {showWhy && <WhyPanel line={l} fmt={fmt} />}
 
-                {l.matches.length > 0 && (
+                {!showWhy && l.matches.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-slate-700/50">
                     <p className="text-[11px] text-slate-500 mb-1.5">
                       Billed on your invoice as:
@@ -840,24 +1051,32 @@ function ResourceBreakdown({ category: c, fmt }) {
         </div>
       )}
 
+      {/* One verdict, stated the same way everywhere. A charge no BOQ line
+          names is not in the BOQ, and this panel counts to the same figure as
+          the card at the top of the page and the full breakdown at the bottom.
+          Where the category also holds budget that can't be split per resource,
+          that lump sum is shown underneath as context for how much of this the
+          estimate may have meant to cover -- context, not a deduction. */}
       {c.unmatched.length > 0 && (
-        <div
-          className={`border rounded-xl p-3.5 ${
-            hasPooled ? 'border-slate-700 bg-slate-900/50' : 'border-red-500/40 bg-red-500/[0.06]'
-          }`}
-        >
-          {hasPooled ? (
-            <>
-              <p className="text-xs font-semibold text-slate-200">
-                These are compared as a group, not one by one
-              </p>
-              <p className="text-[11px] text-slate-500 mt-1">
+        <div className="border rounded-xl p-3.5 border-red-500/40 bg-red-500/[0.06]">
+          <p className="text-xs font-semibold text-red-300">
+            Not in your BOQ at all — {fmt(c.unmatchedTotal)} every month
+          </p>
+          <p className="text-[11px] text-slate-500 mt-1 mb-2.5">
+            These resources are running and being charged, but no line in the estimate
+            pays for them.
+          </p>
+          {hasPooled && (
+            <div className="border border-slate-700 bg-slate-900/60 rounded-lg p-3 mb-3">
+              <p className="text-[11px] text-slate-400">
                 {c.pooledLines.map(l => l.custom_name || l.service_type).join(', ')} — these BOQ
                 lines don't name a disk or VM size, so the bill can't be split between them.
+                Some of the charges below may be what that budget was for, but nothing in
+                either document says which.
               </p>
-              <div className="flex items-center gap-5 mt-2.5 mb-3">
-                <Figure label="BOQ budget" value={fmt(c.pooledBudget)} />
-                <Figure label="Actually billed" value={fmt(c.unmatchedTotal)} strong />
+              <div className="flex items-center gap-5 mt-2.5">
+                <Figure label="Budget that can't be split" value={fmt(c.pooledBudget)} />
+                <Figure label="Charges above" value={fmt(c.unmatchedTotal)} strong />
                 <Figure
                   label="Difference"
                   value={`${c.pooledVariance >= 0 ? '+' : '−'}${fmt(Math.abs(c.pooledVariance))}`}
@@ -865,21 +1084,11 @@ function ResourceBreakdown({ category: c, fmt }) {
                   strong
                 />
               </div>
-            </>
-          ) : (
-            <>
-              <p className="text-xs font-semibold text-red-300">
-                Not in your BOQ at all — {fmt(c.unmatchedTotal)} every month
-              </p>
-              <p className="text-[11px] text-slate-500 mt-1 mb-2.5">
-                These resources are running and being charged, but no line in the estimate
-                pays for them.
-              </p>
-            </>
+            </div>
           )}
           <ul className="space-y-1">
             {listMeters && c.unmatched.map((u, i) => (
-              <MeterRow key={i} meter={u} fmt={fmt} tone={hasPooled ? '' : 'text-red-300'} />
+              <MeterRow key={i} meter={u} fmt={fmt} tone="text-red-300" />
             ))}
           </ul>
         </div>
@@ -961,20 +1170,30 @@ function WhyPanel({ line: l, fmt }) {
   budgeted.forEach((m) => {
     rows.push({
       amount: m.cost - d.unitBudget,
+      budget: d.unitBudget,
+      billed: m.cost,
       name: m.resource_name || m.label,
       group: m.resource_group,
-      tag: 'Covered by the BOQ',
-      detail: `Budgeted ${fmt(d.unitBudget)} for this ${unit}, Azure billed ${fmt(m.cost)}.`,
+      tag: 'In the BOQ',
+      tone: 'covered',
     });
   });
 
   extras.forEach((m) => {
     rows.push({
       amount: m.cost,
+      budget: 0,
+      billed: m.cost,
       name: m.resource_name || m.label,
       group: m.resource_group,
-      tag: 'Not budgeted',
-      detail: `The BOQ paid for ${d.qty} ${unit}${d.qty > 1 ? 's' : ''} only, so this whole ${fmt(m.cost)} is extra.`,
+      tag: 'Not in the BOQ',
+      tone: 'extra',
+      // A resource that exists but billed nothing this period is worth
+      // listing -- it is running and it will cost money -- but calling zero
+      // "extra spend" reads as a bug to anyone checking the arithmetic.
+      note: m.cost === 0
+        ? 'Running, but Azure billed nothing for it in this period.'
+        : `The BOQ paid for ${d.qty} ${unit}${d.qty > 1 ? 's' : ''} only.`,
     });
   });
 
@@ -982,9 +1201,12 @@ function WhyPanel({ line: l, fmt }) {
   if (unfilled > 0) {
     rows.push({
       amount: -(unfilled * d.unitBudget),
+      budget: unfilled * d.unitBudget,
+      billed: 0,
       name: `${unfilled} × ${unit} never deployed`,
-      tag: 'Budgeted, not billed',
-      detail: `The BOQ paid for ${d.qty} but only ${l.matches.length} are on the invoice.`,
+      tag: 'Not deployed',
+      tone: 'unused',
+      note: `The BOQ paid for ${d.qty} but only ${l.matches.length} ${l.matches.length === 1 ? 'is' : 'are'} on the invoice.`,
     });
   }
 
@@ -992,85 +1214,130 @@ function WhyPanel({ line: l, fmt }) {
 
   return (
     <div className="mt-3 pt-3 border-t border-slate-700/50">
+      {/* One list, not two.
+
+          This panel used to print every resource twice: once as "which
+          resources make up the difference" and again as "billed on your
+          invoice as". The two lists held the same resources and different
+          numbers -- one showed the gap, the other showed the charge -- which
+          reads as a contradiction rather than as two columns of one table.
+          They are now one table: what the BOQ set aside, what Azure billed,
+          and the gap between them, on a single row per resource, footing to
+          the same variance printed at the top of the card. */}
       <p className="text-[11px] text-slate-500 mb-2">
-        BOQ estimate vs what Azure actually charged:
+        Resource by resource on your invoice:
       </p>
-      <table className="w-full text-[11px] mb-3 tabular-nums">
+      <table className="w-full text-[11px] tabular-nums">
         <thead>
-          <tr className="text-slate-600">
-            <th className="text-left font-medium pb-1"></th>
-            <th className="text-right font-medium pb-1">Qty</th>
-            <th className="text-right font-medium pb-1">Rate / {unit} / month</th>
-            <th className="text-right font-medium pb-1">Monthly total</th>
+          <tr className="text-slate-600 border-b border-slate-800">
+            <th className="text-left font-medium pb-1.5">Resource</th>
+            <th className="text-right font-medium pb-1.5 pl-3">BOQ budget</th>
+            <th className="text-right font-medium pb-1.5 pl-3">Azure billed</th>
+            <th className="text-right font-medium pb-1.5 pl-3">Difference</th>
           </tr>
         </thead>
         <tbody>
-          <tr className="border-t border-slate-800">
-            <td className="py-1 text-slate-300">BOQ estimate</td>
-            <td className="py-1 text-right text-slate-300">{d.qty}</td>
-            <td className="py-1 text-right text-slate-300">{fmt(d.unitBudget)}</td>
-            <td className="py-1 text-right text-slate-300">{fmt(l.monthly_cost)}</td>
-          </tr>
-          <tr className="border-t border-slate-800">
-            <td className="py-1 text-slate-200 font-medium">Azure actual</td>
-            <td className="py-1 text-right text-slate-200 font-medium">{d.billedCount}</td>
-            <td className="py-1 text-right text-slate-200 font-medium">{fmt(d.unitActual)}</td>
-            <td className="py-1 text-right text-slate-200 font-medium">{fmt(l.actual)}</td>
-          </tr>
-          <tr className="border-t border-slate-800">
-            <td className="py-1 text-slate-500">Difference</td>
-            <td className={`py-1 text-right ${d.extraUnits > 0 ? 'text-red-400' : d.extraUnits < 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
-              {d.extraUnits > 0 ? '+' : ''}{d.extraUnits}
+          {rows.map((r, i) => (
+            <tr key={i} className="border-b border-slate-800/60 align-top">
+              <td className="py-1.5 pr-3">
+                <span className="text-slate-200 font-medium break-all">{r.name}</span>
+                {r.group && <span className="text-[10px] text-slate-600 ml-1.5">{r.group}</span>}
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded ml-1.5 align-middle whitespace-nowrap ${
+                    r.tone === 'extra' ? 'bg-red-500/20 text-red-300'
+                      : r.tone === 'unused' ? 'bg-amber-500/20 text-amber-300'
+                      : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  {r.tag}
+                </span>
+                {r.note && (
+                  <span className="block text-[10px] text-slate-500 mt-0.5">{r.note}</span>
+                )}
+              </td>
+              <td className="py-1.5 pl-3 text-right text-slate-400 whitespace-nowrap">
+                {r.budget > 0 ? fmt(r.budget) : '—'}
+              </td>
+              <td className="py-1.5 pl-3 text-right text-slate-200 whitespace-nowrap">
+                {fmt(r.billed)}
+              </td>
+              <td
+                className={`py-1.5 pl-3 text-right font-semibold whitespace-nowrap ${
+                  r.amount > 0 ? 'text-red-400' : r.amount < 0 ? 'text-emerald-400' : 'text-slate-500'
+                }`}
+              >
+                {r.amount === 0 ? '—' : `${r.amount > 0 ? '+' : '−'}${fmt(Math.abs(r.amount))}`}
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td className="py-1.5 text-slate-300 font-semibold">Total for this line</td>
+            <td className="py-1.5 pl-3 text-right text-slate-300 font-semibold whitespace-nowrap">
+              {fmt(l.monthly_cost)}
             </td>
-            <td className={`py-1 text-right ${d.unitActual > d.unitBudget ? 'text-red-400' : d.unitActual < d.unitBudget ? 'text-emerald-400' : 'text-slate-500'}`}>
-              {d.unitActual >= d.unitBudget ? '+' : '−'}{fmt(Math.abs(d.unitActual - d.unitBudget))}
+            <td className="py-1.5 pl-3 text-right text-white font-bold whitespace-nowrap">
+              {fmt(l.actual)}
             </td>
-            <td className={`py-1 text-right font-semibold ${l.variance > 0 ? 'text-red-400' : l.variance < 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+            <td
+              className={`py-1.5 pl-3 text-right font-bold whitespace-nowrap ${
+                l.variance > 0 ? 'text-red-400' : l.variance < 0 ? 'text-emerald-400' : 'text-slate-500'
+              }`}
+            >
               {l.variance >= 0 ? '+' : '−'}{fmt(Math.abs(l.variance))}
             </td>
           </tr>
         </tbody>
       </table>
-      <p className="text-[11px] text-slate-500 mb-2">
-        Which resources make up the {l.variance >= 0 ? '+' : '−'}{fmt(Math.abs(l.variance))}:
-      </p>
-      <ul className="space-y-2">
-        {rows.map((r, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-xs">
-            <span
-              className={`shrink-0 font-semibold tabular-nums w-[72px] text-right ${
-                r.amount > 0 ? 'text-red-400' : 'text-emerald-400'
-              }`}
-            >
-              {r.amount >= 0 ? '+' : '−'}{fmt(Math.abs(r.amount))}
-            </span>
-            <span className="min-w-0">
-              <span className="text-slate-200 font-medium break-all">{r.name}</span>
-              {r.group && <span className="text-[10px] text-slate-600 ml-1.5">{r.group}</span>}
-              <span
-                className={`text-[10px] px-1.5 py-0.5 rounded ml-1.5 align-middle ${
-                  r.tag === 'Not budgeted'
-                    ? 'bg-red-500/20 text-red-300'
-                    : 'bg-slate-700 text-slate-300'
-                }`}
-              >
-                {r.tag}
-              </span>
-              <span className="block text-[11px] text-slate-500 mt-0.5">{r.detail}</span>
-            </span>
-          </li>
-        ))}
-        <li className="flex items-start gap-2.5 text-xs pt-1.5 border-t border-slate-800">
-          <span
-            className={`shrink-0 font-bold tabular-nums w-[72px] text-right ${
-              l.variance > 0 ? 'text-red-400' : 'text-emerald-400'
-            }`}
-          >
-            {l.variance >= 0 ? '+' : '−'}{fmt(Math.abs(l.variance))}
-          </span>
-          <span className="text-slate-400">Total difference for this line</span>
-        </li>
-      </ul>
+
+      {/* The per-unit maths answers a narrower question -- is this priced
+          wrong, or are there simply more of them? -- and only some readers
+          ask it. Folded away so it stops competing with the resource list. */}
+      <details className="mt-2.5">
+        <summary className="text-[11px] text-sky-400 cursor-pointer select-none">
+          Per-unit maths: {d.qty} budgeted at {fmt(d.unitBudget)}, {d.billedCount} billed at {fmt(d.unitActual)}
+        </summary>
+        <table className="w-full text-[11px] mt-2 tabular-nums">
+          <thead>
+            <tr className="text-slate-600">
+              <th className="text-left font-medium pb-1"></th>
+              <th className="text-right font-medium pb-1">Qty</th>
+              <th className="text-right font-medium pb-1">Rate / {unit} / month</th>
+              <th className="text-right font-medium pb-1">Monthly total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-t border-slate-800">
+              <td className="py-1 text-slate-300">BOQ estimate</td>
+              <td className="py-1 text-right text-slate-300">{d.qty}</td>
+              <td className="py-1 text-right text-slate-300">{fmt(d.unitBudget)}</td>
+              <td className="py-1 text-right text-slate-300">{fmt(l.monthly_cost)}</td>
+            </tr>
+            <tr className="border-t border-slate-800">
+              <td className="py-1 text-slate-200 font-medium">Azure actual</td>
+              <td className="py-1 text-right text-slate-200 font-medium">{d.billedCount}</td>
+              <td className="py-1 text-right text-slate-200 font-medium">{fmt(d.unitActual)}</td>
+              <td className="py-1 text-right text-slate-200 font-medium">{fmt(l.actual)}</td>
+            </tr>
+            <tr className="border-t border-slate-800">
+              <td className="py-1 text-slate-500">Difference</td>
+              <td className={`py-1 text-right ${d.extraUnits > 0 ? 'text-red-400' : d.extraUnits < 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                {d.extraUnits > 0 ? '+' : ''}{d.extraUnits}
+              </td>
+              <td className={`py-1 text-right ${d.unitActual > d.unitBudget ? 'text-red-400' : d.unitActual < d.unitBudget ? 'text-emerald-400' : 'text-slate-500'}`}>
+                {d.unitActual >= d.unitBudget ? '+' : '−'}{fmt(Math.abs(d.unitActual - d.unitBudget))}
+              </td>
+              <td className={`py-1 text-right font-semibold ${l.variance > 0 ? 'text-red-400' : l.variance < 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                {l.variance >= 0 ? '+' : '−'}{fmt(Math.abs(l.variance))}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="text-[10px] text-slate-600 mt-1.5">
+          The BOQ prices a unit; Azure bills a resource. Where more resources are
+          running than the estimate paid for, the cheapest are treated as the
+          extras, so the budgeted slots are the ones the BOQ most plausibly meant.
+        </p>
+      </details>
     </div>
   );
 }

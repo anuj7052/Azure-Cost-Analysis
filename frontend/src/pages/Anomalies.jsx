@@ -51,11 +51,17 @@ const STATUS_LABEL = {
   ignored: 'Not worth chasing',
 };
 
-const COMPARISONS = [
-  { value: 'previous_month', label: 'The month before' },
-  { value: 'previous_period', label: 'The period before this one' },
-  { value: 'same_month_last_year', label: 'The same month last year' },
-];
+/**
+ * What the selected period is measured against.
+ *
+ * This used to be a second dropdown, and it quietly contradicted the first.
+ * "The month before" has no meaning once the period is a custom date range or
+ * a rolling six months, so picking exact dates and then comparing them to a
+ * calendar month produced a window the reader had not asked for and could not
+ * see. The period immediately before the selected one is the only answer that
+ * holds for every choice in the period list, so it is the only one offered.
+ */
+const COMPARISON = 'previous_period';
 
 /** A figure, or an honest statement that there is no figure. */
 function Kpi({ label, value, sub, tone = 'text-white' }) {
@@ -78,7 +84,7 @@ export default function Anomalies() {
     months, setMonths, setCustomDateRange,
   } = useAppStore();
 
-  const [comparison, setComparison] = useState('previous_month');
+  const [comparison] = useState(COMPARISON);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -285,14 +291,6 @@ export default function Anomalies() {
             <optgroup label="Exact dates">
               <option value="range">Period: Custom date range…</option>
             </optgroup>
-          </select>
-          <select
-            value={comparison}
-            onChange={(e) => setComparison(e.target.value)}
-            title="What that period is measured against."
-            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
-          >
-            {COMPARISONS.map((c) => <option key={c.value} value={c.value}>Compare with: {c.label}</option>)}
           </select>
           <button
             type="button"
@@ -587,7 +585,7 @@ export default function Anomalies() {
               <>
                 <p className="text-sm text-slate-300">No cost changes worth reporting in this period</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Every service cost roughly what it did last period. Try a wider date range or a different comparison.
+                  Every service cost roughly what it did in the period before. Try a wider date range.
                 </p>
               </>
             ) : (

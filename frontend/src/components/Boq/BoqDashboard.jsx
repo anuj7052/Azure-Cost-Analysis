@@ -9,7 +9,7 @@
  * Every number is taken from the same report object the table below renders, so
  * the band cannot contradict the detail it sits on top of.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
@@ -80,6 +80,17 @@ export default function BoqDashboard({
   // and opening every explanation at once is not a summary.
   const [pickedDay, setPickedDay] = useState(null);
   const [showTimeline, setShowTimeline] = useState(false);
+  const timelineRef = useRef(null);
+
+  // Opening the timeline used to look like it had done nothing: it renders
+  // under a 250px chart, so on a laptop the whole thing was below the fold and
+  // the reader had to guess that scrolling was the next move.
+  function openTimeline() {
+    setShowTimeline(v => !v);
+    requestAnimationFrame(() =>
+      timelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }),
+    );
+  }
   // A service followed across the whole period. Reached from a day, because
   // the question "is this normal for this service" only ever comes up after
   // seeing it on one day.
@@ -260,7 +271,8 @@ export default function BoqDashboard({
           action={usingDaily ? (
             <div className="flex gap-1.5">
               <button
-                onClick={() => setShowTimeline(v => !v)}
+                onClick={openTimeline}
+                aria-expanded={showTimeline}
                 className={`rounded-lg border px-2.5 py-1 text-[11px] transition ${
                   showTimeline
                     ? 'border-sky-500/50 bg-sky-500/10 text-sky-300'
@@ -337,13 +349,23 @@ export default function BoqDashboard({
           </div>
 
           {/* The sequence of things that happened, for a reader who wants the
-              period rather than one day of it. */}
+              period rather than one day of it. Scrolled to on opening, because
+              it appears below a 250px chart and otherwise opens off-screen --
+              the button looked like it had done nothing. */}
           {usingDaily && showTimeline && (
-            <div className="border-t border-slate-800">
-              <p className="px-5 pt-3 text-[11px] text-slate-500">
-                Only the days that moved. Pick one to see everything charged on it, or a
-                service name to follow it across the period.
-              </p>
+            <div className="border-t border-slate-800" ref={timelineRef}>
+              <div className="flex items-start justify-between gap-3 px-5 pt-3">
+                <p className="text-[11px] text-slate-500">
+                  Only the days that moved. Pick one to see everything charged on it, or a
+                  service name to follow it across the period.
+                </p>
+                <button
+                  onClick={() => setShowTimeline(false)}
+                  className="shrink-0 rounded-lg border border-slate-700 px-2 py-0.5 text-[11px] text-slate-400 transition hover:text-white"
+                >
+                  Hide
+                </button>
+              </div>
               <DayTimeline
                 days={days}
                 budget={dailyBudget}
@@ -381,16 +403,31 @@ export default function BoqDashboard({
       </div>
 
       {/* ── Where the money went ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Panel title="Top 5 Spend by Category"
-          subtitle="Actual charges. Red where the category is over its BOQ line.">
-          <TopChart data={spendTop} t={t} fmt={fmt} onPick={onFocusCategory} empty="Nothing charged yet." />
-        </Panel>
-        <Panel title="Top 5 Overruns"
-          subtitle="How much each category is costing above what the BOQ budgeted.">
-          <TopChart data={overTop} t={t} fmt={fmt} onPick={onFocusCategory}
-            allOver empty="Nothing is over budget." />
-        </Panel>
+      {/* Two charts of the same categories measuring different things, which
+          read as duplicates until somebody says out loud that one is the whole
+          bill and the other is only the part above budget. So it is said, once,
+          above both of them rather than in two subtitles nobody compares. */}
+      <div>
+        <p className="mb-2 text-[11px] leading-relaxed text-slate-500">
+          Two different questions about the same categories.
+          <span className="text-slate-400"> Biggest spend</span> is the whole bill — the
+          categories you pay the most for, whether or not the BOQ allowed for it.
+          <span className="text-slate-400"> Biggest overspend</span> is only the amount
+          <em> above</em> the BOQ line. A category can top the first chart and be absent
+          from the second because it is large but inside its budget, and a small
+          category can top the second because it was barely budgeted at all.
+        </p>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <Panel title="Biggest spend by category"
+            subtitle="Total charged. Red where the category is over its BOQ line.">
+            <TopChart data={spendTop} t={t} fmt={fmt} onPick={onFocusCategory} empty="Nothing charged yet." />
+          </Panel>
+          <Panel title="Biggest overspend by category"
+            subtitle="Only the amount charged above the BOQ — not the total.">
+            <TopChart data={overTop} t={t} fmt={fmt} onPick={onFocusCategory}
+              allOver empty="Nothing is over budget." />
+          </Panel>
+        </div>
       </div>
 
       {/* ── Recommendations ───────────────────────────────────────────────── */}
