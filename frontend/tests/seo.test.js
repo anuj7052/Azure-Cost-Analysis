@@ -92,9 +92,35 @@ describe('robots', () => {
 });
 
 describe('sitemap', () => {
+  it('starts with an XML declaration', () => {
+    // Not decoration: served as text/xml without it, a strict parser is within
+    // its rights to reject the document, and Search Console reports that as an
+    // unfetchable sitemap rather than as a malformed one.
+    expect(sitemap.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
+  });
+
   it('lists only pages a signed-out visitor can read', () => {
     const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
     expect(locs).toEqual(['https://azure.microsoftupdates.co.in/']);
+  });
+
+  it('gives every entry a last-modified date', () => {
+    const urls = [...sitemap.matchAll(/<url>([\s\S]*?)<\/url>/g)].map((m) => m[1]);
+    expect(urls).not.toHaveLength(0);
+    for (const url of urls) expect(url).toMatch(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/);
+  });
+
+  it('does not claim to have been modified in the future', () => {
+    // A future date is the one thing a crawler can prove is untrue, and it
+    // discredits the rest of the file rather than just that entry.
+    const today = new Date().toISOString().slice(0, 10);
+    for (const [, when] of sitemap.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)) {
+      expect(when <= today).toBe(true);
+    }
+  });
+
+  it('does not list a fragment as though it were a page', () => {
+    expect(sitemap).not.toMatch(/<loc>[^<]*#/);
   });
 
   it('is not contradicted by robots.txt', () => {

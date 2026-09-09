@@ -4,11 +4,21 @@
   routes would be listing pages that return a sign-in screen to the only
   visitor who ever reads a sitemap, and a sitemap full of URLs that do not hold
   what they promise costs trust rather than buying reach.
+
+  The section anchors on the landing page (#features, #how, #security, #faq)
+  are deliberately absent. They are one document, and listing a fragment as
+  though it were a page is the oldest way to inflate a sitemap without adding
+  anything a reader could not already reach.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://azure.microsoftupdates.co.in/</loc>
-    <changefreq>weekly</changefreq>
+    <!-- The day the wording last changed, not the day it was last deployed. A
+         date that moves on every build claims the text is new every time, and
+         a source that has cried new once too often is re-read less often
+         rather than more. -->
+    <lastmod>2026-09-09</lastmod>
+    <changefreq>monthly</changefreq>
     <priority>1.0</priority>
   </url>
 </urlset>
