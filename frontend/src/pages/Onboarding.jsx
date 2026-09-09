@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import {
-  Plus, Download, ShieldCheck, KeyRound, Loader2, Check, ChevronDown,
+  Plus, Download, ShieldCheck, KeyRound, Loader2, Check, ChevronDown, ListOrdered,
   Building2, Fingerprint, Lock, ExternalLink, LogOut, Eye, EyeOff,
 } from 'lucide-react';
 import { addTenant, downloadSetupGuide } from '../api/client';
@@ -11,28 +11,16 @@ import PermissionsPanel from '../components/Common/PermissionsPanel';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Four sentences, not four paragraphs. Whoever is reading this is looking for
-// the next click, and every extra line is one more thing between them and it.
+// Four fragments, not four paragraphs. Whoever opens this is looking for the
+// next click, and every extra line is one more thing in front of it.
 const STEPS = [
-  {
-    title: 'Register an app',
-    body: 'Entra ID → App registrations → New registration.',
-    link: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
-    linkLabel: 'Open',
-  },
-  {
-    title: 'Add a client secret',
-    body: 'Certificates & secrets → New client secret. Copy the Value, not the Secret ID.',
-  },
-  {
-    title: 'Give it two roles',
-    body: 'On each subscription: Reader and Cost Management Reader. Both read-only.',
-  },
-  {
-    title: 'Paste the details',
-    body: 'Checked against Azure on submit, so a wrong value tells you straight away.',
-  },
+  ['Register an app', 'Entra ID → App registrations → New registration'],
+  ['Add a client secret', 'Certificates & secrets → copy the Value, not the Secret ID'],
+  ['Assign two roles', 'Reader and Cost Management Reader, on each subscription'],
+  ['Paste them here', 'Checked against Azure on submit'],
 ];
+
+const PORTAL = 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade';
 
 /**
  * A GUID copied out of the portal often arrives wrapped in whitespace or the
@@ -40,6 +28,28 @@ const STEPS = [
  * GUID" is technically true and completely useless, so it is cleaned instead.
  */
 const clean = (v) => v.trim().replace(/^["'<]+|[">']+$/g, '');
+
+/** A titled row that opens. Used for both the things that are not the task. */
+function Disclosure({ icon, label, open, onToggle, id, children }) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/60">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={id}
+        className="flex w-full items-center gap-2.5 px-4 py-3 text-left"
+      >
+        {icon}
+        <span className="min-w-0 flex-1 text-sm text-slate-300">{label}</span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && <div id={id} className="border-t border-slate-800 px-4 py-3.5">{children}</div>}
+    </div>
+  );
+}
 
 function Field({
   label, icon: Icon, value, onChange, type = 'text',
@@ -62,7 +72,7 @@ function Field({
           placeholder={placeholder}
           spellCheck={false}
           autoComplete="off"
-          className={`w-full bg-slate-800 border rounded-xl ${Icon ? 'pl-9' : 'pl-3'} pr-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition ${
+          className={`w-full bg-slate-800 border rounded-lg ${Icon ? 'pl-9' : 'pl-3'} pr-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition ${
             error ? 'border-red-500/70 focus:border-red-500' : 'border-slate-700 focus:border-blue-500'
           }`}
         />
@@ -91,10 +101,9 @@ export default function Onboarding() {
   const [downloading, setDownloading] = useState(false);
   const [touched, setTouched] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
-  // The permission list answers a question people ask once. On screen by
-  // default it is thirteen entries of prose standing in front of a four-box
-  // form, which is the actual task.
-  const [showPermissions, setShowPermissions] = useState(false);
+  // One at a time. Both panels are long, and opening the second while the
+  // first is still expanded rebuilds the wall this page was meant to remove.
+  const [panel, setPanel] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -149,239 +158,210 @@ export default function Onboarding() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 relative overflow-hidden">
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-slate-950 px-4 py-5 sm:px-6">
       {/* Ambient background — purely decorative */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-40 -left-40 w-[36rem] h-[36rem] rounded-full blur-3xl opacity-20"
+        className="pointer-events-none absolute -top-40 -left-40 h-[32rem] w-[32rem] rounded-full opacity-20 blur-3xl"
         style={{ background: 'radial-gradient(circle, #3b82f6 0%, transparent 65%)' }}
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -bottom-52 -right-32 w-[38rem] h-[38rem] rounded-full blur-3xl opacity-20"
+        className="pointer-events-none absolute -bottom-52 -right-32 h-[34rem] w-[34rem] rounded-full opacity-20 blur-3xl"
         style={{ background: 'radial-gradient(circle, #8b5cf6 0%, transparent 65%)' }}
       />
 
-      <div className="relative max-w-6xl mx-auto px-6 py-10">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-4 mb-10">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center shrink-0">
-              <svg viewBox="0 0 96 96" className="w-5 h-5 fill-[#fff]">
-                <path d="M33.4 6.4L10 73.8h19.3l13.6-36.1 14.1 25.2-10.2 10.9H66l17.8 17.7H96L57.3 6.4H33.4z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-white leading-tight">Cloudledger</p>
-              <p className="text-xs text-slate-500">Enterprise cost intelligence</p>
-            </div>
+      <header className="relative flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600">
+            <svg viewBox="0 0 96 96" className="h-4 w-4 fill-[#fff]">
+              <path d="M33.4 6.4L10 73.8h19.3l13.6-36.1 14.1 25.2-10.2 10.9H66l17.8 17.7H96L57.3 6.4H33.4z" />
+            </svg>
           </div>
-
-          <div className="flex items-center gap-3">
-            {me?.email && (
-              <span className="hidden sm:inline text-xs text-slate-500">
-                Signed in as <span className="text-slate-300">{me.email}</span>
-              </span>
-            )}
-            <button
-              onClick={logout}
-              className="text-xs text-slate-400 hover:text-white inline-flex items-center gap-1.5"
-            >
-              Sign out <LogOut className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <span className="text-sm font-semibold tracking-tight text-white">Cloudledger</span>
         </div>
 
-        <div className="grid lg:grid-cols-[1fr_460px] gap-8 items-start">
-          {/* ── Left: what this is and how to prepare ── */}
-          <div>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-medium mb-4">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Read-only unless you grant more
-            </span>
+        <div className="flex items-center gap-3">
+          {me?.email && (
+            <span className="hidden text-xs text-slate-500 sm:inline">{me.email}</span>
+          )}
+          <button
+            onClick={logout}
+            className="inline-flex items-center gap-1.5 text-xs text-slate-400 transition hover:text-white"
+          >
+            Sign out <LogOut className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </header>
 
-            <h1 className="text-3xl sm:text-4xl font-semibold text-white leading-tight">
-              Connect your Azure tenant
-            </h1>
-            <p className="text-slate-400 mt-3 text-[15px] leading-relaxed max-w-lg">
-              Create a read-only identity in your own tenant and paste it here.
-              About five minutes. You can revoke it whenever you like.
-            </p>
+      {/* One column, one task. The previous two-column layout put a page of
+          explanation beside the four boxes that are the actual job, so the
+          explanation read as the job. */}
+      <main className="relative mx-auto w-full max-w-[27rem] flex-1 py-10 sm:py-14">
+        <div className="text-center">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-400">
+            <ShieldCheck className="h-3 w-3" />
+            Read-only
+          </span>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white">
+            Connect your Azure tenant
+          </h1>
+          <p className="mt-1.5 text-sm text-slate-400">
+            Four values from your app registration. About five minutes.
+          </p>
+        </div>
 
-            {/* Someone whose colleague already connected the tenant does not
-                need any of this, and would otherwise register a second
-                application for an estate that is already being read. They
-                arrive here only because the invitation had not been issued when
-                they first signed in, so the way out is to look again. */}
-            <p className="text-slate-500 mt-3 text-sm">
-              Joining a colleague&rsquo;s workspace?{' '}
+        <form
+          onSubmit={submit}
+          noValidate
+          className="mt-6 space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl"
+        >
+          <Field
+            label="Name this connection"
+            icon={Building2}
+            value={form.tenant_name}
+            onChange={(v) => set('tenant_name', v)}
+            placeholder="Production"
+            error={touched ? errors.tenant_name : ''}
+          />
+          <Field
+            label="Directory (tenant) ID"
+            icon={Fingerprint}
+            value={form.tenant_id}
+            onChange={(v) => set('tenant_id', clean(v))}
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            hint={
+              me?.tenant_id && form.tenant_id === me.tenant_id
+                ? 'The directory you signed in from.'
+                : undefined
+            }
+            error={touched ? errors.tenant_id : ''}
+          />
+          <Field
+            label="Application (client) ID"
+            icon={KeyRound}
+            value={form.client_id}
+            onChange={(v) => set('client_id', clean(v))}
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            error={touched ? errors.client_id : ''}
+          />
+          <Field
+            label="Client secret"
+            icon={Lock}
+            // Hidden by default, but a secret is pasted rather than typed and a
+            // row of dots cannot be checked against the clipboard. Whoever is
+            // at this screen is alone with their own credential.
+            type={showSecret ? 'text' : 'password'}
+            value={form.client_secret}
+            onChange={(v) => set('client_secret', v)}
+            placeholder="Paste the secret Value"
+            hint="The Value, not the Secret ID."
+            error={touched ? errors.client_secret : ''}
+            action={
               <button
                 type="button"
-                onClick={() => loadMe()}
-                className="text-blue-400 underline underline-offset-2 hover:text-blue-300"
+                onClick={() => setShowSecret(v => !v)}
+                className="inline-flex items-center gap-1 text-xs text-slate-500 transition hover:text-slate-300"
               >
-                Check for an invitation
+                {showSecret
+                  ? <><EyeOff className="h-3.5 w-3.5" />Hide</>
+                  : <><Eye className="h-3.5 w-3.5" />Show</>}
               </button>
-            </p>
+            }
+          />
 
-            <ol className="mt-8 space-y-2.5">
-              {STEPS.map((s, i) => (
-                <li
-                  key={s.title}
-                  className="flex gap-3.5 bg-slate-900/70 border border-slate-800 rounded-2xl px-4 py-3.5 backdrop-blur"
-                >
-                  <span className="w-6 h-6 mt-0.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-semibold flex items-center justify-center shrink-0">
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-[#fff] transition hover:bg-blue-500 disabled:opacity-50"
+          >
+            {saving
+              ? <><Loader2 className="h-4 w-4 animate-spin" />Checking with Azure…</>
+              : <><Plus className="h-4 w-4" />Connect tenant</>}
+          </button>
+
+          <div className="flex flex-wrap justify-center gap-x-3.5 gap-y-1">
+            {['Cannot change anything', 'Revoke any time'].map(t => (
+              <span key={t} className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
+                <Check className="h-3 w-3" />{t}
+              </span>
+            ))}
+          </div>
+        </form>
+
+        {/* Everything that is not the form. Both answer a question asked once,
+            and both were previously on screen for everybody, every time. */}
+        <div className="mt-4 space-y-2">
+          <Disclosure
+            icon={<ListOrdered className="h-4 w-4 shrink-0 text-slate-500" />}
+            label="Where do I find these?"
+            id="onboarding-steps"
+            open={panel === 'steps'}
+            onToggle={() => setPanel(p => (p === 'steps' ? '' : 'steps'))}
+          >
+            <ol className="space-y-2.5">
+              {STEPS.map(([title, body], i) => (
+                <li key={title} className="flex gap-3">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded bg-slate-800 text-[11px] font-semibold text-slate-400">
                     {i + 1}
                   </span>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-white">
-                      {s.title}
-                      {s.link && (
-                        <a
-                          href={s.link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-blue-400 hover:text-blue-300"
-                        >
-                          {s.linkLabel} <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </p>
-                    <p className="text-sm text-slate-400 mt-0.5 leading-relaxed">{s.body}</p>
-                  </div>
+                  <p className="min-w-0 text-sm text-slate-300">
+                    {title}
+                    <span className="block text-xs text-slate-500">{body}</span>
+                  </p>
                 </li>
               ))}
             </ol>
-
-            <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-              <button
-                onClick={getGuide}
-                disabled={downloading}
-                className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white transition disabled:opacity-60"
+            <div className="mt-3.5 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-800 pt-3">
+              <a
+                href={PORTAL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300"
               >
-                {downloading
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : <Download className="w-4 h-4" />}
-                Setup guide (PDF)
-              </button>
-              <span className="text-xs text-slate-600">
-                Not the Azure admin? Send them this — it holds nothing about your account.
-              </span>
-            </div>
-
-            {/* Thirteen permissions with a paragraph each is the right amount
-                of detail for the person who wants it and a wall for everyone
-                else. It stays one click away rather than in the way. */}
-            <div className="mt-8">
+                Open Azure portal <ExternalLink className="h-3 w-3" />
+              </a>
               <button
                 type="button"
-                onClick={() => setShowPermissions(v => !v)}
-                aria-expanded={showPermissions}
-                aria-controls="onboarding-permissions"
-                className="flex w-full items-center gap-2.5 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-left transition hover:border-slate-700"
+                onClick={getGuide}
+                disabled={downloading}
+                className="inline-flex items-center gap-1.5 text-xs text-slate-400 transition hover:text-white disabled:opacity-60"
               >
-                <ShieldCheck className="h-4 w-4 shrink-0 text-blue-400" />
-                <span className="min-w-0 flex-1 text-sm text-slate-300">
-                  What access this needs, role by role
-                </span>
-                <ChevronDown
-                  className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${showPermissions ? 'rotate-180' : ''}`}
-                />
+                {downloading
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Download className="h-3 w-3" />}
+                Setup guide (PDF)
               </button>
-
-              {showPermissions && (
-                <div id="onboarding-permissions" className="mt-3">
-                  <PermissionsPanel compact />
-                </div>
-              )}
             </div>
-          </div>
+          </Disclosure>
 
-          {/* ── Right: the form ── */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl lg:sticky lg:top-10">
-            <h2 className="text-lg font-semibold text-white">Add your tenant</h2>
-            <p className="text-sm text-slate-400 mt-1 mb-5">
-              Paste the values from your app registration.
-            </p>
-
-            <form onSubmit={submit} className="space-y-4" noValidate>
-              <Field
-                label="Name this connection"
-                icon={Building2}
-                value={form.tenant_name}
-                onChange={(v) => set('tenant_name', v)}
-                placeholder="Production"
-                hint="A label for you — anything you like."
-                error={touched ? errors.tenant_name : ''}
-              />
-              <Field
-                label="Directory (tenant) ID"
-                icon={Fingerprint}
-                value={form.tenant_id}
-                onChange={(v) => set('tenant_id', clean(v))}
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                hint={
-                  me?.tenant_id && form.tenant_id === me.tenant_id
-                    ? 'The directory you signed in from. Change it to connect a different one.'
-                    : 'On the app registration overview page.'
-                }
-                error={touched ? errors.tenant_id : ''}
-              />
-              <Field
-                label="Application (client) ID"
-                icon={KeyRound}
-                value={form.client_id}
-                onChange={(v) => set('client_id', clean(v))}
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                hint="On the same page, just below the tenant ID."
-                error={touched ? errors.client_id : ''}
-              />
-              <Field
-                label="Client secret"
-                icon={Lock}
-                // Hidden by default, but a secret is pasted rather than typed
-                // and a row of dots cannot be checked against the clipboard.
-                // Whoever is at this screen is alone with their own credential.
-                type={showSecret ? 'text' : 'password'}
-                value={form.client_secret}
-                onChange={(v) => set('client_secret', v)}
-                placeholder="Paste the secret Value"
-                hint="The Value column, not the Secret ID."
-                error={touched ? errors.client_secret : ''}
-                action={
-                  <button
-                    type="button"
-                    onClick={() => setShowSecret(v => !v)}
-                    className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300"
-                  >
-                    {showSecret
-                      ? <><EyeOff className="w-3.5 h-3.5" />Hide</>
-                      : <><Eye className="w-3.5 h-3.5" />Show</>}
-                  </button>
-                }
-              />
-
-              <button
-                type="submit"
-                disabled={saving}
-                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-[#fff] font-semibold flex items-center justify-center gap-2 text-sm transition"
-              >
-                {saving
-                  ? <><Loader2 className="w-4 h-4 animate-spin" />Checking with Azure…</>
-                  : <><Plus className="w-4 h-4" />Connect tenant</>}
-              </button>
-
-              <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 pt-1">
-                {['Read-only', 'Cannot change anything', 'Revoke any time'].map(t => (
-                  <span key={t} className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
-                    <Check className="w-3 h-3" />{t}
-                  </span>
-                ))}
-              </div>
-            </form>
-          </div>
+          <Disclosure
+            icon={<ShieldCheck className="h-4 w-4 shrink-0 text-blue-400" />}
+            label="What access this needs"
+            id="onboarding-permissions"
+            open={panel === 'permissions'}
+            onToggle={() => setPanel(p => (p === 'permissions' ? '' : 'permissions'))}
+          >
+            <PermissionsPanel compact />
+          </Disclosure>
         </div>
-      </div>
+
+        {/* Someone whose colleague already connected the tenant does not need
+            any of this, and would otherwise register a second application for
+            an estate that is already being read. They arrive here only because
+            the invitation had not been issued when they first signed in, so
+            the way out is to look again. */}
+        <p className="mt-5 text-center text-xs text-slate-500">
+          Joining a colleague&rsquo;s workspace?{' '}
+          <button
+            type="button"
+            onClick={() => loadMe()}
+            className="text-blue-400 underline underline-offset-2 hover:text-blue-300"
+          >
+            Check for an invitation
+          </button>
+        </p>
+      </main>
     </div>
   );
 }

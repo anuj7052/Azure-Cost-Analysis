@@ -208,8 +208,15 @@ function Panel({ tenantId, compact }) {
         <div className="flex items-start gap-3">
           <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-400" />
           <div className="min-w-0">
-            <h3 className="font-semibold text-white">What this app needs access to</h3>
-            <p className="mt-1 text-sm text-slate-400">{headline(data)}</p>
+            {/* Suppressed when embedded: the thing that opened this panel is
+                already a heading saying the same words, and repeating them is
+                the reader's first hint that nobody read the page. */}
+            {!compact && (
+              <h3 className="font-semibold text-white">What this app needs access to</h3>
+            )}
+            <p className={compact ? 'text-sm text-slate-400' : 'mt-1 text-sm text-slate-400'}>
+              {headline(data)}
+            </p>
             <p className="mt-2 text-sm leading-relaxed text-slate-400">{data.note}</p>
           </div>
         </div>
