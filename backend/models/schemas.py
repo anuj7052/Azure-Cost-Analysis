@@ -300,7 +300,7 @@ class UpdateUserRequest(BaseModel):
 class TenantInfo(BaseModel):
     tenant_id: str
     tenant_name: str
-    source: str = "delegated"  # "delegated" | "service_principal" | "session_token" | "azure_cli"
+    source: str = "delegated"  # "delegated" | "service_principal" | "session_token"
     expires_at: Optional[str] = None      # session tokens only
     account: Optional[str] = None         # who the session token belongs to
     subscription_count: Optional[int] = None

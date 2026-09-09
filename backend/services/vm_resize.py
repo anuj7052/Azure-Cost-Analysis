@@ -294,7 +294,11 @@ async def list_skus(
             if (item.get("resourceType") or "").lower() == "virtualmachines"
         )
         url = data.get("nextLink")
-        params = {}
+        # None, not {}. nextLink arrives with its own continuation token in the
+        # query string, and httpx 0.28 replaces a URL's query with `params`
+        # rather than merging -- an empty mapping is close enough to "replace
+        # with nothing" to be worth not relying on.
+        params = None
     return items
 
 

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  dailySeries, daysInMonth, finops, monthlySeries, recommend, topSpend,
+  clickedDay, dailySeries, daysInMonth, finops, monthlySeries, recommend, topSpend,
 } from '../src/utils/boqDashboard';
 
 const cat = (over = {}) => ({
@@ -222,5 +222,37 @@ describe('recommendations', () => {
       ],
     }));
     expect(advice[0].id).toBe('over:b');
+  });
+});
+
+describe('clickedDay', () => {
+  const series = [
+    { date: '09-05', full: '2026-09-05' },
+    { date: '09-06', full: '2026-09-06' },
+    { date: '09-07', full: '2026-09-07' },
+  ];
+
+  it('opens the day that was clicked, not the one last hovered', () => {
+    // Recharts keeps activePayload in step with the tooltip, which follows the
+    // pointer rather than the click. A click on 07 that arrived while the
+    // tooltip still held 06 used to open 06, and every figure in that panel was
+    // right about the wrong day.
+    const day = clickedDay(
+      { activeIndex: 2, activeLabel: '09-07', activePayload: [{ payload: series[1] }] },
+      series,
+    );
+    expect(day).toBe('2026-09-07');
+  });
+
+  it('falls back to the axis label when there is no index', () => {
+    expect(clickedDay({ activeLabel: '09-06' }, series)).toBe('2026-09-06');
+  });
+
+  it('returns null rather than a guess when the click carried nothing', () => {
+    // A click on the chart's padding is not a request for a day, and opening
+    // the first or last one because something had to be opened would be an
+    // answer to a question nobody asked.
+    expect(clickedDay({}, series)).toBeNull();
+    expect(clickedDay({ activeIndex: 9 }, series)).toBeNull();
   });
 });

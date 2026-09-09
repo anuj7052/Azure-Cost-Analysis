@@ -61,13 +61,14 @@ function LegacyAccessRedirect({ view }) {
   return <Navigate to={`/access-identity?${params}`} replace />;
 }
 
-const PageLoader = () => (
-  <div className="flex h-[60vh] items-center justify-center">
+const PageLoader = ({ label }) => (
+  <div className="flex h-[60vh] flex-col items-center justify-center gap-3">
     <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     <div
       className="w-8 h-8 rounded-full border-[3px] border-blue-500"
       style={{ borderTopColor: 'transparent', animation: 'spin 0.7s linear infinite' }}
     />
+    {label && <p className="text-sm text-slate-400">{label}</p>}
   </div>
 );
 
@@ -239,7 +240,12 @@ function AppShell() {
 
   // Wait for the account before deciding what to show, otherwise a returning
   // user sees the onboarding screen flash before their dashboard.
-  if (!me) return <PageLoader />;
+  //
+  // Labelled, unlike the spinner used for a lazy route. This one fills the
+  // screen immediately after sign-in, so an unlabelled circle here is the whole
+  // product as far as the reader is concerned, and it says nothing about what
+  // is being waited on or that the wait is bounded.
+  if (!me) return <PageLoader label="Loading your account…" />;
 
   // Registering a tenant is how a customer subscribes to the product, so it is
   // mandatory rather than skippable. Who that applies to is decided by the

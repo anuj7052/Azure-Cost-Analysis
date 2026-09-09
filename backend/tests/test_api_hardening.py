@@ -36,10 +36,12 @@ def production(**overrides) -> Settings:
     return Settings(**{**base, **overrides})
 
 
-def test_cli_sign_in_is_refused_in_production():
+def test_the_retired_cli_setting_is_reported_rather_than_ignored():
     """
-    The CLI identity belongs to the machine, not the caller. Left on in a
-    hosted deployment, one customer would read another's Azure estate.
+    `az login` was removed as a credential source: it lent the operator's Azure
+    access to whoever was signed in. A deployment still carrying the flag must
+    be told it no longer does anything, because silently ignoring it leaves an
+    operator believing their environment file describes the running system.
     """
     problems = production_config_errors(production(AZURE_CLI_AUTH=True))
 

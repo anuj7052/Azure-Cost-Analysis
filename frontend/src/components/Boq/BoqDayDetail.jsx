@@ -66,9 +66,16 @@ export function DayDetail({ days, date, budget, currency, onClose, onPickService
             <CalendarDays size={14} /> {detail.date}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500">
+            {/*
+              Both amounts, in the order they happened. A difference on its own
+              says how far something moved but not where it moved from, so
+              "-₹2,155" reads the same whether the day fell from ₹2,356 to ₹200
+              or from ₹40,000 to ₹37,845 -- and those are not the same event.
+            */}
             {detail.previousDate
-              ? <>Charged {fmt(detail.total)} — <Delta value={detail.change} currency={currency} />{' '}
-                against {detail.previousDate}
+              ? <>{fmt(detail.previousTotal)} on {detail.previousDate} →{' '}
+                <span className="font-semibold text-slate-300">{fmt(detail.total)}</span>{' '}
+                <Delta value={detail.change} currency={currency} />
                 {detail.changePct !== null && ` (${detail.changePct > 0 ? '+' : ''}${detail.changePct}%)`}</>
               : `Charged ${fmt(detail.total)}. This is the first day in the period, so there is nothing to compare it with.`}
           </p>
@@ -101,7 +108,10 @@ export function DayDetail({ days, date, budget, currency, onClose, onPickService
                   {m.isNew && <span className="ml-1.5 rounded bg-sky-500/15 px-1 py-0.5 text-[9px] text-sky-300">new</span>}
                   {m.stopped && <span className="ml-1.5 rounded bg-slate-700/40 px-1 py-0.5 text-[9px] text-slate-400">stopped</span>}
                 </button>
-                <Delta value={m.delta} currency={currency} className="shrink-0 text-xs" />
+                <span className="shrink-0 tabular-nums text-slate-500">
+                  {m.was === null ? '—' : fmt(m.was)} → {fmt(m.cost)}
+                </span>
+                <Delta value={m.delta} currency={currency} className="w-24 shrink-0 justify-end text-xs" />
               </li>
             ))}
           </ul>
@@ -112,7 +122,11 @@ export function DayDetail({ days, date, budget, currency, onClose, onPickService
         <table className="w-full text-left text-xs">
           <thead className="sticky top-0 bg-slate-900 text-[10px] uppercase tracking-wide text-slate-500">
             <tr className="border-y border-slate-800">
-              <th className="px-5 py-2 font-medium">Service</th>              <th className="px-3 py-2 text-right font-medium">Cost</th>
+              <th className="px-5 py-2 font-medium">Service</th>
+              <th className="px-3 py-2 text-right font-medium">
+                {detail.previousDate ? 'Day before' : 'Was'}
+              </th>
+              <th className="px-3 py-2 text-right font-medium">Cost</th>
               <th className="px-3 py-2 text-right font-medium">Share</th>
               <th className="px-5 py-2 text-right font-medium">
                 {detail.previousDate ? 'vs day before' : 'Change'}
@@ -131,6 +145,9 @@ export function DayDetail({ days, date, budget, currency, onClose, onPickService
                     {s.stopped && <span className="shrink-0 rounded bg-slate-700/40 px-1 py-0.5 text-[9px] text-slate-400">stopped</span>}
                     <ChevronRight size={11} className="shrink-0 opacity-0 transition group-hover:opacity-100" />
                   </button>
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">
+                  {s.was === null ? '—' : fmt(s.was)}
                 </td>
                 <td className="px-3 py-1.5 text-right tabular-nums text-slate-200">{fmt(s.cost)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">

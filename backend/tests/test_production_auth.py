@@ -158,7 +158,8 @@ def test_a_correct_production_config_reports_no_problems():
     ({"APP_SECRET_KEY": "short"}, "APP_SECRET_KEY"),
     ({"AZURE_CLIENT_ID": ""}, "AZURE_CLIENT_ID"),
     ({"CORS_ORIGINS": "http://app.example.com"}, "CORS_ORIGINS"),
-    # Hosted, this hands every caller the server's own Azure rights.
+    # Retired. Named rather than ignored, so a deployment still carrying the
+    # flag is told it no longer does anything.
     ({"AZURE_CLI_AUTH": True}, "AZURE_CLI_AUTH"),
 ])
 def test_each_insecure_setting_is_named_not_merely_counted(over, expect):

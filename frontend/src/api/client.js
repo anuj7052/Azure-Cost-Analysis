@@ -953,20 +953,6 @@ export const fetchPriceHistory = (params = {}) =>
 export const fetchFxRates = (quote, month) =>
   api.get('/prices/fx', { params: { quote, month } }).then(r => r.data);
 
-/** Whether the machine's `az login` can stand in for stored credentials. */
-export const fetchCliStatus = () => api.get('/tenants/cli').then(r => r.data);
-
-/** Start a device-code `az login` and get back the code to type. */
-export const startCliLogin = (tenantId) =>
-  api.post('/tenants/cli/login', null, tenantId ? { params: { tenant_id: tenantId } } : undefined)
-    .then(r => r.data);
-
-/** How the sign-in that is already running is getting on. */
-export const fetchCliLogin = () => api.get('/tenants/cli/login').then(r => r.data);
-
-/** Abandon a sign-in rather than leaving `az` waiting on the server. */
-export const cancelCliLogin = () => api.delete('/tenants/cli/login').then(r => r.data);
-
 /** Today's dollar rate for several currencies, for the display-currency switch. */
 export const fetchLatestFxRates = (quotes) =>
   api.get('/prices/fx/latest', { params: { quotes: quotes.join(',') } }).then(r => r.data);

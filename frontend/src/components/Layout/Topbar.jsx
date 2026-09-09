@@ -198,7 +198,6 @@ export default function Topbar() {
                   <p className="font-medium">{dispName}</p>
                   <p className="text-xs text-slate-500">
                     {t.source === 'delegated' ? 'Microsoft Login'
-                      : t.source === 'azure_cli' ? 'Azure CLI'
                       : t.source === 'session_token' ? 'Session Token'
                       : 'Service Principal'} · {t.tenant_id.slice(0, 8)}…
                   </p>

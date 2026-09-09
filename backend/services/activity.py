@@ -207,9 +207,19 @@ async def fetch_activity(
     url = (
         f"{MGMT_BASE}/subscriptions/{subscription_id}"
         f"/providers/Microsoft.Insights/eventtypes/management/values"
-        f"?api-version={ACTIVITY_API_VERSION}"
     )
-    params = {"$filter": " and ".join(conditions)}
+    # api-version belongs in `params`, not in the URL.
+    #
+    # httpx 0.28 stopped merging `params` into a URL that already carried a
+    # query string and started replacing it outright. With the version pinned
+    # to the URL it was silently dropped the moment a filter was added, and
+    # Azure answered 400 MissingApiVersionParameter for every read -- which the
+    # router then reported as a missing Reader role, sending people to grant a
+    # permission they already had.
+    params = {
+        "api-version": ACTIVITY_API_VERSION,
+        "$filter": " and ".join(conditions),
+    }
     if select:
         params["$select"] = ",".join(select)
     headers = {"Authorization": f"Bearer {token}"}

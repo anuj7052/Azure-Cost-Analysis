@@ -89,6 +89,38 @@ export function dailySeries(days, monthlyBudget) {
   });
 }
 
+/**
+ * Which day a click on the chart actually landed on.
+ *
+ * The chart used to read `activePayload[0].payload.full` and nothing else.
+ * Recharts fills `activePayload` from the tooltip, which is driven by pointer
+ * *movement* -- so a click that arrived without a preceding hover over that
+ * exact point either carried no payload at all (nothing happened, which is what
+ * a touch or a keyboard-driven click gets) or carried the previously hovered
+ * point, which opened the breakdown for the day next to the one clicked. A
+ * panel headed with the wrong date is worse than no panel: every figure in it
+ * is correct and every one of them is about a different day.
+ *
+ * `activeIndex` is set by the same interaction but is a plain position into the
+ * data we passed in, so resolving through it means the day that opens is the
+ * day that was clicked. The other two are kept as fallbacks rather than
+ * removed, because which of the three a given recharts release populates is not
+ * worth depending on.
+ */
+export function clickedDay(state, series) {
+  const list = Array.isArray(series) ? series : [];
+  const at = Number(state?.activeIndex);
+  if (Number.isInteger(at) && at >= 0 && at < list.length) return list[at].full;
+
+  const label = state?.activeLabel;
+  if (label != null) {
+    const row = list.find(d => d.date === label);
+    if (row) return row.full;
+  }
+
+  return state?.activePayload?.[0]?.payload?.full || null;
+}
+
 /** The same shape at month grain, for imported data with no daily detail. */
 export function monthlySeries(months, monthlyBudget) {
   return (Array.isArray(months) ? months : [])

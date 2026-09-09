@@ -128,41 +128,133 @@ const DIFF_KIND = {
 function DiffRow({ entry, onOpen }) {
   const meta = DIFF_KIND[entry.kind] || DIFF_KIND.modified;
   const fields = entry.kind === 'modified' ? (entry.changes || []) : [];
+  const [all, setAll] = useState(false);
+  // Four was a guess at how many fields fit, and a resize that also moved the
+  // disk, the NIC and three tags hid the field the reader opened this for.
+  // Kept collapsed by default so ten resources still read as a list, but the
+  // rest is one click away rather than a different page.
+  const shown = all ? fields : fields.slice(0, 4);
+  // The header opens the resource; the toggle stays outside it, because a
+  // button inside a button is invalid and the browser picks a winner at random.
   return (
-    <li>
-      <button
-        type="button"
-        onClick={() => onOpen(entry)}
-        title="Open this resource's own history"
-        className="flex w-full gap-2.5 rounded-lg px-1.5 py-1 text-left transition hover:bg-slate-900"
-      >
+    <li className="rounded-lg px-1.5 py-1 transition hover:bg-slate-900">
+      <div className="flex gap-2.5">
         <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5">
-            <span className="truncate text-[11px] text-slate-200">{entry.name || entry.resource_id}</span>
-            <span className={`shrink-0 text-[10px] ${meta.tone}`}>{meta.label}</span>
-            <ChevronRight className="h-3 w-3 shrink-0 text-slate-600" />
-          </span>
-          <span className="block truncate text-[11px] text-slate-500">
-            {[shortType(entry.type), entry.location].filter(Boolean).join(' · ')}
-          </span>
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={() => onOpen(entry)}
+            title="Open this resource's own history"
+            className="block w-full text-left"
+          >
+            <span className="flex items-center gap-1.5">
+              <span className="truncate text-[11px] text-slate-200">{entry.name || entry.resource_id}</span>
+              <span className={`shrink-0 text-[10px] ${meta.tone}`}>{meta.label}</span>
+              <ChevronRight className="h-3 w-3 shrink-0 text-slate-600" />
+            </span>
+            <span className="block truncate text-[11px] text-slate-500">
+              {[shortType(entry.type), entry.location].filter(Boolean).join(' · ')}
+            </span>
+          </button>
+
           {fields.length > 0 && (
-            <span className="mt-0.5 block space-y-0.5">
-              {fields.slice(0, 4).map(change => (
-                <span key={change.field} className="block truncate text-[10px] text-slate-400">
+            <div className="mt-0.5 space-y-0.5">
+              {shown.map(change => (
+                <p key={change.field} className="text-[10px] leading-relaxed text-slate-400">
                   {summariseChange(change)}
-                </span>
+                </p>
               ))}
               {fields.length > 4 && (
-                <span className="block text-[10px] text-slate-600">
-                  and {fields.length - 4} more field{fields.length - 4 === 1 ? '' : 's'}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setAll(v => !v)}
+                  className="text-[10px] text-blue-400 transition hover:text-blue-300"
+                >
+                  {all
+                    ? 'Show fewer fields'
+                    : `Show all ${fields.length} changed fields`}
+                </button>
               )}
-            </span>
+            </div>
           )}
-        </span>
-      </button>
+        </div>
+      </div>
     </li>
+  );
+}
+
+/**
+ * What Azure recorded before this app took its first capture.
+ *
+ * The diff above can only compare snapshots, and the first snapshot is the
+ * beginning of its universe. Somebody who resized a VM two months ago and
+ * connected this tenant last week will find every capture agreeing that the VM
+ * is the size it is now -- true, and not what they asked. Azure's own log goes
+ * back ninety days regardless, so the resize is there under the operation that
+ * performed it.
+ *
+ * Presented as a distinct section rather than merged into the diff list: an
+ * operation says what was requested, a diff says what the resource looked like
+ * either side, and quietly mixing the two would make the weaker evidence
+ * inherit the credibility of the stronger.
+ */
+function BeforeCapture({ ops, since, onOpen, error }) {
+  if (error) return null;
+  if (!ops.length) {
+    return (
+      <p className="mt-2 border-t border-slate-800 pt-2 text-[10px] text-slate-500">
+        Azure has no operation recorded for this group before{' '}
+        {since ? moment(since) : 'now'} either, so nothing is being withheld —
+        across the whole {RETENTION_DAYS} days Azure keeps, this group was untouched.
+      </p>
+    );
+  }
+
+  // Grouped by day. Ninety days of operations as one list is a scroll, not a
+  // history: the reader is looking for when something happened, and a flat
+  // list makes them reconstruct that from timestamps.
+  const byDay = new Map();
+  for (const event of ops) {
+    const day = utcDay(event.at);
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(event);
+  }
+  const days = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+
+  return (
+    <section className="mt-2 border-t border-slate-800 pt-2">
+      <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+        Before the first capture · {ops.length} operation{ops.length === 1 ? '' : 's'}
+        {' '}across {days.length} day{days.length === 1 ? '' : 's'}
+      </h4>
+      <p className="mt-0.5 text-[10px] leading-relaxed text-slate-500">
+        {since
+          ? <>Capturing started {moment(since)}, so a change made earlier looks the
+             same in every capture. These come from Azure&apos;s own log, which keeps{' '}
+             {RETENTION_DAYS} days whether or not anything was watching — a resize
+             or a delete from before you connected shows up here.</>
+          : <>No capture exists yet, so everything here comes from Azure&apos;s own log.</>}
+        {' '}This section shows the full {RETENTION_DAYS} days and ignores the Period
+        filter above, which only narrows the capture comparison. They name the
+        operation that was requested, not the fields it changed.
+      </p>
+      {days.map(([day, dayOps]) => (
+        <section key={day} className="mt-1.5">
+          <h5 className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+            {readableDay(day)} · {dayOps.length} operation{dayOps.length === 1 ? '' : 's'}
+          </h5>
+          <ol className="mt-1 space-y-2">
+            {dayOps.map(event => (
+              <OperationRow
+                key={event.id || `${event.at}-${event.operation}`}
+                event={event}
+                onOpen={onOpen}
+              />
+            ))}
+          </ol>
+        </section>
+      ))}
+    </section>
   );
 }
 
@@ -228,8 +320,53 @@ function OperationRow({ event, onOpen }) {
   );
 }
 
-function CostMovement({ event, currency }) {
+/**
+ * Everything that moved between a day and the one before it.
+ *
+ * `dayTimeline` already picks the three biggest movers to write a headline
+ * with. This returns all of them with both sides of the comparison, because
+ * "Storage +₹40" answers what moved and not whether ₹40 is a doubling or a
+ * rounding error -- and those need different reactions.
+ */
+function explainDay(days, date) {
+  const index = days.findIndex(d => d.date === date);
+  if (index < 1) return null;
+
+  const curr = days[index];
+  const prev = days[index - 1];
+  const before = prev.by_service || {};
+  const after = curr.by_service || {};
+
+  const movers = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .map(name => ({
+      name,
+      before: before[name] || 0,
+      after: after[name] || 0,
+      delta: (after[name] || 0) - (before[name] || 0),
+    }))
+    .filter(m => Math.abs(m.delta) >= 0.01)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+  return { curr, prev, movers };
+}
+
+// A per-hour column used to sit beside these figures. It was the day's cost
+// divided by 24, which is not a rate anybody bills at -- this group draws on
+// several meters at different prices and Azure's daily API returns no quantity
+// to divide by -- so it needed a disclaimer under every card explaining that
+// the number was not what it looked like. A figure that has to be explained
+// away is worse than no figure, and the amounts either side already answer the
+// question it was standing in for.
+
+function CostMovement({ event, currency, days = [] }) {
   const meta = COST_KIND[event.kind] || COST_KIND.started;
+  const detail = explainDay(days, event.date);
+  const movers = detail?.movers || [];
+  // A day's change carried forward for a month. Explicitly conditional: it is
+  // the consequence of doing nothing, not a forecast, and the wording has to
+  // keep those apart or it becomes a number people plan against.
+  const monthly = event.delta != null ? event.delta * 30 : null;
+
   return (
     <div className="mt-1 rounded-lg border border-slate-800 bg-slate-900/50 px-2.5 py-2">
       <p className={`flex flex-wrap items-center gap-1.5 text-[11px] font-medium ${meta.tone}`}>
@@ -242,11 +379,66 @@ function CostMovement({ event, currency }) {
           </span>
         )}
       </p>
-      <p className="mt-0.5 text-[10px] text-slate-500">
-        {formatAmount(event.total, currency)} billed that day
-        {event.drivers?.length > 0 && ' · '}
-        {event.drivers?.map(d => `${d.name} ${d.delta > 0 ? '+' : ''}${formatAmount(d.delta, currency)}`).join(', ')}
-      </p>
+
+      {/* The two figures that answer "how much" and "so what". */}
+      <div className="mt-1.5 grid grid-cols-2 gap-2 rounded-md bg-slate-950/50 px-2 py-1.5">
+        <div>
+          <p className="text-[9px] uppercase tracking-wide text-slate-500">Billed that day</p>
+          <p className="text-[11px] font-semibold text-slate-200">
+            {detail
+              ? <>{formatAmount(detail.prev.total, currency)} <span className="text-slate-500">→</span> {formatAmount(event.total, currency)}</>
+              : formatAmount(event.total, currency)}
+          </p>
+        </div>
+        <div>
+          <p className="text-[9px] uppercase tracking-wide text-slate-500">If it stays</p>
+          <p className={`text-[11px] font-semibold ${monthly > 0 ? 'text-red-300' : 'text-emerald-300'}`}>
+            {monthly == null ? '—' : `${monthly > 0 ? '+' : ''}${formatAmount(monthly, currency)}`}
+          </p>
+          <p className="text-[9px] text-slate-500">over 30 days</p>
+        </div>
+      </div>
+
+      {movers.length > 0 ? (
+        <>
+          <p className="mt-1.5 text-[9px] uppercase tracking-wide text-slate-500">
+            What moved
+          </p>
+          <ul className="mt-0.5 space-y-0.5">
+            {movers.slice(0, 6).map(m => (
+              <li key={m.name} className="flex items-baseline gap-2 text-[10px]">
+                <span className="min-w-0 flex-1 truncate text-slate-300">{m.name}</span>
+                <span className="shrink-0 tabular-nums text-slate-500">
+                  {formatAmount(m.before, currency)} → {formatAmount(m.after, currency)}
+                </span>
+                <span
+                  className={`w-20 shrink-0 text-right font-semibold tabular-nums ${
+                    m.delta > 0 ? 'text-red-300' : 'text-emerald-300'
+                  }`}
+                >
+                  {m.delta > 0 ? '+' : ''}{formatAmount(m.delta, currency)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {movers.length > 6 && (
+            <p className="mt-0.5 text-[10px] text-slate-500">
+              and {movers.length - 6} smaller {movers.length - 6 === 1 ? 'service' : 'services'}
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="mt-1 text-[10px] text-slate-500">
+          {/*
+            A total that moved with no service moving under it is not a
+            contradiction worth hiding: the previous day is outside the loaded
+            window, or Azure restated a day after the fact. Saying so beats an
+            empty space that reads like a rendering fault.
+          */}
+          No per-service breakdown for this day — the day before it sits outside the
+          loaded period, so there is nothing to compare against.
+        </p>
+      )}
     </div>
   );
 }
@@ -435,6 +627,38 @@ export default function GroupTimeline({ tenantId, subscriptionIds, resourceGroup
     }
     return [...buckets.values()].sort((a, b) => b.day.localeCompare(a.day));
   }, [events, query]);
+
+  /**
+   * The changes that happened before this app was ever watching.
+   *
+   * Snapshots only start at the first scan, so a VM resized two months ago
+   * looks identical in every capture that exists and the diff is silent about
+   * it. The Activity Log is not: Azure keeps ninety days of operations whether
+   * or not anyone was capturing, and the request above already asks for all
+   * ninety.
+   *
+   * Reads `acts.events` rather than `events`, which is the only place in this
+   * component that ignores the period filter, and deliberately. The filter
+   * narrows a comparison; this section exists because the comparison cannot
+   * reach back far enough, so narrowing it to the same thirty days would
+   * reintroduce the exact blindness it is here to cover. The heading says the
+   * span out loud so the two are not confused.
+   *
+   * Bounded by the earlier capture rather than shown wholesale, because an
+   * operation after that point is already accounted for by the diff and
+   * listing it twice invites the reader to count it twice.
+   */
+  const firstCapture = diffs.before?.started_at || null;
+  const preCaptureOps = useMemo(() => {
+    const all = acts.key === requestKey ? acts.events : [];
+    if (!firstCapture) return all;
+    const cutoff = asDate(firstCapture);
+    if (!cutoff) return [];
+    return all.filter((e) => {
+      const at = asDate(e.at);
+      return at && at < cutoff;
+    });
+  }, [acts, requestKey, firstCapture]);
 
   if (acts.key !== requestKey) {
     return (
@@ -678,7 +902,7 @@ export default function GroupTimeline({ tenantId, subscriptionIds, resourceGroup
                     {readableDay(day)}
                     {ops.length > 0 && ` · ${ops.length} operation${ops.length === 1 ? '' : 's'}`}
                   </h4>
-                  {cost && <CostMovement event={cost} currency={currency} />}
+                  {cost && <CostMovement event={cost} currency={currency} days={days} />}
                   {ops.length > 0 && (
                     <ol className="mt-1 space-y-2">
                       {ops.map(event => (
@@ -748,18 +972,34 @@ export default function GroupTimeline({ tenantId, subscriptionIds, resourceGroup
                   Comparing captures…
                 </p>
               ) : !diffs.comparable ? (
-                <p className="text-[11px] text-slate-400">
-                  Two captures are needed to compare, and only one exists for this
-                  period. The activity log above still covers it — it comes from
-                  Azure rather than from anything this app recorded.
-                </p>
+                <>
+                  <p className="text-[11px] text-slate-400">
+                    Two captures are needed to compare, and only one exists for this
+                    period. What Azure recorded itself is below — it covers the whole
+                    window regardless of when capturing started.
+                  </p>
+                  <BeforeCapture
+                    ops={preCaptureOps}
+                    since={firstCapture}
+                    onOpen={setOpenResource}
+                    error={acts.error}
+                  />
+                </>
               ) : changed.length === 0 ? (
-                <p className="text-[11px] text-slate-400">
-                  Nothing in {resourceGroup} differs between the captures taken{' '}
-                  {moment(diffs.before?.started_at)} and {moment(diffs.after?.started_at)}.
-                  A change made and undone between those two moments leaves no trace
-                  here — the activity log would still have it.
-                </p>
+                <>
+                  <p className="text-[11px] text-slate-400">
+                    Nothing in {resourceGroup} differs between the captures taken{' '}
+                    {moment(diffs.before?.started_at)} and {moment(diffs.after?.started_at)}.
+                    A change made and undone between those two moments leaves no trace
+                    here.
+                  </p>
+                  <BeforeCapture
+                    ops={preCaptureOps}
+                    since={firstCapture}
+                    onOpen={setOpenResource}
+                    error={acts.error}
+                  />
+                </>
               ) : (
                 <>
                   <p className="text-[11px] text-slate-500">
@@ -774,6 +1014,12 @@ export default function GroupTimeline({ tenantId, subscriptionIds, resourceGroup
                       />
                     ))}
                   </ul>
+                  <BeforeCapture
+                    ops={preCaptureOps}
+                    since={firstCapture}
+                    onOpen={setOpenResource}
+                    error={acts.error}
+                  />
                 </>
               )}
             </>

@@ -319,7 +319,8 @@ export default function Landing() {
           style={{ animation: 'aca-drift 22s ease-in-out infinite reverse' }}
         />
 
-        <div className="relative mx-auto grid max-w-6xl items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">          <Reveal>
+        <div className="relative mx-auto grid max-w-6xl items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">
+          <Reveal>
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3.5 py-1.5 text-xs font-medium text-blue-300">
               <ShieldCheck className="h-3.5 w-3.5" />
               Read-only by default · Microsoft Entra sign-in

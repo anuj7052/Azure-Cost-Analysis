@@ -5,11 +5,15 @@ This is the only source in the app that names an actor, so the damaging failure
 is attributing a change to the wrong person — or presenting a read as a change,
 which buries the writes that actually matter under thousands of list calls.
 """
+import httpx
+import pytest
+
 from services.activity import (
     MAX_RETENTION_DAYS,
     caller_of,
     clamp_window,
     describe_operation,
+    fetch_activity,
     is_write,
     normalise,
     summarise_activity,
@@ -165,3 +169,43 @@ class TestWindow:
         # A negative window cannot be honoured, so it collapses to the smallest
         # real one instead of inverting the date range.
         assert clamp_window(-5) == 1
+
+
+class TestRequestShape:
+    """
+    Pins the query string Azure actually receives.
+
+    api-version used to be baked into the URL while the filter was passed as
+    `params`. httpx 0.28 replaces a URL's query with `params` instead of
+    merging them, so the version vanished and every read came back
+    400 MissingApiVersionParameter -- reported to users as a missing Reader
+    role, which sent them to grant a permission they already had. Nothing in
+    the test suite noticed, because nothing looked at the outgoing request.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_request_carries_both_api_version_and_filter(self, monkeypatch):
+        seen = {}
+
+        def handler(request):
+            seen["url"] = request.url
+            return httpx.Response(200, json={"value": []})
+
+        original = httpx.AsyncClient
+
+        class Patched(original):
+            def __init__(self, *args, **kwargs):
+                kwargs["transport"] = httpx.MockTransport(handler)
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", Patched)
+
+        await fetch_activity(
+            token="t", subscription_id="sub-1", days=90,
+            resource_group="rg-prod",
+        )
+
+        params = seen["url"].params
+        assert params.get("api-version"), "Azure rejects any request without it"
+        assert "resourceGroupName eq 'rg-prod'" in params.get("$filter", "")
+        assert "eventTimestamp ge" in params.get("$filter", "")

@@ -102,3 +102,43 @@ export function readPrefs() {
 export function writePrefs(prefs) {
   writeCache('pref:ui', prefs);
 }
+
+/**
+ * Whose answers are currently sitting in this browser.
+ *
+ * Nothing above namespaces a key by account, so every entry here belongs to
+ * whoever was last signed in -- and `cached()` paints a hit before the network
+ * is even consulted. Signing in as somebody else on the same machine therefore
+ * rendered the previous person's tenants, costs and resources instantly, and
+ * they looked entirely normal because they were real figures, correctly
+ * formatted, simply belonging to another company.
+ *
+ * `evictAll` on sign-out was the only thing standing between those two
+ * sessions, which made data isolation depend on the user having politely used
+ * the menu rather than closing the tab, letting the session lapse, or picking
+ * a different account at Microsoft's chooser.
+ *
+ * Kept under `pref:` so the marker itself survives the eviction it triggers;
+ * otherwise every load would look like a new person and wipe the cache it was
+ * meant to protect.
+ */
+const ACCOUNT_KEY = 'pref:account';
+
+export function rememberAccount(id) {
+  const next = id ? String(id) : '';
+  if (!next) return false;
+  const previous = readCache(ACCOUNT_KEY)?.value ?? null;
+  writeCache(ACCOUNT_KEY, next);
+  if (previous === null || previous === next) return false;
+  // Uploads and the BOQ list go too. `evictApiCache` keeps them because a
+  // refresh must not destroy the user's own work -- but they are that user's
+  // own work, and this is a different user.
+  evictAll();
+  // `evictAll` spares everything under `pref:`, which is what lets the marker
+  // survive. The saved tenant and subscription selection must not: it names a
+  // directory the new person may have no access to, and restoring it would
+  // point their first page load straight at somebody else's estate.
+  safeStorage()?.removeItem(PREFIX + 'pref:ui');
+  writeCache(ACCOUNT_KEY, next);
+  return true;
+}

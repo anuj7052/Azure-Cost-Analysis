@@ -18,15 +18,21 @@ class Settings(BaseSettings):
     AZURE_CLIENT_SECRET: str = ""
     AZURE_TENANT_ID: str = "common"
 
-    # Use the machine's `az login` as a credential source, so no service
-    # principal and no pasted session token are needed for any tenant the CLI
-    # account can reach.
+    # Retired. The machine's `az login` used to be a credential source, so no
+    # service principal and no pasted session token were needed for any tenant
+    # that CLI account could reach.
     #
-    # Off by default and refused in production, deliberately. The CLI identity
-    # belongs to whoever runs the process, not to whoever is calling the API,
-    # so on a hosted deployment every user would silently borrow the server's
-    # rights. That is only safe when the operator and the user are the same
-    # person -- which is exactly the case this exists for.
+    # It was removed rather than tightened. The CLI identity belongs to whoever
+    # runs the process, not to whoever is calling the API, and the feature
+    # therefore lent one person's Azure access to everybody signed in: a user
+    # from one directory was shown another company's tenants in their switcher,
+    # picked one, and read real cost figures for an estate they have no access
+    # to. Nothing on screen suggested anything unusual had happened, which is
+    # the worst way for an access failure to present.
+    #
+    # The field stays so that a deployment still carrying the old setting is
+    # told it no longer does anything, rather than silently behaving
+    # differently to the environment file its operator is reading.
     AZURE_CLI_AUTH: bool = False
 
     APP_SECRET_KEY: str = INSECURE_SECRET_KEY
@@ -113,9 +119,11 @@ def production_config_errors(config: "Settings") -> List[str]:
 
     if config.AZURE_CLI_AUTH:
         problems.append(
-            "AZURE_CLI_AUTH must be off in production. It lends the machine's "
-            "own `az login` identity to every caller, so on a shared "
-            "deployment one user would read another customer's Azure estate."
+            "AZURE_CLI_AUTH is no longer supported and must be removed. The "
+            "machine's own `az login` is no longer a credential source: it "
+            "lent the operator's identity to whoever was signed in, so one "
+            "user could read another customer's Azure estate. Connect each "
+            "tenant with its own service principal or session token instead."
         )
 
     insecure_origins = [

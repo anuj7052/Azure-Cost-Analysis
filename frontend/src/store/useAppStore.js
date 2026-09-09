@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe, fetchOrphaned, fetchPricing, fetchCompute, fetchActivity, fetchPolicy, fetchDefender, fetchAdvisor, fetchAccessReview, fetchRoleAssignments } from '../api/client';
 import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
 import { readSavedViews, removeView, saveView, writeSavedViews } from '../utils/costExplorer';
-import { readCache, readPrefs, writeCache, writePrefs, evictApiCache } from '../utils/persistCache';
+import { readCache, readPrefs, writeCache, writePrefs, evictApiCache, rememberAccount } from '../utils/persistCache';
 
 /**
  * Azure Cost Management throttles hard (HTTP 429). Several pages mount effects
@@ -194,6 +194,34 @@ function clearedTenantData() {
  */
 const sortedIds = (ids) => [...ids].sort();
 
+/**
+ * A deadline for the one request the whole app waits on.
+ *
+ * `fetchMe` looks like an HTTP call with a 60s timeout, but axios only starts
+ * that clock once the request is dispatched -- and the request interceptor
+ * awaits MSAL for a token first. Anything that stalls in there (a silent
+ * renewal whose hidden iframe never posts back, a redirect that is begun and
+ * then abandoned, a popup nobody clicks) leaves the promise pending, and
+ * nothing downstream ever fires. The shell reads that as "still loading" and
+ * shows a bare spinner with no text, no cause and no way out, which is what a
+ * signed-in person was left staring at.
+ *
+ * The wait is generous on purpose -- a cold backend really can take several
+ * seconds -- but it has to end. A named failure the user can retry or sign out
+ * of is strictly better than a spinner that means nothing.
+ */
+const ME_DEADLINE_MS = 25000;
+
+function withDeadline(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]);
+}
+
 export const useAppStore = create((set, get) => ({
   // ── Signed-in account ──
   // Role comes from the backend, never from the token, so the admin nav cannot
@@ -206,8 +234,37 @@ export const useAppStore = create((set, get) => ({
 
   loadMe: async () => {
     set({ meLoading: true, meError: null });
+    const ask = () => withDeadline(
+      fetchMe(),
+      ME_DEADLINE_MS,
+      'Your account could not be loaded because the sign-in never completed. '
+      + 'Retry, or sign out and back in.',
+    );
+
+    /**
+     * Nothing this app has cached belongs to the person who just arrived.
+     *
+     * This is the first moment the app knows *who* is signed in -- MSAL only
+     * proves a sign-in happened -- so it is the right and the earliest place
+     * to notice it is somebody else. Everything held in the browser was
+     * fetched for the previous account, and `cached()` renders a hit before
+     * the network is consulted, so without this the new person's first screen
+     * was the old person's tenants and costs. They look correct because they
+     * are correct; they are simply about another company.
+     *
+     * In-memory store state is cleared alongside the stored copy. Wiping only
+     * localStorage would leave the same figures on screen for as long as the
+     * tab stayed open, which is the whole session.
+     */
+    const adopt = (account) => {
+      if (rememberAccount(account?.id ?? account?.email)) {
+        set({ ...clearedTenantData(), tenants: [], selectedTenantId: '', selectedSubscriptionIds: [] });
+      }
+      return account;
+    };
+
     try {
-      set({ me: await fetchMe(), meLoading: false, meError: null });
+      set({ me: adopt(await ask()), meLoading: false, meError: null });
     } catch (err) {
       // Retry once, but only for an expired credential.
       //
@@ -223,7 +280,7 @@ export const useAppStore = create((set, get) => ({
       // outage behind a second attempt only makes it slower to diagnose.
       if (err.response?.status === 401) {
         try {
-          set({ me: await fetchMe(), meLoading: false, meError: null });
+          set({ me: adopt(await ask()), meLoading: false, meError: null });
           return;
         } catch { /* Fall through and report the original failure. */ }
       }

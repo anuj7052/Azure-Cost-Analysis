@@ -22,6 +22,66 @@ router = APIRouter(prefix="/api/activity", tags=["activity"])
 log = logging.getLogger(__name__)
 
 
+def _azure_reason(exc: Exception) -> str:
+    """
+    What Azure said, in preference to what httpx said about it.
+
+    `str(exc)` on an HTTPStatusError is "Client error '403 Forbidden' for url
+    ..." followed by the whole request URL, which buries the one sentence that
+    matters under a query string. The response body carries Azure's own
+    message, and Azure's message names the action and scope it refused.
+    """
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict) and error.get("message"):
+                return str(error["message"])[:400]
+            if isinstance(payload.get("message"), str):
+                return payload["message"][:400]
+    return str(exc)[:400]
+
+
+def _why_unreadable(errors: list[dict], statuses: set[int]) -> str:
+    """
+    One sentence naming the actual obstacle.
+
+    This used to assert the Reader role was missing whatever had happened --
+    for a throttle, an expired token, a subscription that had been moved to
+    another tenant, all of them. Someone told to grant a role they had already
+    granted has been sent to fix the wrong thing, and will trust the next
+    message less. The status code is known here, so it is used.
+    """
+    count = len(errors)
+    plural = "" if count == 1 else "s"
+    lead = f"Could not read the Activity Log for {count} subscription{plural}."
+    reason = errors[0].get("error") or ""
+
+    if 403 in statuses or 401 in statuses:
+        return (
+            f"{lead} Azure refused the read, which needs the Reader role on the "
+            "subscription — it carries Microsoft.Insights/eventtypes/values/read. "
+            f"Azure said: {reason}"
+        )
+    if 429 in statuses:
+        return (
+            f"{lead} Azure is rate limiting this tenant. This is temporary and "
+            "the permissions are not the problem."
+        )
+    if any(s and s >= 500 for s in statuses):
+        return (
+            f"{lead} Azure itself returned an error, so this is not something "
+            f"granting a role would fix. Azure said: {reason}"
+        )
+    # No status at all means the request never got an HTTP answer: a timeout,
+    # a DNS failure, a token that could not be obtained.
+    return f"{lead} {reason}" if reason else lead
+
+
 @router.get("", response_model=ActivityResponse)
 async def get_activity(
     tenant_id: str = Query(...),
@@ -57,6 +117,7 @@ async def get_activity(
 
     entries = []
     errors = []
+    statuses: set[int] = set()
     for subscription_id in subscription_ids:
         try:
             entries.extend(await fetch_activity(
@@ -68,20 +129,17 @@ async def get_activity(
             ))
         except Exception as exc:
             log.warning("Activity read failed for %s: %s", subscription_id, exc)
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status:
+                statuses.add(status)
             errors.append({
                 "subscription_id": subscription_id,
-                "error": str(exc)[:200],
+                "status": status,
+                "error": _azure_reason(exc),
             })
 
     if not entries and errors:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"Could not read the Activity Log for {len(errors)} subscription(s). "
-                "The credential needs the Reader role, which includes "
-                "Microsoft.Insights/eventtypes/values/read."
-            ),
-        )
+        raise HTTPException(status_code=502, detail=_why_unreadable(errors, statuses))
 
     summary = summarise_activity(entries, writes_only=writes_only)
     summary["window_days"] = clamp_window(days)

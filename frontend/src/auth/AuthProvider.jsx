@@ -1,7 +1,7 @@
 import { MsalProvider, useMsal, useIsAuthenticated } from '@azure/msal-react';
 import { InteractionStatus } from '@azure/msal-browser';
 import { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, Cloud, Lock, Moon, ShieldCheck, Sun } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Cloud, Lock, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { msalInstance, loginRequest, managementRequest } from './msalConfig';
 import { endMySession } from '../api/client';
 import { useTheme } from '../store/useTheme';
@@ -165,63 +165,55 @@ function MicrosoftMark({ className = 'h-4 w-4' }) {
 }
 
 /**
- * The left half of the sign-in card.
+ * The assurances this screen used to shout.
  *
- * A ledger, drawn rather than described: ruled lines, rows that settle into
- * place, and a light that passes over them once. The rows carry no figures —
- * this screen belongs to a product whose argument is that it does not invent
- * numbers, and a decorative one here would be the first thing a visitor sees
- * and the first thing that is untrue.
+ * They are the reason a cautious person is willing to hand over a work
+ * account, so they cannot be deleted -- but they are also not what anyone came
+ * here to read. Someone arriving at a sign-in screen has already decided to
+ * sign in; the claims matter to the minority who have not, and to them they
+ * matter a great deal.
  */
-function LedgerArt() {
-  const rows = [
-    { w: '68%', accent: 'from-sky-400 to-cyan-300' },
-    { w: '46%', accent: 'from-blue-400 to-sky-300' },
-    { w: '81%', accent: 'from-indigo-400 to-blue-300' },
-    { w: '34%', accent: 'from-cyan-400 to-teal-300' },
-    { w: '59%', accent: 'from-sky-400 to-blue-300' },
-  ];
-
-  return (
-    <div className="relative mt-12 select-none" aria-hidden="true">
-      <div className="space-y-3.5">
-        {rows.map((row, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-3"
-            style={{ animation: `aca-enter .7s cubic-bezier(.22,1,.36,1) ${380 + i * 110}ms both` }}
-          >
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/40" />
-            <span className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
-              <span
-                className={`block h-full rounded-full bg-gradient-to-r ${row.accent}`}
-                style={{
-                  width: row.w,
-                  animation: `aca-grow 1s cubic-bezier(.22,1,.36,1) ${520 + i * 110}ms both`,
-                }}
-              />
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* One pass of light across the rows — enough to feel alive, not enough
-          to compete with the sign-in form for attention. */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div
-          className="h-full w-1/3 bg-gradient-to-r from-transparent via-white/12 to-transparent"
-          style={{ animation: 'aca-sweep 4.5s ease-in-out 1.4s infinite' }}
-        />
-      </div>
-    </div>
-  );
-}
+const ASSURANCES = [
+  {
+    title: 'Read-only',
+    body: 'Every screen reads. Nothing is written back to your subscription, and the app holds no credential that could.',
+  },
+  {
+    title: 'Your permissions, never more',
+    body: 'Calls to Azure carry your own delegated token. If Azure would refuse you, it refuses the app.',
+  },
+  {
+    title: 'Figures come from Azure',
+    body: 'Nothing is estimated or modelled. When a number is genuinely unavailable the screen says so rather than showing a zero.',
+  },
+  {
+    title: 'Microsoft holds the password',
+    body: 'Your credentials go to Microsoft Entra. This app never sees them and has no password of its own to store or leak.',
+  },
+];
 
 export function LoginScreen() {
   const { login } = useLogin();
   const { instance } = useMsal();
   const theme = useTheme(s => s.theme);
   const toggleTheme = useTheme(s => s.toggleTheme);
+
+  /**
+   * The detail is a disclosure, not a panel of the page.
+   *
+   * This screen used to be a two-column wall: a headline, a paragraph of
+   * positioning, an animation and four claims, with the one button anybody
+   * needed sharing space with all of it. On a laptop the button sat below the
+   * fold of the card on smaller viewports, and on a phone the entire left half
+   * was hidden anyway -- which is the honest admission that it was never
+   * load-bearing.
+   *
+   * Collapsed by default because the common case is a returning user who wants
+   * one click. Available in one click because the uncommon case -- somebody
+   * deciding whether to trust this with a work account -- is the one where
+   * being vague would cost us the account entirely.
+   */
+  const [showDetail, setShowDetail] = useState(false);
 
   /**
    * There is no email or tenant box here on purpose.
@@ -246,7 +238,7 @@ export function LoginScreen() {
   };
 
   return (
-    <div className="aca-motion relative min-h-screen overflow-hidden bg-slate-950 px-4 py-6 text-white sm:px-10 sm:py-8">
+    <div className="aca-motion relative flex min-h-screen flex-col bg-slate-950 px-4 py-5 text-white sm:px-6">
       <div
         className="pointer-events-none absolute -left-32 -top-40 h-[32rem] w-[32rem] rounded-full bg-blue-600/20 blur-3xl"
         style={{ animation: 'aca-drift 18s ease-in-out infinite' }}
@@ -256,110 +248,52 @@ export function LoginScreen() {
         style={{ animation: 'aca-drift 22s ease-in-out infinite reverse' }}
       />
 
-      {/* Somebody who arrived here by mistake, or who wants to know what this
-          is before handing over an account, needs a way back that is not the
-          browser button. */}
-      <a
-        href="/"
-        className="absolute left-4 top-4 z-10 inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2 text-xs font-medium text-slate-400 backdrop-blur transition-colors hover:text-slate-200 sm:left-5 sm:top-5"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Back
-      </a>
-
-      <button
-        onClick={toggleTheme}
-        aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900/70 text-slate-300 backdrop-blur transition-colors hover:bg-slate-800 sm:right-5 sm:top-5"
-      >
-        {theme === 'dark' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
-      </button>
-
-      <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-5xl items-center justify-center">
-        <div
-          className="grid w-full overflow-hidden rounded-[1.75rem] border border-slate-800 bg-slate-900/80 elevated-xl backdrop-blur-xl sm:rounded-[2rem] lg:grid-cols-[1.05fr_0.95fr]"
-          style={{ animation: 'aca-enter .7s cubic-bezier(.22,1,.36,1) both' }}
+      <div className="relative z-10 flex items-center justify-between">
+        {/* Somebody who arrived here by mistake, or who wants to know what this
+            is before handing over an account, needs a way back that is not the
+            browser button. */}
+        <a
+          href="/"
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2 text-xs font-medium text-slate-400 backdrop-blur transition-colors hover:text-slate-200"
         >
-          {/* --- brand half ------------------------------------------- */}
-          <div className="aca-on-dark relative hidden flex-col justify-between overflow-hidden bg-[#0b1220] p-10 text-white lg:flex">
-            <div
-              className="pointer-events-none absolute -inset-1/2 opacity-70"
-              style={{
-                background:
-                  'conic-gradient(from 180deg at 50% 50%, #1d4ed8 0deg, #0e7490 110deg, #4338ca 220deg, #1d4ed8 360deg)',
-                filter: 'blur(72px)',
-                animation: 'aca-aurora 26s linear infinite',
-              }}
-            />
-            <div className="aca-grid-lines pointer-events-none absolute inset-0 opacity-40" />
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0b1220] via-[#0b1220]/55 to-transparent" />
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back
+        </a>
 
-            <div className="relative">
-              <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 backdrop-blur">
-                  <Cloud className="h-5 w-5" />
-                </span>
-                <span className="text-sm font-bold tracking-[0.18em] text-white/90">CLOUDLEDGER</span>
-              </div>
+        <button
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900/70 text-slate-300 backdrop-blur transition-colors hover:bg-slate-800"
+        >
+          {theme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+        </button>
+      </div>
 
-              <p className="mt-14 max-w-md text-[2.6rem] font-semibold leading-[1.06] tracking-tight">
-                Every Azure charge,
-                <br />
-                accounted for.
-              </p>
-              <p className="mt-5 max-w-sm text-sm leading-6 text-white/60">
-                Cost, running resources, changes and access — read from your own account, with
-                your own permissions, at the moment you ask.
-              </p>
-
-              <LedgerArt />
-            </div>
-
-            <div className="relative mt-12 space-y-3.5 text-[13px] text-white/70">
-              {[
-                'Read-only — nothing is written back',
-                'Your delegated permissions, never more',
-                'Figures come from Azure, or the screen says so',
-              ].map((t, i) => (
-                <p
-                  key={t}
-                  className="flex items-center gap-3"
-                  style={{ animation: `aca-enter .6s cubic-bezier(.22,1,.36,1) ${900 + i * 110}ms both` }}
-                >
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-300" /> {t}
-                </p>
-              ))}
-            </div>
-          </div>
-
-          {/* --- form half -------------------------------------------- */}
-          <div className="w-full p-6 sm:p-12">
-            <div className="mb-8 flex items-center gap-3 lg:hidden">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600">
+      <div className="relative z-10 flex flex-1 items-center justify-center py-8">
+        <div
+          className="w-full max-w-[26rem]"
+          style={{ animation: 'aca-enter .6s cubic-bezier(.22,1,.36,1) both' }}
+        >
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-7 elevated-xl backdrop-blur-xl sm:p-9">
+            <div className="flex items-center gap-3">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600">
                 <Cloud className="h-5 w-5" />
-              </div>
+              </span>
               <span className="text-sm font-bold tracking-[0.18em]">CLOUDLEDGER</span>
             </div>
 
-            <div className="mb-8">
-              <span className="inline-flex items-center gap-2 rounded-full border border-blue-500/25 bg-blue-500/10 px-3 py-1 text-[11px] font-medium tracking-wide text-blue-300">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Microsoft Entra single sign-on
-              </span>
-              <h1 className="mt-5 text-[1.75rem] font-semibold tracking-tight sm:text-3xl">
-                Sign in to your workspace
-              </h1>
-              <p className="mt-2.5 text-sm leading-6 text-slate-400">
-                Use the work account you already have. There is no separate password to remember,
-                and nothing to fill in here — Microsoft will ask which account you want.
-              </p>
-            </div>
+            <h1 className="mt-7 text-2xl font-semibold tracking-tight">
+              Sign in to your workspace
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              Use the work account you already have. Microsoft will ask which one.
+            </p>
 
             <button
               type="button"
               onClick={signIn}
-              className="group flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-blue-600 font-semibold text-white elevated-lg transition hover:bg-blue-500"
+              className="group mt-7 flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-blue-600 font-semibold text-white elevated-lg transition hover:bg-blue-500"
             >
               <span className="flex h-5 w-5 items-center justify-center rounded bg-white/95">
                 <MicrosoftMark className="h-3.5 w-3.5" />
@@ -368,7 +302,7 @@ export function LoginScreen() {
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </button>
 
-            <div className="my-7 flex items-center gap-3 text-xs text-slate-500">
+            <div className="my-6 flex items-center gap-3 text-xs text-slate-500">
               <span className="h-px flex-1 bg-slate-800" />
               <span>New to Cloudledger?</span>
               <span className="h-px flex-1 bg-slate-800" />
@@ -381,15 +315,49 @@ export function LoginScreen() {
             >
               Register your tenant
             </button>
-            <p className="mt-3 text-center text-xs leading-5 text-slate-500">
+            <p className="mt-2.5 text-center text-xs leading-5 text-slate-500">
               Sign in first, then connect the tenant you want to read.
             </p>
-
-            <p className="mt-8 flex items-center justify-center gap-2 text-xs text-slate-500">
-              <Lock className="h-3.5 w-3.5" />
-              Your credentials go to Microsoft, never to us.
-            </p>
           </div>
+
+          {/* Outside the card, so opening it reads as extra reading rather than
+              as the sign-in form having grown a section. */}
+          <button
+            type="button"
+            onClick={() => setShowDetail(v => !v)}
+            aria-expanded={showDetail}
+            aria-controls="signin-assurances"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-xs font-medium text-slate-400 backdrop-blur transition-colors hover:border-slate-700 hover:text-slate-200"
+          >
+            <ShieldCheck className="h-3.5 w-3.5 text-cyan-300" />
+            What this app can and cannot do
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${showDetail ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {showDetail && (
+            <div
+              id="signin-assurances"
+              className="mt-3 space-y-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5 backdrop-blur"
+              style={{ animation: 'aca-enter .35s cubic-bezier(.22,1,.36,1) both' }}
+            >
+              {ASSURANCES.map(item => (
+                <div key={item.title} className="flex gap-3">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-cyan-300" />
+                  <div>
+                    <p className="text-[13px] font-semibold text-slate-200">{item.title}</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-400">{item.body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="mt-5 flex items-center justify-center gap-2 text-xs text-slate-500">
+            <Lock className="h-3.5 w-3.5" />
+            Your credentials go to Microsoft, never to us.
+          </p>
         </div>
       </div>
     </div>

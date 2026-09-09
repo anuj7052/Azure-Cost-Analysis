@@ -44,12 +44,19 @@ logger = logging.getLogger(__name__)
 # global gate of 3 turned a single wave into three sequential ones and made a
 # ~20s read take ~70s.
 #
-# 10 keeps a ceiling on the damage a very large tenant can do in one burst
-# while letting a normal estate resolve in a single wave. Requests that do get
-# throttled are still retried, still honour Retry-After, and still fall back to
-# cached data, so raising this trades a little more 429 risk for a large
-# latency win rather than trading away correctness.
-MAX_CONCURRENT_QUERIES = int(os.getenv("COST_MAX_CONCURRENT_QUERIES") or 10)
+# 10 was still the binding constraint in the case people actually complain
+# about: many subscriptions selected at once. Twelve subscriptions asking three
+# questions each want 36 slots, so a global 10 re-imposed exactly the sequential
+# waves this constant was raised to remove -- and it did so tenant-wide, where
+# the quota is not.
+#
+# 24 is a burst ceiling, not a quota. The per-scope gate and the per-scope
+# pacing below are what keep us inside Azure's actual limit; this only exists so
+# a hundred-subscription estate cannot open a hundred sockets in one instant.
+# Throttled requests are still retried, still honour Retry-After, and still fall
+# back to cached data, so this trades a little more 429 risk for a large latency
+# win rather than trading away correctness.
+MAX_CONCURRENT_QUERIES = int(os.getenv("COST_MAX_CONCURRENT_QUERIES") or 24)
 MAX_RETRIES = 3
 MAX_RETRY_DELAY = 15.0
 # A short cooldown is worth waiting out. Failing fast turns a two-second delay
@@ -82,22 +89,35 @@ _inflight: Dict[str, asyncio.Future] = {}
 # read, so refreshing the page returned the same rate-limit message forever.
 _throttled_until: Dict[str, float] = {}
 
-# One in-flight cost query per scope.
+# A few in-flight cost queries per scope.
 #
 # The global gate above limits how many cost queries run at once across the
-# tenant; this limits how many run at once against a single subscription, and
-# the answer is one. Azure meters the Query API per scope, so a page that fans
-# out five different cost questions at the same subscription was not getting
-# five answers - it was getting one answer and four 429s, which is why cost
-# columns came back blank while the resource list beside them was complete.
-# Queued, all five arrive; they just do not arrive simultaneously.
+# tenant; this limits how many run at once against a single subscription. It
+# used to be one, chosen when the allowance was six a minute: at that rate five
+# simultaneous questions to one subscription were not five answers, they were
+# one answer and four 429s, which is why cost columns came back blank while the
+# resource list beside them was complete.
+#
+# One is too strict now that the allowance is Azure's real figure rather than a
+# fifth of it. A Cost Management query takes seconds, and a page that asks four
+# of them was waiting the sum of four round trips when nothing was throttling
+# it -- most of the "still loading" on the dashboard, BOQ and comparison pages
+# was this queue, not Azure.
+#
+# Three, not unlimited. The pacing below decides *how often* we may ask; this
+# decides how bursty a single moment is allowed to be, and a burst is what
+# actually earns a 429. Three is small enough that a page's questions overlap
+# without arriving as a spike, and the adaptive allowance still halves if that
+# turns out to be wrong for an account.
+SCOPE_CONCURRENCY = int(os.getenv("COST_SCOPE_CONCURRENCY") or 3)
+
 _scope_gates: Dict[str, asyncio.Semaphore] = {}
 
 
 def _scope_gate(scope: str) -> asyncio.Semaphore:
     gate = _scope_gates.get(scope)
     if gate is None:
-        gate = asyncio.Semaphore(1)
+        gate = asyncio.Semaphore(SCOPE_CONCURRENCY)
         _scope_gates[scope] = gate
     return gate
 
@@ -118,7 +138,22 @@ def _scope_gate(scope: str) -> asyncio.Semaphore:
 # through and creeps back up as queries succeed. An estate that is never
 # throttled converges on the ceiling; one that is, settles just under
 # whatever its real limit turns out to be.
-SCOPE_RATE_PER_MINUTE = float(os.getenv("COST_SCOPE_QUERIES_PER_MINUTE") or 6)
+#
+# The ceiling is a starting guess, and it used to be six. That was five times
+# stricter than the figure Microsoft documents for the Query API, and because
+# the allowance can only ever creep *up to* the ceiling, six was not a cautious
+# opening bid -- it was the permanent limit. A dashboard visit alone spends
+# most of six queries per subscription, so the next page to ask anything waited
+# out a full minute for a turn that Azure would have granted immediately. That
+# minute was ours, not Azure's: nothing had been throttled and nothing had
+# refused us.
+#
+# Thirty is what Microsoft states for Microsoft.CostManagement query calls per
+# scope per minute. Opening there is safe precisely because the mechanism below
+# is adaptive: the first genuine 429 halves it, and keeps halving, so an
+# account whose real allowance is lower finds its own level within a couple of
+# refusals instead of every account paying for that possibility forever.
+SCOPE_RATE_PER_MINUTE = float(os.getenv("COST_SCOPE_QUERIES_PER_MINUTE") or 30)
 MIN_SCOPE_RATE = 1.0
 # Longer than MAX_COOLDOWN_WAIT: pacing is the normal, healthy path, so it is
 # worth waiting a little longer for a turn than for a punishment to expire.
@@ -454,6 +489,102 @@ def _build_date_range(months_back: int = 6) -> tuple[str, str]:
     return start.strftime("%Y-%m-%dT00:00:00Z"), end.strftime("%Y-%m-%dT23:59:59Z")
 
 
+def _parse_api_date(text: str) -> date | None:
+    """The calendar day an Azure period boundary falls on, or None if unreadable."""
+    head = str(text or "").strip()[:10]
+    try:
+        return datetime.strptime(head, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def month_segments(api_from: str, api_to: str, today: date | None = None) -> List[tuple[str, str]]:
+    """
+    Break a monthly range into one segment per finished month, plus the live tail.
+
+    Selecting more months used to cost more *every single time*, because the
+    range was asked as one query and one query is one cache entry. A six-month
+    range ends today, today is not settled, so the whole six months expired
+    after thirty minutes and all of it was downloaded again -- five months of
+    history that Azure had finished amending and would never change. Worse,
+    changing the selection from three months to six was a total miss: a
+    different range is a different key, so the three months already held were
+    re-fetched alongside the three new ones.
+
+    Asked per month, a finished month is its own entry with its own thirty-day
+    life. Widening the selection then fetches only the months that were not
+    already asked for, and a revisit fetches only the month still in progress.
+
+    The tail is deliberately left whole rather than split further: those months
+    are still moving, so splitting them would buy no cache life and only spend
+    more requests.
+
+    A month counts as finished only once its last day is older than the cache's
+    settling window, so the boundary is conservative -- early in a month, the
+    month just gone is still treated as live.
+
+    Only valid for Monthly granularity. Azure aggregates within the period it is
+    given, so a query bounded to one calendar month returns that month's total
+    unchanged; the same is not true of a range cut at an arbitrary day.
+    """
+    start = _parse_api_date(api_from)
+    end = _parse_api_date(api_to)
+    if start is None or end is None or start > end:
+        return [(api_from, api_to)]
+
+    today = today or date.today()
+    cutoff = today - relativedelta(days=cost_cache.SETTLING_DAYS)
+
+    settled: List[tuple[str, str]] = []
+    tail_start: date | None = None
+    cursor = date(start.year, start.month, 1)
+    while cursor <= end:
+        month_from = max(cursor, start)
+        month_to = min(cursor + relativedelta(months=1) - relativedelta(days=1), end)
+        if tail_start is None and month_to < cutoff:
+            settled.append((
+                month_from.strftime("%Y-%m-%dT00:00:00Z"),
+                month_to.strftime("%Y-%m-%dT23:59:59Z"),
+            ))
+        elif tail_start is None:
+            tail_start = month_from
+        cursor += relativedelta(months=1)
+
+    if tail_start is not None:
+        settled.append((tail_start.strftime("%Y-%m-%dT00:00:00Z"), api_to))
+
+    return settled or [(api_from, api_to)]
+
+
+async def _query_months(
+    url: str, headers: dict, body: dict, timeout: int, granularity: str,
+) -> List[Dict[str, Any]]:
+    """
+    Run a monthly query as one request per finished month, and flatten the rows.
+
+    A failing segment fails the whole read rather than returning what did
+    arrive. Each segment is a distinct set of months, so quietly dropping one
+    would not produce a slower answer or a smaller one -- it would produce a
+    total that looks complete and is short by a month.
+    """
+    period = body.get("timePeriod") or {}
+    segments = (
+        month_segments(period.get("from"), period.get("to"))
+        if granularity == "Monthly" and period.get("from") and period.get("to")
+        else [(period.get("from"), period.get("to"))]
+    )
+
+    async def run(seg: tuple[str, str]) -> List[Dict[str, Any]]:
+        seg_body = body if len(segments) == 1 else {
+            **body, "timePeriod": {"from": seg[0], "to": seg[1]},
+        }
+        pages = await _run_paged_query(url, headers, seg_body, timeout=timeout)
+        return [rec for page in pages for rec in _columnar_to_records(page)]
+
+    chunks = await asyncio.gather(*(run(seg) for seg in segments))
+    return [rec for chunk in chunks for rec in chunk]
+
+
 def _explicit_date_range(from_date: str, to_date: str) -> tuple[str, str]:
     """Convert YYYY-MM-DD strings to Azure API ISO datetime strings."""
     from datetime import datetime
@@ -705,11 +836,7 @@ async def query_costs(
         },
     }
 
-    all_records: List[Dict[str, Any]] = []
-    for page in await _run_paged_query(url, headers, body, timeout=60):
-        all_records.extend(_columnar_to_records(page))
-
-    return all_records
+    return await _query_months(url, headers, body, timeout=60, granularity=granularity)
 
 
 async def query_usage(
@@ -753,13 +880,10 @@ async def query_usage(
         },
     }
 
-    all_records: List[Dict[str, Any]] = []
-    for page in await _run_paged_query(url, headers, body, timeout=90):
-        for rec in _columnar_to_records(page):
-            rec["SubscriptionId"] = rec.get("SubscriptionId") or subscription_id
-            all_records.append(rec)
-
-    return all_records
+    records = await _query_months(url, headers, body, timeout=90, granularity=granularity)
+    for rec in records:
+        rec["SubscriptionId"] = rec.get("SubscriptionId") or subscription_id
+    return records
 
 
 async def query_daily_usage(

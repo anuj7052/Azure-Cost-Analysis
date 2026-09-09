@@ -11,8 +11,8 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, ResponsiveContainer,
-  Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, ReferenceLine,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle, ChevronDown, ChevronRight,
@@ -21,7 +21,7 @@ import {
 
 import { useChartTheme } from '../../store/useTheme';
 import { formatAmount } from '../../utils/currency';
-import { dailySeries, finops, monthlySeries, recommend, topSpend } from '../../utils/boqDashboard';
+import { dailySeries, clickedDay, finops, monthlySeries, recommend, topSpend } from '../../utils/boqDashboard';
 import { DayDetail, DayTimeline, ServiceDetail } from './BoqDayDetail';
 import { ResourceDetail, ServiceResources } from './BoqResourcePanel';
 
@@ -81,6 +81,7 @@ export default function BoqDashboard({
   const [pickedDay, setPickedDay] = useState(null);
   const [showTimeline, setShowTimeline] = useState(false);
   const timelineRef = useRef(null);
+  const dayRef = useRef(null);
 
   // Opening the timeline used to look like it had done nothing: it renders
   // under a 250px chart, so on a laptop the whole thing was below the fold and
@@ -114,10 +115,24 @@ export default function BoqDashboard({
   // picking a day on the chart opens the timeline beside it rather than making
   // the reader find the toggle. Clearing the day leaves the timeline open --
   // they asked for it, however they got there.
+  //
+  // The breakdown is then scrolled to, for the same reason the Timeline button
+  // does it: both panels render under a 250px chart and a timeline, so on a
+  // laptop a click on the chart put the answer entirely below the fold and read
+  // as nothing having happened. The scroll is what makes the click look like it
+  // did something.
   function chooseDay(date) {
-    setPickedDay(prev => (prev === date ? null : date));
+    const next = pickedDay === date ? null : date;
+    setPickedDay(next);
     setPickedService(null);
-    if (date) setShowTimeline(true);
+    if (!next) return;
+    setShowTimeline(true);
+    // Two frames, not one. The panel does not exist in the DOM until the state
+    // change has rendered, and scrolling to a ref that is still null is the
+    // silent no-op this was added to fix.
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      dayRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }),
+    ));
   }
 
   const currency = report?.currency || 'INR';
@@ -173,6 +188,15 @@ export default function BoqDashboard({
   // draw a flat line that looks like a measurement.
   const usingDaily = daily.length > 0;
   const series = usingDaily ? daily : monthly;
+  // The axis label for the picked day, so the marker on the chart is placed by
+  // the same value the axis is drawn from rather than by a second formatting of
+  // the date that could disagree with it.
+  const selectedLabel = pickedDay
+    ? (series.find(d => d.full === pickedDay)?.date ?? null)
+    : null;
+  // Whether there is a budget line to draw at all, read off the series rather
+  // than off the report, so the chart and the legend agree with the points.
+  const hasBudget = series.some(d => d.budget !== null && d.budget !== undefined);
 
   const trend = head.trendPct;
   const TrendIcon = trend === null ? Minus : trend > 0 ? ArrowUpRight : ArrowDownRight;
@@ -301,7 +325,7 @@ export default function BoqDashboard({
                   data={series}
                   margin={{ top: 5, right: 16, left: 4, bottom: 0 }}
                   onClick={usingDaily ? (e) => {
-                    const full = e?.activePayload?.[0]?.payload?.full;
+                    const full = clickedDay(e, series);
                     if (full) chooseDay(full);
                   } : undefined}
                   style={usingDaily ? { cursor: 'pointer' } : undefined}
@@ -313,6 +337,19 @@ export default function BoqDashboard({
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={t.grid} vertical={false} />
+                  {/* The day the breakdown below is about, drawn on the chart
+                      that opened it. Without it the two are only linked by a
+                      date printed in a heading, which is exactly how a click
+                      landing on the wrong point went unnoticed. */}
+                  {usingDaily && selectedLabel && (
+                    <ReferenceLine
+                      x={selectedLabel}
+                      stroke={t.series[0]}
+                      strokeWidth={1}
+                      strokeDasharray="4 3"
+                      ifOverflow="extendDomain"
+                    />
+                  )}
                   <XAxis dataKey="date" tick={{ fill: t.axis, fontSize: 10 }} axisLine={false}
                     tickLine={false} minTickGap={20} />
                   <YAxis tick={{ fill: t.axis, fontSize: 10 }} axisLine={false} tickLine={false}
@@ -333,16 +370,24 @@ export default function BoqDashboard({
                     dot={false}
                     activeDot={{ r: 4 }}
                   />
-                  <Line
-                    type="monotone"
-                    name="BOQ budget"
-                    dataKey={cumulative && usingDaily ? 'cumulativeBudget' : 'budget'}
-                    stroke={t.series[4]}
-                    strokeWidth={2}
-                    strokeDasharray="5 4"
-                    dot={false}
-                    connectNulls={false}
-                  />
+                  {/* Only drawn when there is a budget to draw. With no BOQ
+                      enabled every point on this line is null, so the series
+                      rendered as nothing at all while the legend went on
+                      offering "BOQ budget" as though it were on the chart --
+                      which reads as a line that failed to draw rather than as a
+                      budget that was never set. */}
+                  {hasBudget && (
+                    <Line
+                      type="monotone"
+                      name="BOQ budget"
+                      dataKey={cumulative && usingDaily ? 'cumulativeBudget' : 'budget'}
+                      stroke={t.series[4]}
+                      strokeWidth={2}
+                      strokeDasharray="5 4"
+                      dot={false}
+                      connectNulls={false}
+                    />
+                  )}
                 </AreaChart>
               </ResponsiveContainer>
             )}
@@ -378,14 +423,16 @@ export default function BoqDashboard({
           )}
 
           {usingDaily && pickedDay && (
-            <DayDetail
-              days={days}
-              date={pickedDay}
-              budget={dailyBudget}
-              currency={currency}
-              onClose={() => { setPickedDay(null); setPickedService(null); }}
-              onPickService={chooseService}
-            />
+            <div ref={dayRef}>
+              <DayDetail
+                days={days}
+                date={pickedDay}
+                budget={dailyBudget}
+                currency={currency}
+                onClose={() => { setPickedDay(null); setPickedService(null); }}
+                onPickService={chooseService}
+              />
+            </div>
           )}
 
           {usingDaily && pickedService && (
