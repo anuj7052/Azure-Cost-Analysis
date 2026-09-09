@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import {
-  Plus, Download, ShieldCheck, KeyRound, Loader2, Check,
-  Building2, Fingerprint, Lock, ExternalLink, LogOut,
+  Plus, Download, ShieldCheck, KeyRound, Loader2, Check, ChevronDown,
+  Building2, Fingerprint, Lock, ExternalLink, LogOut, Eye, EyeOff,
 } from 'lucide-react';
 import { addTenant, downloadSetupGuide } from '../api/client';
 import { useLogin } from '../auth/hooks';
@@ -11,29 +11,46 @@ import PermissionsPanel from '../components/Common/PermissionsPanel';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Four sentences, not four paragraphs. Whoever is reading this is looking for
+// the next click, and every extra line is one more thing between them and it.
 const STEPS = [
   {
-    title: 'Register an application',
-    body: 'In the Azure portal, open Microsoft Entra ID → App registrations → New registration.',
+    title: 'Register an app',
+    body: 'Entra ID → App registrations → New registration.',
+    link: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
+    linkLabel: 'Open',
   },
   {
-    title: 'Create a client secret',
-    body: 'Under Certificates & secrets, add a secret and copy its Value — not the Secret ID. It is shown only once.',
+    title: 'Add a client secret',
+    body: 'Certificates & secrets → New client secret. Copy the Value, not the Secret ID.',
   },
   {
-    title: 'Assign the roles you are comfortable with',
-    body: 'On each subscription, assign at least Reader and Cost Management Reader. The full list, and what each one unlocks, is below.',
+    title: 'Give it two roles',
+    body: 'On each subscription: Reader and Cost Management Reader. Both read-only.',
   },
   {
-    title: 'Paste the details here',
-    body: 'Your credentials are verified against Azure the moment you submit, so mistakes surface immediately.',
+    title: 'Paste the details',
+    body: 'Checked against Azure on submit, so a wrong value tells you straight away.',
   },
 ];
 
-function Field({ label, icon: Icon, value, onChange, type = 'text', placeholder, hint, error }) {
+/**
+ * A GUID copied out of the portal often arrives wrapped in whitespace or the
+ * quotes of whatever it was pasted through. Rejecting that as "not a valid
+ * GUID" is technically true and completely useless, so it is cleaned instead.
+ */
+const clean = (v) => v.trim().replace(/^["'<]+|[">']+$/g, '');
+
+function Field({
+  label, icon: Icon, value, onChange, type = 'text',
+  placeholder, hint, error, action,
+}) {
   return (
     <div>
-      <label className="block text-xs font-medium text-slate-400 mb-1.5">{label}</label>
+      <div className="mb-1.5 flex items-baseline justify-between gap-2">
+        <label className="block text-xs font-medium text-slate-400">{label}</label>
+        {action}
+      </div>
       <div className="relative">
         {Icon && (
           <Icon className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -64,12 +81,20 @@ export default function Onboarding() {
   const loadTenants = useAppStore(s => s.loadTenants);
   const addTenantToList = useAppStore(s => s.addTenantToList);
 
+  // The directory they signed in from is almost always the one they are about
+  // to connect, so it starts filled in. Left editable because "almost always"
+  // is not always -- a partner connecting a customer's tenant needs to change it.
   const [form, setForm] = useState({
-    tenant_name: '', tenant_id: '', client_id: '', client_secret: '',
+    tenant_name: '', tenant_id: me?.tenant_id || '', client_id: '', client_secret: '',
   });
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [touched, setTouched] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
+  // The permission list answers a question people ask once. On screen by
+  // default it is thirteen entries of prose standing in front of a four-box
+  // form, which is the actual task.
+  const [showPermissions, setShowPermissions] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -176,141 +201,165 @@ export default function Onboarding() {
             </span>
 
             <h1 className="text-3xl sm:text-4xl font-semibold text-white leading-tight">
-              Connect your first Azure tenant
+              Connect your Azure tenant
             </h1>
-            <p className="text-slate-400 mt-3 text-[15px] leading-relaxed max-w-xl">
-              To read your costs, this app needs a service principal — an identity in your own
-              Azure tenant that you create, control and can revoke at any time. It takes about
-              five minutes.
+            <p className="text-slate-400 mt-3 text-[15px] leading-relaxed max-w-lg">
+              Create a read-only identity in your own tenant and paste it here.
+              About five minutes. You can revoke it whenever you like.
             </p>
 
             {/* Someone whose colleague already connected the tenant does not
-                need any of the above, and would otherwise register a second
+                need any of this, and would otherwise register a second
                 application for an estate that is already being read. They
                 arrive here only because the invitation had not been issued when
                 they first signed in, so the way out is to look again. */}
-            <p className="text-slate-500 mt-3 text-sm leading-relaxed max-w-xl">
-              Already part of a team here?{' '}
+            <p className="text-slate-500 mt-3 text-sm">
+              Joining a colleague&rsquo;s workspace?{' '}
               <button
                 type="button"
                 onClick={() => loadMe()}
                 className="text-blue-400 underline underline-offset-2 hover:text-blue-300"
               >
-                Check for your invitation
-              </button>{' '}
-              instead — if someone has added you to their workspace, you do not need to
-              register anything.
+                Check for an invitation
+              </button>
             </p>
 
-            <div className="mt-8 space-y-3">
+            <ol className="mt-8 space-y-2.5">
               {STEPS.map((s, i) => (
-                <div
+                <li
                   key={s.title}
-                  className="flex gap-4 bg-slate-900/70 border border-slate-800 rounded-2xl p-4 backdrop-blur"
+                  className="flex gap-3.5 bg-slate-900/70 border border-slate-800 rounded-2xl px-4 py-3.5 backdrop-blur"
                 >
-                  <div className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 text-xs font-semibold flex items-center justify-center shrink-0">
+                  <span className="w-6 h-6 mt-0.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-semibold flex items-center justify-center shrink-0">
                     {i + 1}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-white">{s.title}</p>
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-white">
+                      {s.title}
+                      {s.link && (
+                        <a
+                          href={s.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-blue-400 hover:text-blue-300"
+                        >
+                          {s.linkLabel} <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </p>
                     <p className="text-sm text-slate-400 mt-0.5 leading-relaxed">{s.body}</p>
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ol>
 
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
               <button
                 onClick={getGuide}
                 disabled={downloading}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm font-medium text-white transition disabled:opacity-60"
+                className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white transition disabled:opacity-60"
               >
                 {downloading
                   ? <Loader2 className="w-4 h-4 animate-spin" />
                   : <Download className="w-4 h-4" />}
-                Download the setup guide (PDF)
+                Setup guide (PDF)
               </button>
-              <a
-                href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300"
-              >
-                Open Azure portal <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+              <span className="text-xs text-slate-600">
+                Not the Azure admin? Send them this — it holds nothing about your account.
+              </span>
             </div>
 
-            <p className="text-xs text-slate-500 mt-4 max-w-xl leading-relaxed">
-              Not the person who administers Azure? Send them the PDF — it contains everything
-              they need and nothing specific to your account.
-            </p>
+            {/* Thirteen permissions with a paragraph each is the right amount
+                of detail for the person who wants it and a wall for everyone
+                else. It stays one click away rather than in the way. */}
+            <div className="mt-8">
+              <button
+                type="button"
+                onClick={() => setShowPermissions(v => !v)}
+                aria-expanded={showPermissions}
+                aria-controls="onboarding-permissions"
+                className="flex w-full items-center gap-2.5 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-left transition hover:border-slate-700"
+              >
+                <ShieldCheck className="h-4 w-4 shrink-0 text-blue-400" />
+                <span className="min-w-0 flex-1 text-sm text-slate-300">
+                  What access this needs, role by role
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${showPermissions ? 'rotate-180' : ''}`}
+                />
+              </button>
 
-            <div className="mt-10">
-              <PermissionsPanel />
+              {showPermissions && (
+                <div id="onboarding-permissions" className="mt-3">
+                  <PermissionsPanel compact />
+                </div>
+              )}
             </div>
           </div>
 
           {/* ── Right: the form ── */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold text-white">Add Service Principal Tenant</h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl lg:sticky lg:top-10">
+            <h2 className="text-lg font-semibold text-white">Add your tenant</h2>
             <p className="text-sm text-slate-400 mt-1 mb-5">
-              Paste the four values from your app registration.
+              Paste the values from your app registration.
             </p>
 
             <form onSubmit={submit} className="space-y-4" noValidate>
               <Field
-                label="Tenant Name"
+                label="Name this connection"
                 icon={Building2}
                 value={form.tenant_name}
                 onChange={(v) => set('tenant_name', v)}
-                placeholder="My Production Tenant"
+                placeholder="Production"
                 hint="A label for you — anything you like."
                 error={touched ? errors.tenant_name : ''}
               />
               <Field
-                label="Tenant ID (GUID)"
+                label="Directory (tenant) ID"
                 icon={Fingerprint}
                 value={form.tenant_id}
-                onChange={(v) => set('tenant_id', v)}
+                onChange={(v) => set('tenant_id', clean(v))}
                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                hint="Directory (tenant) ID on the overview page."
+                hint={
+                  me?.tenant_id && form.tenant_id === me.tenant_id
+                    ? 'The directory you signed in from. Change it to connect a different one.'
+                    : 'On the app registration overview page.'
+                }
                 error={touched ? errors.tenant_id : ''}
               />
               <Field
-                label="Client ID (App / Service Principal)"
+                label="Application (client) ID"
                 icon={KeyRound}
                 value={form.client_id}
-                onChange={(v) => set('client_id', v)}
+                onChange={(v) => set('client_id', clean(v))}
                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                hint="Application (client) ID, on the same page."
+                hint="On the same page, just below the tenant ID."
                 error={touched ? errors.client_id : ''}
               />
               <Field
-                label="Client Secret"
+                label="Client secret"
                 icon={Lock}
-                type="password"
+                // Hidden by default, but a secret is pasted rather than typed
+                // and a row of dots cannot be checked against the clipboard.
+                // Whoever is at this screen is alone with their own credential.
+                type={showSecret ? 'text' : 'password'}
                 value={form.client_secret}
                 onChange={(v) => set('client_secret', v)}
-                placeholder="Enter client secret"
-                hint="The secret Value, not the Secret ID."
+                placeholder="Paste the secret Value"
+                hint="The Value column, not the Secret ID."
                 error={touched ? errors.client_secret : ''}
+                action={
+                  <button
+                    type="button"
+                    onClick={() => setShowSecret(v => !v)}
+                    className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300"
+                  >
+                    {showSecret
+                      ? <><EyeOff className="w-3.5 h-3.5" />Hide</>
+                      : <><Eye className="w-3.5 h-3.5" />Show</>}
+                  </button>
+                }
               />
-
-              <div className="bg-slate-800/70 border border-slate-700/70 rounded-xl p-3">
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  The service principal needs{' '}
-                  <span className="text-slate-200 font-medium">Reader</span> and{' '}
-                  <span className="text-slate-200 font-medium">Cost Management Reader</span>{' '}
-                  roles on the target subscriptions.
-                </p>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
-                  {['Cannot change anything', 'No access inside your resources', 'Revocable any time'].map(t => (
-                    <span key={t} className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
-                      <Check className="w-3 h-3" />{t}
-                    </span>
-                  ))}
-                </div>
-              </div>
 
               <button
                 type="submit"
@@ -318,14 +367,17 @@ export default function Onboarding() {
                 className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-[#fff] font-semibold flex items-center justify-center gap-2 text-sm transition"
               >
                 {saving
-                  ? <><Loader2 className="w-4 h-4 animate-spin" />Verifying with Azure…</>
-                  : <><Plus className="w-4 h-4" />Add Tenant</>}
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />Checking with Azure…</>
+                  : <><Plus className="w-4 h-4" />Connect tenant</>}
               </button>
 
-              <p className="text-[11px] text-slate-600 text-center pt-1">
-                A tenant connection is what this app reads your costs from, so it
-                is required before the dashboard opens.
-              </p>
+              <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 pt-1">
+                {['Read-only', 'Cannot change anything', 'Revoke any time'].map(t => (
+                  <span key={t} className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
+                    <Check className="w-3 h-3" />{t}
+                  </span>
+                ))}
+              </div>
             </form>
           </div>
         </div>

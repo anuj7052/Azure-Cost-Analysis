@@ -315,6 +315,10 @@ async def _account_payload(current_user: dict, db: aiosqlite.Connection) -> dict
         "workspace_id": current_user["account_id"],
         "email": current_user["email"],
         "name": current_user["name"],
+        # The directory they signed in from. Onboarding asks for a tenant GUID,
+        # and for almost everybody it is this one -- so it is offered rather
+        # than demanded. Typing a GUID by hand is where onboarding is abandoned.
+        "tenant_id": current_user.get("tenant_id", "") or "",
         "phone": (profile["phone"] if profile else "") or "",
         "company": (profile["company"] if profile else "") or "",
         "login_count": (profile["login_count"] if profile else 0) or 0,
