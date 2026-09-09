@@ -5,6 +5,7 @@ import {
   MessageCircle, Menu, Moon, ShieldCheck, Sparkles, Sun, X,
 } from 'lucide-react';
 import { SECTIONS } from '../nav';
+import { FAQ as PUBLIC_FAQ } from '../content/faq';
 import { useTheme } from '../store/useTheme';
 
 /**
@@ -76,28 +77,7 @@ const SECURITY = [
   },
 ];
 
-const FAQ = [
-  {
-    q: 'Does it change anything in my Azure account?',
-    a: 'No. Every screen reads. The only feature that produces infrastructure writes a template to a file for you to review and run yourself — the app never applies it.',
-  },
-  {
-    q: 'What does it cost to run?',
-    a: 'The app reads the Azure Cost Management and Resource Graph APIs, which Microsoft does not charge for. If you connect a model endpoint for the assistants, that is billed by your own provider against your own key.',
-  },
-  {
-    q: 'Can I use it across more than one tenant?',
-    a: 'Yes. Connect each tenant you have access to and switch between them from the top bar. Data from one is never mixed into another.',
-  },
-  {
-    q: 'Where do the numbers come from?',
-    a: 'From Azure, at the time you ask. Nothing is estimated or modelled. When a figure is genuinely unavailable the screen says so rather than showing a zero.',
-  },
-  {
-    q: 'Can my colleagues use it?',
-    a: 'You can invite people from your directory and choose what each of them is allowed to do. Roles are checked on the server, not just hidden in the menu.',
-  },
-];
+const FAQ = PUBLIC_FAQ;
 
 /** True when the visitor has asked their system for less animation. */
 function prefersLessMotion() {

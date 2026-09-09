@@ -1,0 +1,29 @@
+# Only "/" is a public page. Every other path renders the sign-in screen to a
+# signed-out visitor, so letting a crawler walk them would file a few dozen
+# URLs that all show the same thing -- which search engines read as a site
+# padded with duplicates, not as a site with many pages.
+User-agent: *
+Allow: /$
+Disallow: /explorer
+Disallow: /compare
+Disallow: /anomalies
+Disallow: /resource-groups
+Disallow: /provision
+Disallow: /orphaned
+Disallow: /compute
+Disallow: /search
+Disallow: /changes
+Disallow: /activity
+Disallow: /bandwidth
+Disallow: /boq
+Disallow: /commitments
+Disallow: /deploy
+Disallow: /estate
+Disallow: /security
+Disallow: /settings
+Disallow: /team
+Disallow: /admin
+Disallow: /profile
+Disallow: /api/
+
+Sitemap: https://azure.microsoftupdates.co.in/sitemap.xml

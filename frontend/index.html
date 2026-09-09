@@ -13,6 +13,15 @@
     />
     <meta name="theme-color" content="#020617" />
 
+    <!-- The same app answers on the App Service hostname and on the custom
+         domain. Without this, those are two sites carrying identical text and
+         each is evidence that the other is a copy; whatever authority the page
+         earns is split between them. This names one of the two as the real
+         one, and it holds on whichever host served the page. -->
+    <link rel="canonical" href="https://azure.microsoftupdates.co.in/" />
+
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+
     <!-- What a link to this page looks like when it is pasted somewhere else.
          Worth writing out properly: without an image, LinkedIn and Reddit fall
          back to a small text-only card, and the absolute URL is not optional —
@@ -45,7 +54,102 @@
       name="twitter:image"
       content="https://azure.microsoftupdates.co.in/og-card.png"
     />
+
+    <!-- Written out here rather than rendered by React. A crawler reads the
+         HTML the server sent; anything the app adds after its bundle executes
+         is seen on a second, slower pass that is not guaranteed. Structured
+         data is exactly the thing that must survive the first pass.
+
+         Every claim below is one the product actually makes. Marking up a
+         price or a rating that is not on the page is the usual way sites lose
+         rich results altogether, and it is not worth the impression. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://azure.microsoftupdates.co.in/#website",
+            "url": "https://azure.microsoftupdates.co.in/",
+            "name": "Cloudledger",
+            "description": "Azure cost and estate reporting, read with your own Microsoft Entra permissions.",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://azure.microsoftupdates.co.in/#app",
+            "name": "Cloudledger",
+            "url": "https://azure.microsoftupdates.co.in/",
+            "applicationCategory": "BusinessApplication",
+            "applicationSubCategory": "Cloud cost management",
+            "operatingSystem": "Web browser",
+            "description": "Cloudledger reads your Azure cost, running resources, changes and access with your own permissions. Nothing is estimated, and nothing is written back.",
+            "featureList": [
+              "Azure cost trends and month-on-month comparison",
+              "Cost anomaly detection with likely cause",
+              "Resource group and per-resource cost attribution",
+              "Orphaned and idle resource discovery",
+              "Reservation and savings plan coverage",
+              "Bill of quantities against actual spend",
+              "Terraform and Bicep generation for review"
+            ],
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://azure.microsoftupdates.co.in/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Does it change anything in my Azure account?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. Every screen reads. The only feature that produces infrastructure writes a template to a file for you to review and run yourself — the app never applies it."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What does it cost to run?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "The app reads the Azure Cost Management and Resource Graph APIs, which Microsoft does not charge for. If you connect a model endpoint for the assistants, that is billed by your own provider against your own key."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I use it across more than one tenant?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Connect each tenant you have access to and switch between them from the top bar. Data from one is never mixed into another."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where do the numbers come from?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "From Azure, at the time you ask. Nothing is estimated or modelled. When a figure is genuinely unavailable the screen says so rather than showing a zero."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can my colleagues use it?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "You can invite people from your directory and choose what each of them is allowed to do. Roles are checked on the server, not just hidden in the menu."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>

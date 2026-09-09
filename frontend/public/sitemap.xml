@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One entry, because there is one public page. A sitemap listing the signed-in
+  routes would be listing pages that return a sign-in screen to the only
+  visitor who ever reads a sitemap, and a sitemap full of URLs that do not hold
+  what they promise costs trust rather than buying reach.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
