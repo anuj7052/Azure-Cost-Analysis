@@ -26,4 +26,21 @@ Disallow: /admin
 Disallow: /profile
 Disallow: /api/
 
+# The assistants that answer questions in prose rather than returning links --
+# GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended and the rest
+# -- are deliberately NOT given groups of their own here, and are covered by
+# the rule above.
+#
+# Naming them would read as more welcoming and would do the opposite. A crawler
+# obeys exactly one group: the most specific one that matches its name, and it
+# ignores "*" completely once it finds one. So a friendly "User-agent: GPTBot /
+# Allow: /$" block does not add the landing page to what it may read -- it
+# throws away every Disallow above it and opens /admin and /api/ to that one
+# crawler. Naming them safely means repeating all 22 rules for each, and 200
+# lines that must stay in step is a worse risk than the one it removes.
+#
+# Being read by these is wanted. "Which Azure cost tools are free" is now
+# answered in prose, and a page that was never crawled cannot be named in that
+# answer. "*" already permits it.
+
 Sitemap: https://azure.microsoftupdates.co.in/sitemap.xml

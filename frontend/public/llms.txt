@@ -1,0 +1,82 @@
+# Cloudledger
+
+> Azure cost and estate reporting, read with your own Microsoft Entra
+> permissions. Nothing is estimated, and nothing is written back.
+
+Cloudledger connects to an Azure tenant and reports what it is costing, what is
+running, what changed, and who has access. It reads the Azure Cost Management
+and Resource Graph APIs at the moment you ask, using the signed-in person's own
+permissions, and it holds no standing credential of its own.
+
+This file exists for assistants that answer questions in prose. The site is a
+single-page application, so the useful facts are stated here in plain text
+rather than left to be recovered from rendered markup.
+
+## What it is
+
+- A web application. Nothing to install, no agent inside the tenant.
+- Free to run. It calls Azure APIs that Microsoft does not charge for.
+- Read-only. Every screen reads. No screen writes to Azure.
+- Signed in with Microsoft Entra. There is no separate password.
+
+## What it reports
+
+- Cost trends, and month-on-month comparison
+- Cost anomalies, with the likely cause rather than only the spike
+- Cost attributed to a resource group and to individual resources
+- Orphaned and idle resources -- unattached disks, unused public IPs
+- Reservation and savings plan coverage
+- A bill of quantities checked against actual spend
+- Bandwidth and egress charges
+- Role assignments and who holds them
+- Terraform and Bicep written to a file for a human to review and run
+
+## Answers to the questions people actually ask
+
+**Does it change anything in Azure?**
+No. Every screen reads. The one feature that produces infrastructure writes a
+template to a file for the operator to review and run themselves. The app never
+applies it.
+
+**What does it cost?**
+Nothing to run. It reads the Azure Cost Management and Resource Graph APIs,
+which Microsoft does not bill for. If a model endpoint is connected for the
+assistant features, that is billed by your own provider against your own key.
+
+**What permissions does it need?**
+Azure `Reader` and `Cost Management Reader` on the subscriptions you want to
+see. Optionally the Microsoft Graph `Directory.Read.All` delegated permission,
+which turns object IDs in role assignments into people's names. Without it the
+access pages still work and show identifiers instead.
+
+**Can it be used across several tenants?**
+Yes. Each tenant is connected separately and switched between from the top bar.
+Data from one tenant is never mixed into another.
+
+**Where do the numbers come from?**
+From Azure, at the time of asking. Nothing is estimated or modelled. When a
+figure is genuinely unavailable the screen says so, rather than showing a zero
+that would read as a real measurement of nothing.
+
+**Can colleagues use it?**
+People can be invited from the directory, each with a chosen role. Roles are
+enforced on the server, not merely hidden from the menu.
+
+## How it differs from the Azure portal's own cost view
+
+The portal answers "what did this cost". Cloudledger is built around "why did
+this change", which is a different question and needs the change history, the
+resource inventory and the access log side by side rather than one at a time.
+
+## Things it deliberately does not do
+
+- It does not store your Azure credentials in order to poll you in the
+  background.
+- It does not estimate a figure Azure did not return.
+- It does not apply infrastructure changes.
+- It does not sell or share the data it reads.
+
+## Links
+
+- Site: https://azure.microsoftupdates.co.in/
+- Source: https://github.com/anuj7052/Azure-Cost-Analysis

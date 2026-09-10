@@ -62,17 +62,34 @@
 
          Every claim below is one the product actually makes. Marking up a
          price or a rating that is not on the page is the usual way sites lose
-         rich results altogether, and it is not worth the impression. -->
+         rich results altogether, and it is not worth the impression.
+
+         The Organization node carries no sameAs list yet. sameAs is what ties
+         this site to the same owner's profiles elsewhere, and it is the one
+         field an assistant uses to decide that a YouTube channel and a website
+         are one voice rather than two strangers agreeing. It stays empty until
+         there is a real URL to put in it, because a guessed profile link is a
+         claim of identity that is checked, and failing that check costs more
+         than the field was ever going to earn. -->
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://azure.microsoftupdates.co.in/#org",
+            "name": "Cloudledger",
+            "url": "https://azure.microsoftupdates.co.in/",
+            "logo": "https://azure.microsoftupdates.co.in/og-card.png",
+            "description": "Azure cost and estate reporting, read with the reader's own Microsoft Entra permissions."
+          },
           {
             "@type": "WebSite",
             "@id": "https://azure.microsoftupdates.co.in/#website",
             "url": "https://azure.microsoftupdates.co.in/",
             "name": "Cloudledger",
             "description": "Azure cost and estate reporting, read with your own Microsoft Entra permissions.",
+            "publisher": { "@id": "https://azure.microsoftupdates.co.in/#org" },
             "inLanguage": "en"
           },
           {
@@ -93,6 +110,7 @@
               "Bill of quantities against actual spend",
               "Terraform and Bicep generation for review"
             ],
+            "publisher": { "@id": "https://azure.microsoftupdates.co.in/#org" },
             "offers": {
               "@type": "Offer",
               "price": "0",

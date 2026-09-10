@@ -9,6 +9,7 @@ const read = (p) => readFileSync(resolve(root, p), 'utf8');
 const html = read('index.html');
 const robots = read('public/robots.txt');
 const sitemap = read('public/sitemap.xml');
+const llms = read('public/llms.txt');
 
 /** The structured data blob, parsed the way a crawler would parse it. */
 function jsonLd() {
@@ -88,6 +89,60 @@ describe('robots', () => {
 
   it('does not disallow the one page worth indexing', () => {
     expect(robots).not.toMatch(/^Disallow: \/$/m);
+  });
+
+  it('has exactly one user-agent group', () => {
+    // The rule that surprises people: a crawler obeys only the most specific
+    // group naming it, and ignores "*" entirely once it finds one. So adding a
+    // welcoming "User-agent: GPTBot / Allow: /$" block does not widen what that
+    // crawler may read -- it discards every Disallow above and hands it /admin
+    // and /api/. Any second group here must therefore repeat the full list, and
+    // this test is what stops one being added that does not.
+    const groups = [...robots.matchAll(/^User-agent: (\S+)$/gm)].map((m) => m[1]);
+    expect(groups).toEqual(['*']);
+  });
+});
+
+describe('llms.txt', () => {
+  it('states the facts an assistant is asked for', () => {
+    // A single-page app hands a text-only crawler an empty body. This file is
+    // the answer to that, so it is worth failing the build when the claims a
+    // buyer screens on go missing from it.
+    for (const claim of ['read-only', 'Reader', 'Cost Management Reader', 'Entra']) {
+      expect(llms.toLowerCase()).toContain(claim.toLowerCase());
+    }
+  });
+
+  it('agrees with the site about the price', () => {
+    // Two sources describing the same product is how a contradiction reaches an
+    // answer engine, and a contradiction is resolved by trusting neither.
+    expect(nodeOfType('SoftwareApplication').offers.price).toBe('0');
+    expect(llms).toMatch(/free to run|does not (charge|bill)/i);
+  });
+
+  it('links only to the canonical host', () => {
+    for (const [, url] of llms.matchAll(/(https:\/\/azure[^\s)]+)/g)) {
+      expect(url.startsWith('https://azure.microsoftupdates.co.in/')).toBe(true);
+    }
+  });
+});
+
+describe('organization', () => {
+  it('is named as the publisher of both the site and the app', () => {
+    const org = nodeOfType('Organization');
+    expect(org['@id']).toBeTruthy();
+    expect(nodeOfType('WebSite').publisher['@id']).toBe(org['@id']);
+    expect(nodeOfType('SoftwareApplication').publisher['@id']).toBe(org['@id']);
+  });
+
+  it('claims no profile it cannot prove it owns', () => {
+    // sameAs is an identity claim, and it is checked. An aspirational or
+    // copy-pasted profile URL is worse than an absent one: it links this site
+    // to somebody else's voice, and that is not a mistake that fails quietly.
+    const org = nodeOfType('Organization');
+    for (const url of org.sameAs ?? []) {
+      expect(url).toMatch(/^https:\/\//);
+    }
   });
 });
 
