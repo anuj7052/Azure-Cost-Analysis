@@ -12,6 +12,7 @@ import {
 } from '../components/Estate/EstateKit';
 import { useAppStore } from '../store/useAppStore';
 import { formatAmount, formatAmountFull } from '../utils/currency';
+import { runGated } from '../utils/loadGate';
 import {
   CATEGORY_ROUTE, CHANGE_FILTERS, INSUFFICIENT, NOT_AVAILABLE, advisorSnapshot,
   anomalySummary, attentionFindings, biggestChanges, computeSummary, estateHealth,
@@ -169,16 +170,26 @@ export default function Estate() {
       while (request) {
         pending.current = null;
         const opts = request.force ? { force: true } : {};
-        // Wave 1 — cheap, and the page is readable the moment it lands.
-        await Promise.allSettled([loadCosts(opts), loadServices(opts), loadRgCosts(opts)]);
-        // Wave 2 — the minute-scale fan-outs across every subscription.
-        await Promise.allSettled([loadCompute(opts), loadOrphaned(opts)]);
-        // Wave 3 — the Activity Log, then the three posture providers.
-        await Promise.allSettled([loadActivity(opts)]);
-        await loadPosture(opts);
-        // Wave 4 — RBAC last. Both endpoints walk every role assignment in
-        // every subscription and the access review reads the Activity Log too.
-        await loadAccess(opts);
+        // Everything at once, gated. These seven have no data dependency on
+        // each other -- they were sequenced in waves only to spread load, and
+        // the page paid for that by taking the sum of four round trips instead
+        // of the length of the longest one. The gate spreads load the same way
+        // without the idle gaps between waves.
+        //
+        // Ordered cheapest first, because the gate preserves start order and
+        // the page is readable the moment costs land. The two minute-scale
+        // fan-outs go last so they occupy the gate only once the quick
+        // answers are already on screen.
+        await runGated([
+          () => loadCosts(opts),
+          () => loadServices(opts),
+          () => loadRgCosts(opts),
+          () => loadOrphaned(opts),
+          () => loadCompute(opts),
+          () => loadActivity(opts),
+          () => loadPosture(opts),
+          () => loadAccess(opts),
+        ]);
         setLastUpdated(new Date());
         request = pending.current;
       }
