@@ -821,22 +821,40 @@ async def query_costs(
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-    body = {
-        "type": "ActualCost",
-        "timeframe": "Custom",
-        "timePeriod": {"from": api_from, "to": api_to},
-        "dataset": {
-            "granularity": granularity,
-            "aggregation": {
-                "totalCost": {"name": "PreTaxCost", "function": "Sum"}
-            },
-            "grouping": [
-                {"type": "Dimension", "name": dim} for dim in group_by
-            ],
-        },
-    }
 
-    return await _query_months(url, headers, body, timeout=60, granularity=granularity)
+    def _body(period_from: str, period_to: str) -> Dict[str, Any]:
+        return {
+            "type": "ActualCost",
+            "timeframe": "Custom",
+            "timePeriod": {"from": period_from, "to": period_to},
+            "dataset": {
+                "granularity": granularity,
+                "aggregation": {
+                    "totalCost": {"name": "PreTaxCost", "function": "Sum"}
+                },
+                "grouping": [
+                    {"type": "Dimension", "name": dim} for dim in group_by
+                ],
+            },
+        }
+
+    # Ask for the closed months and the open ones separately.
+    #
+    # As one query the range ends today, so the cache treats all of it as live
+    # and throws away months Azure finished with long ago. Split, the closed
+    # part is cached for thirty days and only the current month is re-read, so
+    # a second visit costs one query instead of the whole history.
+    settled, live = cost_cache.settled_split(api_from, api_to)
+    if settled and live:
+        halves = await asyncio.gather(
+            _query_months(url, headers, _body(*settled), timeout=60, granularity=granularity),
+            _query_months(url, headers, _body(*live), timeout=60, granularity=granularity),
+        )
+        return [record for half in halves for record in half]
+
+    return await _query_months(
+        url, headers, _body(api_from, api_to), timeout=60, granularity=granularity,
+    )
 
 
 async def query_usage(

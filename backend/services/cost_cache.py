@@ -125,6 +125,62 @@ def ttl_for(body: dict, now: datetime | None = None) -> float:
     return SETTLED_TTL_SECONDS if is_settled(body, now) else OPEN_TTL_SECONDS
 
 
+def _parse(text: str) -> datetime | None:
+    raw = str(text or "").strip()
+    for fmt in (_AZURE_TIME, "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def settled_split(
+    api_from: str,
+    api_to: str,
+    now: datetime | None = None,
+) -> tuple[tuple[str, str] | None, tuple[str, str] | None]:
+    """
+    Cut a date range into the part that can never change and the part that can.
+
+    A six-month query ends today, so the whole thing is unsettled and the whole
+    thing expires in thirty minutes -- including five months that Azure closed
+    long ago and will never amend. Every refresh after that re-reads five
+    immutable months from the most aggressively throttled API in Azure, which
+    is most of the wait on a page the reader has already seen.
+
+    Split at a month boundary rather than at the settling cutoff itself. Rows
+    come back grouped by month, so cutting mid-month would return the same
+    month from both halves and the two would be summed into a doubled figure --
+    a wrong total that looks completely plausible.
+
+    Returns `(settled, open)`, either of which may be None when the range lies
+    entirely on one side. Both None means the range could not be read, and the
+    caller should send it unsplit rather than guess.
+    """
+    start = _parse(api_from)
+    end = _parse(api_to)
+    if start is None or end is None or start > end:
+        return None, None
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=SETTLING_DAYS)
+    # The first instant of the month the cutoff falls in. That month is still
+    # being amended, so it and everything after it are open.
+    boundary = cutoff.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    if end < boundary:
+        return (api_from, api_to), None
+    if start >= boundary:
+        return None, (api_from, api_to)
+
+    last_settled = boundary - timedelta(seconds=1)
+    return (
+        (api_from, last_settled.strftime(_AZURE_TIME)),
+        (boundary.strftime(_AZURE_TIME), api_to),
+    )
+
+
 def scope_of(url: str) -> str:
     """
     The subscription a query was aimed at, for pruning and for support.
