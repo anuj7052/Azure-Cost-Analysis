@@ -185,6 +185,30 @@ REGISTRY: Dict[str, ActionSpec] = {
         azure_permission="Microsoft.Compute/virtualMachines/start/action",
         enabled=False,
     ),
+    "disk.snapshot": ActionSpec(
+        key="disk.snapshot",
+        title="Snapshot a disk",
+        description=(
+            "Takes a copy of the disk and keeps it in Azure. Nothing about the "
+            "disk itself changes. The copy is what makes deleting the disk "
+            "something that can be undone."
+        ),
+        destructive=False,
+        reversible=True,
+        azure_permission="Microsoft.Compute/snapshots/write",
+        enabled=True,
+        # Not required, and that is the point. A safety net behind a
+        # confirmation dialog is one people skip, and the failure mode of
+        # taking a snapshot nobody needed is a few pence a month.
+        requires_confirmation=False,
+        caveats=(
+            "Incremental and stored as Standard_LRS, so it costs a small "
+            "fraction of the disk it copies.",
+            "Azure completes the copy in the background. A snapshot reported "
+            "as Creating is not yet a recovery point.",
+            "A snapshot is not free. It is cheaper than the disk, not nothing.",
+        ),
+    ),
     "disk.delete": ActionSpec(
         key="disk.delete",
         title="Delete unattached disk",
@@ -196,7 +220,16 @@ REGISTRY: Dict[str, ActionSpec] = {
         reversible=False,
         azure_permission="Microsoft.Compute/disks/delete",
         enabled=False,
-        caveats=("Requires a snapshot policy or an explicit acceptance of data loss.",),
+        caveats=(
+            "Snapshot the disk first. `disk.snapshot` exists for this, and a "
+            "snapshot is what turns this from data loss into a restore.",
+            "Still marked irreversible, because the registry describes what "
+            "this action does on its own. Whether a snapshot was taken is a "
+            "fact about a particular run, not about the capability, and an "
+            "action that claims to be reversible on the strength of a step "
+            "somebody might have skipped is worse than one that admits it is "
+            "not.",
+        ),
     ),
 }
 

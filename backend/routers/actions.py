@@ -30,9 +30,10 @@ from models.schemas import (
     ActionCatalogueResponse,
     ActionRecord,
     ActionHistoryResponse,
+    SnapshotRequest,
     TagRequest,
 )
-from services import actions, tagging
+from services import actions, disk_ops, tagging
 from services.token_resolver import authorize_subscriptions, resolve_tenant_token
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
@@ -186,6 +187,94 @@ async def tag_resource(
                 resource_kind=body.resource_kind,
                 request={"tags": body.tags},
                 previous_state={"tags": previous},
+                idempotency_key=idempotency_key,
+            )
+        except actions.ActionError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    return _record(row)
+
+
+@router.post("/disk/snapshot", response_model=ActionRecord)
+async def snapshot_disk(
+    body: SnapshotRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    current_user: dict = Depends(require_workspace_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Copy a disk, so that deleting it stops meaning losing it.
+
+    The savings panel names unattached disks and cannot act on them, because
+    the only action that would act on them is the one marked irreversible. This
+    is the step that changes that, and it is the reason it is worth having on
+    its own: a snapshot taken and never used costs a few pence, and a disk kept
+    for years because nobody dared delete it costs a great deal more.
+    """
+    spec = actions.get_spec("disk.snapshot")
+
+    # Checked before Azure is touched. `execute` checks again, but by then this
+    # endpoint has already read the disk -- and a caller who may not make the
+    # change should not be able to use it to find out the disk's size or SKU.
+    try:
+        actions.authorize(spec, current_user, confirmed=True)
+    except actions.ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    parts = disk_ops.parse_disk_id(body.resource_id)
+    if not parts:
+        # Named for what it is. "Not a managed disk" is something the caller can
+        # act on; a 404 from ARM three calls later is not.
+        raise HTTPException(
+            status_code=400,
+            detail="That resource is not a managed disk, so it cannot be snapshotted.",
+        )
+
+    subscription_id = body.subscription_id or parts["sub"]
+    token = await resolve_tenant_token(body.tenant_id, current_user, db)
+
+    allowed = await authorize_subscriptions(token, body.tenant_id, [subscription_id])
+    if not allowed:
+        raise HTTPException(
+            status_code=403, detail="This account cannot read that subscription."
+        )
+
+    async with httpx.AsyncClient(timeout=disk_ops.REQUEST_TIMEOUT) as client:
+        # Unlike the tag path, a failure to read here IS fatal. Tags have a
+        # sensible empty previous state; a disk does not have a sensible
+        # unknown region, and a snapshot cannot be created without one.
+        disk, read_error = await disk_ops.read_disk(client, token, body.resource_id)
+        if read_error:
+            raise HTTPException(status_code=502, detail=read_error)
+
+        previous = disk_ops.describe(disk)
+        name = disk_ops.snapshot_name(previous.get("name") or parts["name"])
+
+        async def run():
+            ok, message, snapshot = await disk_ops.create_snapshot(
+                client,
+                token,
+                disk=disk,
+                disk_id=body.resource_id,
+                name=name,
+            )
+            if not ok:
+                raise HTTPException(status_code=502, detail=message)
+            return snapshot
+
+        try:
+            row = await actions.execute(
+                db,
+                spec=spec,
+                user=current_user,
+                tenant_id=body.tenant_id,
+                run=run,
+                confirmed=True,
+                subscription_id=subscription_id,
+                resource_id=body.resource_id,
+                resource_name=body.resource_name or previous.get("name") or "",
+                resource_kind="Microsoft.Compute/disks",
+                request={"snapshot_name": name},
+                previous_state=previous,
                 idempotency_key=idempotency_key,
             )
         except actions.ActionError as exc:

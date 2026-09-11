@@ -1119,3 +1119,35 @@ class TagRequest(BaseModel):
         if ".." in v or "?" in v or "#" in v or "//" in v:
             raise ValueError("resource_id contains characters that are not allowed.")
         return v
+
+
+class SnapshotRequest(BaseModel):
+    """Copy a disk before something irreversible is done to it.
+
+    No `confirmation` field, and that is deliberate rather than an omission.
+    Every other write here asks the caller to say they meant it, because every
+    other write changes something. This one only creates a copy: the worst
+    outcome of running it by accident is a small monthly charge for a snapshot
+    nobody needed. Putting a confirmation in front of a safety net is how the
+    safety net ends up being skipped.
+    """
+
+    tenant_id: str
+    resource_id: str
+    subscription_id: str = ""
+    resource_name: str = ""
+
+    @field_validator("resource_id")
+    @classmethod
+    def _must_be_an_arm_id(cls, value: str) -> str:
+        # Same reasoning as TagRequest: this value is interpolated into a
+        # management.azure.com URL, and a caller-supplied string in a path is
+        # how a request reaches an endpoint other than the intended one. The
+        # narrower check that it is specifically a *disk* lives in
+        # services/disk_ops.py, next to the call that depends on it.
+        v = (value or "").strip()
+        if not v.startswith("/subscriptions/"):
+            raise ValueError("resource_id must be a full Azure resource id.")
+        if ".." in v or "?" in v or "#" in v or "//" in v:
+            raise ValueError("resource_id contains characters that are not allowed.")
+        return v
