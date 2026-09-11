@@ -1,10 +1,38 @@
 import { MsalProvider, useMsal, useIsAuthenticated } from '@azure/msal-react';
-import { InteractionStatus } from '@azure/msal-browser';
+import { EventType } from '@azure/msal-browser';
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Cloud, Lock, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { msalInstance, loginRequest, managementRequest } from './msalConfig';
+import { isResolvingSignIn } from './interaction';
 import { endMySession } from '../api/client';
 import { useTheme } from '../store/useTheme';
+
+/**
+ * Name the account every later call should use.
+ *
+ * MSAL does not do this on its own: a redirect sign-in leaves the account in
+ * the cache but marks none of them active, and nothing here complains, because
+ * every caller quietly falls back to `accounts[0]`. That fallback is right
+ * exactly once. The cache is a list in insertion order, so on any machine
+ * where a second person has ever signed in, `accounts[0]` is whoever signed in
+ * first -- not whoever just typed their password. The app then reads one
+ * person's Azure estate under another person's name, and the only thing the
+ * second person sees is that signing in did not appear to do anything.
+ *
+ * Registered at module scope rather than in an effect, so the account is set
+ * the moment MSAL resolves the redirect rather than a paint later.
+ */
+msalInstance.addEventCallback((event) => {
+  const account = event?.payload?.account;
+  if (!account) return;
+  if (
+    event.eventType === EventType.LOGIN_SUCCESS ||
+    event.eventType === EventType.ACQUIRE_TOKEN_SUCCESS ||
+    event.eventType === EventType.SSO_SILENT_SUCCESS
+  ) {
+    msalInstance.setActiveAccount(account);
+  }
+});
 
 export function AuthProvider({ children }) {
   return <MsalProvider instance={msalInstance}>{children}</MsalProvider>;
@@ -94,9 +122,20 @@ export function RequireAuth({ children, signedOut }) {
   const { inProgress } = useMsal();
   const [timedOut, setTimedOut] = useState(false);
 
-  const waiting =
-    inProgress === InteractionStatus.HandleRedirect ||
-    inProgress === InteractionStatus.Login;
+  /**
+   * `Startup` counts as waiting, and leaving it out is what sent people back
+   * to the landing page just after they typed their password.
+   *
+   * MSAL reports `Startup` first, then `HandleRedirect`, then `None`. During
+   * `Startup` the redirect hash has not been read yet, so there is no account
+   * and `useIsAuthenticated` is false -- truthfully, but only for a moment.
+   * Waiting on the two later states alone left that first moment uncovered, so
+   * the signed-out branch rendered and the visitor was handed back the page
+   * they had just left. It is intermittent because it is a race, and it reads
+   * as a failed sign-in rather than as a flash because the landing page is a
+   * plausible place to have ended up.
+   */
+  const waiting = isResolvingSignIn(inProgress);
 
   const isLoading = waiting && !timedOut;
 
