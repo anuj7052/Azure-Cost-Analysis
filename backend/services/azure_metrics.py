@@ -32,6 +32,7 @@ thresholds can be argued about without touching the code that talks to Azure.
 """
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -57,10 +58,36 @@ MAX_METRICS_PER_CALL = 10
 DEFAULT_WINDOW_DAYS = 30
 DEFAULT_GRAIN = "PT1H"
 
-# Metrics are per-subscription rate limited. Four in flight is enough to make
-# a large estate finish in reasonable time without collecting 429s.
-MAX_CONCURRENT = 4
+# How many metric requests may be in flight across the whole process.
+#
+# Four was chosen against a per-subscription rate limit, but this gate is
+# global: a tenant with ten subscriptions got four in flight in total, not
+# four each, so adding subscriptions made every one of them slower. Azure
+# Monitor's read allowance is thousands per hour per subscription, and what
+# earns a 429 is a burst against one subscription rather than a steady stream
+# across many.
+#
+# The real cost of four was arithmetic. Every resource needs two requests --
+# definitions, then metrics -- so a hundred VMs is two hundred requests, and
+# at four at a time that is fifty sequential rounds of a round trip each.
+# That single number was most of the wait on the Compute and Estate pages.
+#
+# Twelve, not unlimited. The retry layer below still rides out a 429, but a
+# gate wide enough to need it constantly would spend its time sleeping.
+MAX_CONCURRENT = int(os.getenv("METRICS_MAX_CONCURRENT") or 12)
 PER_RESOURCE_TIMEOUT = 30.0
+
+# How long a resource's metric catalogue is trusted.
+#
+# What a VM publishes changes only when somebody installs or removes the
+# diagnostics agent, which is a deliberate act and a rare one. Asking every
+# resource again on every page load spent half of all requests re-learning an
+# answer that had not changed since the last load a minute earlier.
+#
+# Fifteen minutes is long enough to make repeat loads cost half what they did
+# and short enough that installing the agent shows up while the person who
+# installed it is still looking.
+DEFINITIONS_TTL_SECONDS = 900.0
 
 # One gate for the whole process, not one per call.
 #
@@ -81,6 +108,16 @@ def _shared_gate(size: int) -> asyncio.Semaphore:
         _gate = asyncio.Semaphore(size)
         _gate_size = size
     return _gate
+
+
+# Resource id -> (expires at, definitions). Process-level, like the gate, so
+# two tabs asking about the same VM ask Azure once.
+_definitions_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+
+
+def clear_definitions_cache() -> None:
+    """Forget every cached catalogue. For tests, and for an explicit refresh."""
+    _definitions_cache.clear()
 
 # Below this many observed points, a percentile is not a measurement, it is a
 # rumour. A VM created three days ago cannot be right-sized on its first day.
@@ -261,6 +298,10 @@ async def fetch_metric_definitions(
     url = f"{MGMT_BASE}{resource_id}/providers/Microsoft.Insights/metricDefinitions"
     params = {"api-version": METRIC_DEFINITIONS_API}
 
+    cached = _definitions_cache.get(resource_id)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+
     try:
         resp = await azure_retry.send_with_retry(
             lambda: client.get(url, params=params, headers=_headers(token),
@@ -305,13 +346,20 @@ async def fetch_metric_definitions(
             if dims:
                 dimensions[name] = dims
 
-        return {
+        answer = {
             "metrics": names,
             "namespaces": namespaces,
             "aggregations": aggregations,
             "dimensions": dimensions,
             "status_code": resp.status_code,
         }
+        # Only successes are cached. A 403 or a 429 describes this moment, not
+        # this resource: caching one would keep a VM dark for fifteen minutes
+        # after the permission that fixed it was granted.
+        _definitions_cache[resource_id] = (
+            time.monotonic() + DEFINITIONS_TTL_SECONDS, answer,
+        )
+        return answer
 
     except asyncio.TimeoutError:
         return {"error": "Azure Monitor did not respond in time.", "kind": API_ERROR}

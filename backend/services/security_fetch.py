@@ -19,6 +19,7 @@ a security tool can imply.
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -52,7 +53,18 @@ PERMISSION_FOR = {
 # One subscription should never hold up the rest. Ninety seconds is past the
 # point where the answer is still wanted.
 PER_SUBSCRIPTION_BUDGET = 90.0
-MAX_CONCURRENT = 4
+
+# How many subscriptions are read at once.
+#
+# Azure throttles per-subscription per-provider, so concurrency *across*
+# subscriptions is close to free -- each one has its own allowance. Four meant
+# a tenant with twenty subscriptions waited out five sequential rounds of a
+# read that could have been one, for no protection it was actually getting.
+#
+# Eight rather than unlimited, because each subscription here is several
+# provider calls and the process still has to answer the rest of the page
+# while this runs.
+MAX_CONCURRENT = int(os.getenv("SECURITY_MAX_CONCURRENT") or 8)
 
 # Azure throttles per-subscription per-provider. Two retries is enough to ride
 # out a burst caused by our own fan-out without turning one slow subscription
