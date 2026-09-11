@@ -3,7 +3,7 @@ import {
   MISSING, CERTAIN, LIKELY, severityLabel, severityTone, FALLBACK_TONE,
   methodLabel, methodHelp, flatten, sumCost, unpricedCount, groupTree,
   ruleOptions, severityOptions, filterItems, savings, evidenceRows,
-  coverageNote, headline,
+  coverageNote, headline, isSnapshotable,
 } from '../src/utils/orphaned';
 
 const item = (over = {}) => ({
@@ -23,6 +23,47 @@ const item = (over = {}) => ({
   evidence: { 'Size (GB)': 128, SKU: 'Premium_LRS' },
   age_days: null,
   ...over,
+});
+
+describe('offering the snapshot', () => {
+  it('offers it for a managed disk', () => {
+    expect(isSnapshotable(item())).toBe(true);
+  });
+
+  it('offers it whatever case Azure wrote the provider in', () => {
+    expect(isSnapshotable(item({
+      id: '/subscriptions/s1/resourcegroups/rg-a/PROVIDERS/MICROSOFT.COMPUTE/DISKS/d1',
+    }))).toBe(true);
+  });
+
+  it('does not offer it for a public IP, which has nothing to copy', () => {
+    expect(isSnapshotable(item({
+      id: '/subscriptions/s1/resourceGroups/rg-a/providers/Microsoft.Network/publicIPAddresses/ip1',
+    }))).toBe(false);
+  });
+
+  it('does not offer it for a snapshot of a disk', () => {
+    // The id contains "disks" nowhere, but a loose match on the word "disk"
+    // would catch this and offer to snapshot a snapshot.
+    expect(isSnapshotable(item({
+      id: '/subscriptions/s1/resourceGroups/rg-a/providers/Microsoft.Compute/snapshots/disk-1-snap',
+    }))).toBe(false);
+  });
+
+  it('does not offer it when the finding carries no id at all', () => {
+    // A button that cannot name what it would act on is worse than no button.
+    expect(isSnapshotable(item({ id: '' }))).toBe(false);
+    expect(isSnapshotable(undefined)).toBe(false);
+  });
+
+  it('ignores the type field when the id disagrees with it', () => {
+    // The backend parses the id and refuses anything else, so trusting type
+    // would offer a button that always fails.
+    expect(isSnapshotable(item({
+      type: 'microsoft.compute/disks',
+      id: '/subscriptions/s1/resourceGroups/rg-a/providers/Microsoft.Network/nic/n1',
+    }))).toBe(false);
+  });
 });
 
 describe('naming the severity', () => {

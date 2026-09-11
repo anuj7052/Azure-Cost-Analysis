@@ -2,14 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Trash2, Wallet, ShieldAlert, AlertTriangle, CheckCircle2, Loader2,
   ExternalLink, Search, Info, TrendingDown, Layers, ChevronDown, ChevronRight,
+  Camera,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
+import { snapshotDisk } from '../api/client';
 import { formatAmountFull } from '../utils/currency';
 import { exactAmount } from '../utils/exact';
 import {
   MISSING, flatten, sumCost, groupTree, ruleOptions, severityOptions,
   filterItems, savings, evidenceRows, coverageNote, headline,
-  severityLabel, severityTone, CERTAIN,
+  severityLabel, severityTone, isSnapshotable, CERTAIN,
 } from '../utils/orphaned';
 
 const PORTAL = 'https://portal.azure.com/#@/resource';
@@ -145,8 +147,88 @@ function EvidenceRow({ label, value, hint }) {
   );
 }
 
+/**
+ * Take a copy of a disk before anybody deletes it.
+ *
+ * Remounted per resource id by the caller rather than clearing its own state,
+ * so moving to another finding cannot show one disk's snapshot name under
+ * another's -- the one mistake here that could end with the wrong disk
+ * deleted.
+ */
+function SnapshotButton({ item, tenantId }) {
+  const [state, setState] = useState('idle');
+  const [result, setResult] = useState(null);
+
+  const run = async () => {
+    setState('running');
+    try {
+      const record = await snapshotDisk({
+        tenant_id: tenantId,
+        resource_id: item.id,
+        subscription_id: item.subscription_id || '',
+        resource_name: item.name || '',
+      });
+      setResult(record);
+      setState(record?.status === 'failed' ? 'failed' : 'done');
+    } catch (err) {
+      setResult({ error: err?.response?.data?.detail || err?.message || MISSING });
+      setState('failed');
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-slate-300">Before you delete it</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">
+            An incremental Standard_LRS copy, kept by Azure after the disk is gone.
+            It bills a fraction of the disk, so the saving survives the safety net.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={run}
+          disabled={state === 'running' || !tenantId}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-slate-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {state === 'running'
+            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Snapshotting…</>
+            : <><Camera className="h-3.5 w-3.5" />Take snapshot</>}
+        </button>
+      </div>
+
+      {state === 'done' && (
+        <p className="mt-3 flex gap-1.5 rounded-lg bg-emerald-500/10 p-2.5 text-xs leading-relaxed text-emerald-300">
+          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            {result?.result?.state === 'Succeeded'
+              ? 'Snapshot created.'
+              : 'Snapshot accepted by Azure and still copying. It is not a recovery point until it finishes.'}
+            {result?.result?.name && (
+              <span className="mt-0.5 block break-all text-emerald-200/80">{result.result.name}</span>
+            )}
+          </span>
+        </p>
+      )}
+
+      {state === 'failed' && (
+        <p className="mt-3 flex gap-1.5 rounded-lg bg-rose-500/10 p-2.5 text-xs leading-relaxed text-rose-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            No snapshot was taken, so nothing about this disk has changed.
+            <span className="mt-0.5 block text-rose-200/80">
+              {result?.error || result?.message || MISSING}
+            </span>
+          </span>
+        </p>
+      )}
+    </section>
+  );
+}
+
 /** The right-hand panel: why this is a finding, and what removing it saves. */
-function Detail({ item, currency }) {
+function Detail({ item, currency, tenantId }) {
   const money = savings(item);
   const rows = evidenceRows(item);
   const tone = severityTone(item.severity);
@@ -216,6 +298,10 @@ function Detail({ item, currency }) {
         )}
         <p className="mt-2.5 text-xs leading-relaxed text-slate-500">{money.basis}</p>
       </section>
+
+      {isSnapshotable(item) && (
+        <SnapshotButton key={item.id} item={item} tenantId={tenantId} />
+      )}
 
       <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
         <p className="mb-1.5 text-xs font-semibold text-slate-300">Why this was flagged</p>
@@ -529,7 +615,7 @@ export default function Orphaned() {
                   a long estate, which is when it is actually being read. */}
               <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 xl:sticky xl:top-6">
                 {item ? (
-                  <Detail item={item} currency={currency} />
+                  <Detail item={item} currency={currency} tenantId={selectedTenantId} />
                 ) : (
                   <p className="flex items-center gap-2 py-10 text-sm text-slate-500">
                     <Layers className="h-4 w-4" />

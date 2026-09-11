@@ -59,9 +59,20 @@ export function methodHelp(method) {
   return '';
 }
 
+/**
+ * Whether a finding is a managed disk, and so can be snapshotted.
+ *
+ * Matched on the resource id rather than the `type` field because the id is
+ * what the backend parses and refuses; agreeing with `type` while the id says
+ * otherwise would offer a button that always fails. Case-insensitive: Azure
+ * returns the provider namespace in whatever case the writer used.
+ */
+export function isSnapshotable(item) {
+  return /\/providers\/microsoft\.compute\/disks\/[^/]+$/i.test(item?.id || '');
+}
+
 /** Flatten the API's rule-grouped response back into one list of findings. */
-export function flatten(data) {
-  return (data?.categories || []).flatMap(c =>
+export function flatten(data) {  return (data?.categories || []).flatMap(c =>
     (c.items || []).map(item => ({
       ...item,
       rule: item.rule || c.key,

@@ -1040,6 +1040,21 @@ export const applyTags = (body) =>
     headers: { 'Idempotency-Key': crypto.randomUUID() },
   }).then(r => r.data);
 
+/**
+ * Copy a managed disk to a snapshot, so deleting the disk has an undo.
+ *
+ * No `confirmation` flag, unlike every other write here. This one only makes
+ * a copy: the worst outcome of an accidental click is a few pence a month,
+ * and a safety net behind a dialog is one people skip.
+ *
+ * The idempotency key is per call for the same reason as applyTags — a double
+ * click should not bill for two snapshots of the same disk.
+ */
+export const snapshotDisk = (body) =>
+  api.post('/actions/disk/snapshot', body, {
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  }).then(r => r.data);
+
 export const fetchServices = (tenantId, subscriptionIds, months = 1, range = {}) =>
   api.get('/services', {
     params: {
