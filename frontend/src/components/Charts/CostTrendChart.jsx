@@ -2,6 +2,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine
 } from 'recharts';
 import { formatAmount } from '../../utils/currency';
+import { monthFromPoint } from '../../utils/monthDrill';
 import { useChartTheme } from '../../store/useTheme';
 
 function formatMonth(m) {
@@ -10,7 +11,10 @@ function formatMonth(m) {
   return new Date(year, month - 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 }
 
-export default function CostTrendChart({ months = [], loading = false, currency = 'INR', forecast = [] }) {
+export default function CostTrendChart({
+  months = [], loading = false, currency = 'INR', forecast = [], onSelectMonth,
+  selectedMonth = '',
+}) {
   const t = useChartTheme();
   const COLORS = t.series;
 
@@ -31,7 +35,14 @@ export default function CostTrendChart({ months = [], loading = false, currency 
   const allSubs = [...new Set(months.flatMap(m => Object.keys(m.by_subscription || {})))];
 
   const actualData = months.map(m => {
-    const point = { month: formatMonth(m.month), total: parseFloat(m.total_cost.toFixed(2)) };
+    const point = {
+      month: formatMonth(m.month),
+      total: parseFloat(m.total_cost.toFixed(2)),
+      // The raw key travels with the point because the label is formatted for
+      // reading -- "Sep 26" cannot be looked up again, and two years sharing a
+      // month would collide.
+      _key: m.month,
+    };
     allSubs.forEach(sub => {
       point[sub.slice(-8)] = parseFloat((m.by_subscription?.[sub] || 0).toFixed(2));
     });
@@ -42,9 +53,26 @@ export default function CostTrendChart({ months = [], loading = false, currency 
   const keys = allSubs.length > 1 ? allSubs.map(s => s.slice(-8)) : ['total'];
   if (allSubs.length <= 1) keys[0] = 'total';
 
+  const selectedLabel = selectedMonth
+    ? (actualData.find(p => p._key === selectedMonth)?.month || '')
+    : '';
+
+  const handleClick = (state) => {
+    if (!onSelectMonth) return;
+    const key = monthFromPoint(state?.activePayload?.[0]?.payload);
+    // A click that lands on a forecast month, or between points, is ignored
+    // rather than clearing the selection: the reader aimed at something.
+    if (key) onSelectMonth(key);
+  };
+
   return (
     <ResponsiveContainer width="100%" height={280}>
-      <AreaChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 0 }}>
+      <AreaChart
+        data={data}
+        margin={{ top: 5, right: 20, left: 10, bottom: 0 }}
+        onClick={onSelectMonth ? handleClick : undefined}
+        style={onSelectMonth ? { cursor: 'pointer' } : undefined}
+      >
         <defs>
           {keys.map((key, i) => (
             <linearGradient key={key} id={`grad-${i}`} x1="0" y1="0" x2="0" y2="1">
@@ -72,6 +100,9 @@ export default function CostTrendChart({ months = [], loading = false, currency 
           ]}
         />
         {keys.length > 1 && <Legend iconType="circle" iconSize={8} wrapperStyle={{ color: t.axis, fontSize: 12 }} />}
+        {selectedLabel && (
+          <ReferenceLine x={selectedLabel} stroke={COLORS[0]} strokeWidth={2} />
+        )}
         {forecastStartLabel && (
           <ReferenceLine x={forecastStartLabel} stroke={t.reference} strokeDasharray="4 4"
             label={{ value: 'Forecast ▶', fill: t.label, fontSize: 11, position: 'insideTopRight' }} />

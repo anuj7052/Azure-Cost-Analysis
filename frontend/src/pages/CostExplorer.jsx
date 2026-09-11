@@ -3,6 +3,7 @@ import { TrendingUp, Layers, Server, Bookmark, X, Search } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import DataQuality from '../components/Common/DataQuality';
 import CostTrendChart from '../components/Charts/CostTrendChart';
+import { monthByKey, servicesInMonth, unattributed } from '../utils/monthDrill';
 import ServiceBreakdownChart from '../components/Charts/ServiceBreakdownChart';
 import { formatAmount } from '../utils/currency';
 import { Amount } from '../components/Common/Amount';
@@ -88,6 +89,9 @@ export default function CostExplorer() {
   const [dimension, setDimension] = useState('service');
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [views, setViews] = useState(readViews);
+  // The month whose services are open under the trend chart. Empty means the
+  // reader has not asked, which is not the same as a month with no services.
+  const [drillMonth, setDrillMonth] = useState('');
 
   const subsKey = selectedSubscriptionIds.join(',');
 
@@ -127,6 +131,15 @@ export default function CostExplorer() {
   );
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
+
+  const drillMonthRow = useMemo(() => monthByKey(monthly, drillMonth), [monthly, drillMonth]);
+  const drillRows = useMemo(() => servicesInMonth(drillMonthRow), [drillMonthRow]);
+  const drillTotal = useMemo(
+    () => drillRows.reduce((sum, r) => sum + r.cost, 0),
+    [drillRows],
+  );
+  const drillGap = useMemo(() => unattributed(drillMonthRow), [drillMonthRow]);
+
   const subName = useMemo(() => {
     const map = new Map(subscriptions.map((s) => [s.subscription_id, s.display_name]));
     return (id) => map.get(id) || id;
@@ -307,8 +320,66 @@ export default function CostExplorer() {
               loading={costLoading}
               currency={currency}
               forecast={forecast}
+              onSelectMonth={setDrillMonth}
+              selectedMonth={drillMonth}
             />
+            <p className="mt-2 text-[11px] text-slate-500">
+              Click any month to see the services billed in it.
+            </p>
           </Panel>
+
+          {drillMonth && (
+            <Panel
+              title={`What made ${drillMonth}`}
+              actions={(
+                <button
+                  type="button"
+                  onClick={() => setDrillMonth('')}
+                  className="text-xs text-slate-400 transition hover:text-white"
+                >
+                  Close
+                </button>
+              )}
+            >
+              {!drillRows.length ? (
+                <p className="py-6 text-center text-sm text-slate-500">
+                  Azure returned no service breakdown for this month.
+                </p>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    {drillRows.map((row) => (
+                      <div key={row.name} className="flex items-center gap-3 text-xs">
+                        <span className="flex-1 truncate text-slate-300" title={row.name}>
+                          {row.name}
+                        </span>
+                        <div className="hidden h-1.5 w-28 rounded-full bg-slate-800 sm:block">
+                          <div
+                            className="h-1.5 rounded-full bg-blue-500"
+                            style={{ width: `${row.share === null ? 0 : row.share}%` }}
+                          />
+                        </div>
+                        <span className="w-24 text-right font-medium tabular-nums text-white">
+                          {fmt(row.cost)}
+                        </span>
+                        <span className="w-12 text-right tabular-nums text-slate-500">
+                          {row.share === null ? '—' : `${row.share.toFixed(1)}%`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  {drillGap !== 0 && (
+                    <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
+                      These services account for {fmt(drillTotal)} of the month&rsquo;s
+                      {' '}{fmt(drillMonthRow?.total_cost || 0)}. The remaining {fmt(drillGap)}
+                      {' '}carries no service name in Azure&rsquo;s grouped totals, so it can be
+                      counted but not attributed.
+                    </p>
+                  )}
+                </>
+              )}
+            </Panel>
+          )}
 
           <Panel title="Spend by service, month over month">
             <ServiceBreakdownChart months={monthly} loading={costLoading} currency={currency} />
