@@ -139,6 +139,57 @@ REGISTRY: Dict[str, ActionSpec] = {
             "Served by the /api/security/access/downgrade endpoint.",
         ),
     ),
+    "access.elevate": ActionSpec(
+        key="access.elevate",
+        title="Elevate access to the whole tenant",
+        description=(
+            "Assigns you User Access Administrator above every management "
+            "group and subscription in this tenant, including ones created "
+            "later. Azure permits this only for Global Administrators. Use it "
+            "to get out of an empty subscription list, then remove it."
+        ),
+        # Nothing running is touched, and nothing is lost. The danger here is
+        # reach, not damage -- which `destructive` does not describe and the
+        # caveats below do.
+        destructive=False,
+        reversible=True,
+        azure_permission="Microsoft.Authorization/elevateAccess/action",
+        enabled=True,
+        caveats=(
+            "Tenant-wide. The assignment sits at the root scope, above every "
+            "management group and subscription that exists now or later.",
+            "Meant to be temporary. Microsoft's guidance is to elevate, do the "
+            "one thing that needed it, and remove it again.",
+            "Azure records this in the Entra directory activity log whatever "
+            "this application stores.",
+            "Refused unless you are already a Global Administrator. It cannot "
+            "give anybody access they could not already have given themselves.",
+        ),
+    ),
+    "access.remove_elevation": ActionSpec(
+        key="access.remove_elevation",
+        title="Remove tenant-wide elevation",
+        description=(
+            "Deletes the root-scope User Access Administrator assignment, "
+            "returning your access to whatever it was before you elevated."
+        ),
+        # Removing access is destructive in the sense the registry means: it
+        # takes something away, and somebody relying on it stops being able to
+        # work. Reversible only in that elevating again is available -- and
+        # only to a Global Administrator.
+        destructive=True,
+        reversible=True,
+        azure_permission="Microsoft.Authorization/roleAssignments/delete",
+        enabled=True,
+        requires_confirmation=False,
+        caveats=(
+            "Removes only the root-scope assignment. Roles granted on "
+            "individual subscriptions are untouched.",
+            "If the elevation is what is currently showing you the estate, the "
+            "subscription list may empty again afterwards. That is the tenant "
+            "returning to its real permissions, not a failure.",
+        ),
+    ),
     "resource.tag": ActionSpec(
         key="resource.tag",
         title="Apply tags",

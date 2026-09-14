@@ -1055,6 +1055,41 @@ export const snapshotDisk = (body) =>
     headers: { 'Idempotency-Key': crypto.randomUUID() },
   }).then(r => r.data);
 
+/**
+ * Whether the signed-in account currently holds tenant-wide elevated access.
+ *
+ * Asked of Azure every time rather than cached. An elevation can be removed
+ * from the portal, from the CLI, or by another administrator, so a remembered
+ * answer would be a guess about the present -- and this one drives a button
+ * that either grants or removes authority over an entire tenant.
+ */
+export const fetchElevationStatus = (tenantId) =>
+  api.get('/actions/access/elevation', { params: { tenant_id: tenantId } })
+    .then(r => r.data);
+
+/**
+ * Take User Access Administrator at the root of the tenant.
+ *
+ * The confirmation is sent explicitly because of reach rather than damage:
+ * nothing running is touched, but the assignment sits above every
+ * subscription that exists now or later.
+ */
+export const elevateAccess = (tenantId) =>
+  api.post('/actions/access/elevate', { tenant_id: tenantId, confirmation: true }, {
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  }).then(r => r.data);
+
+/**
+ * Give the root-scope assignment back.
+ *
+ * No confirmation flag, deliberately. Asking somebody to confirm twice that
+ * they want to hold *less* access is how the access stays.
+ */
+export const removeElevation = (tenantId) =>
+  api.post('/actions/access/elevation/remove', { tenant_id: tenantId }, {
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  }).then(r => r.data);
+
 export const fetchServices = (tenantId, subscriptionIds, months = 1, range = {}) =>
   api.get('/services', {
     params: {

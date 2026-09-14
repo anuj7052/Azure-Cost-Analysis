@@ -30,10 +30,12 @@ from models.schemas import (
     ActionCatalogueResponse,
     ActionRecord,
     ActionHistoryResponse,
+    ElevateAccessRequest,
+    RemoveElevationRequest,
     SnapshotRequest,
     TagRequest,
 )
-from services import actions, disk_ops, tagging
+from services import actions, disk_ops, elevate_access, tagging
 from services.token_resolver import authorize_subscriptions, resolve_tenant_token
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
@@ -274,6 +276,209 @@ async def snapshot_disk(
                 resource_name=body.resource_name or previous.get("name") or "",
                 resource_kind="Microsoft.Compute/disks",
                 request={"snapshot_name": name},
+                previous_state=previous,
+                idempotency_key=idempotency_key,
+            )
+        except actions.ActionError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    return _record(row)
+
+
+def _own_tenant_token(body_tenant_id: str, current_user: dict) -> str:
+    """The caller's own ARM token, refusing any tenant that is not theirs.
+
+    Elevation is the one write in this router that must not go through
+    `resolve_tenant_token`. That resolver is built to find *any* usable
+    credential for a tenant, including a stored service principal -- and a
+    service principal is exactly the wrong identity here. Azure permits this
+    call only for Global Administrators, which is a directory role a service
+    principal cannot hold; and if one somehow could, the elevation would land
+    on the service principal rather than on the person who asked for it.
+    Either outcome is worse than a refusal.
+
+    The tenant is checked against the token's own `tid` for the same reason.
+    Elevation applies to the directory you are signed in to and to no other, so
+    a request naming a tenant connected by some other credential is not a
+    narrower version of this operation -- it is a different one that does not
+    exist.
+    """
+    signed_in = current_user.get("tenant_id") or ""
+    if body_tenant_id and signed_in and body_tenant_id != signed_in:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Elevation applies only to the tenant you are signed in to. "
+                "Sign in with an account in that tenant and try again."
+            ),
+        )
+    token = current_user.get("azure_token") or ""
+    if not token:
+        raise HTTPException(
+            status_code=401, detail="No Azure session to elevate. Sign in again."
+        )
+    return token
+
+
+@router.get("/access/elevation")
+async def elevation_status(
+    tenant_id: str = "",
+    current_user: dict = Depends(get_current_user),
+):
+    """Whether the caller currently holds root-scope access, asked of Azure.
+
+    Read live rather than remembered. An elevation can be removed from the
+    portal, from the CLI, or by somebody else holding the same rights, so a
+    stored answer would be a guess about the present dressed as a fact -- and
+    this is not a fact worth being wrong about.
+
+    Deliberately not admin-gated. Knowing whether you are elevated is how a
+    person finds out why their subscription list is empty, and that question is
+    reasonable from anybody who can sign in.
+    """
+    token = _own_tenant_token(tenant_id, current_user)
+    principal_id = current_user.get("user_id") or ""
+
+    async with httpx.AsyncClient(timeout=elevate_access.REQUEST_TIMEOUT) as client:
+        assignment, error = await elevate_access.read_elevation(client, token, principal_id)
+
+    if error:
+        # Not a 502. Failing to read this is not failing to do anything, and
+        # the page that asks needs to render either way -- so the uncertainty
+        # is returned as a fact rather than thrown as a failure.
+        return {"elevated": False, "unknown": True, "error": error}
+
+    return {**elevate_access.describe(assignment), "unknown": False, "error": ""}
+
+
+@router.post("/access/elevate", response_model=ActionRecord)
+async def elevate_tenant_access(
+    body: ElevateAccessRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    current_user: dict = Depends(require_workspace_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Assign the caller User Access Administrator above the whole tenant.
+
+    This exists for the worst moment in onboarding: a Global Administrator
+    signs in, connects their tenant, and sees no subscriptions at all. Nothing
+    is broken. Entra directory roles and Azure RBAC are separate systems, and
+    the highest role in one grants nothing in the other. Elevation is Azure's
+    own supported way out, and without it the honest thing this product could
+    say to such a user is "go and read a documentation page".
+
+    It cannot give anybody anything they could not already take. Azure refuses
+    unless the caller already holds Global Administrator, so the operation only
+    converts authority somebody has into a form Resource Manager recognises.
+    """
+    spec = actions.get_spec("access.elevate")
+
+    try:
+        actions.authorize(spec, current_user, confirmed=body.confirmation)
+    except actions.ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    token = _own_tenant_token(body.tenant_id, current_user)
+    principal_id = current_user.get("user_id") or ""
+
+    async with httpx.AsyncClient(timeout=elevate_access.REQUEST_TIMEOUT) as client:
+        # Read first, so the audit record can say what access looked like
+        # before. A failure to read is not fatal here -- unlike a disk, there
+        # is a sensible unknown prior state, and refusing to elevate because
+        # the past could not be described would strand the user for nothing.
+        before, _ = await elevate_access.read_elevation(client, token, principal_id)
+
+        async def run():
+            ok, message = await elevate_access.elevate(client, token)
+            if not ok:
+                raise HTTPException(status_code=502, detail=message)
+            # Read back rather than assume. The assignment id is what the
+            # removal path needs, and an id constructed here would be a claim
+            # rather than an observation.
+            after, _ = await elevate_access.read_elevation(client, token, principal_id)
+            return elevate_access.describe(after)
+
+        try:
+            row = await actions.execute(
+                db,
+                spec=spec,
+                user=current_user,
+                tenant_id=body.tenant_id or current_user.get("tenant_id", ""),
+                run=run,
+                confirmed=body.confirmation,
+                subscription_id="",
+                resource_id=elevate_access.ROOT_SCOPE,
+                resource_name="Tenant root",
+                resource_kind="Microsoft.Authorization/roleAssignments",
+                request={"role": "User Access Administrator", "principal_id": principal_id},
+                previous_state=elevate_access.describe(before),
+                idempotency_key=idempotency_key,
+            )
+        except actions.ActionError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    return _record(row)
+
+
+@router.post("/access/elevation/remove", response_model=ActionRecord)
+async def remove_tenant_elevation(
+    body: RemoveElevationRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    current_user: dict = Depends(require_workspace_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Give back the root-scope assignment, returning the tenant to normal.
+
+    A first-class endpoint rather than a note pointing at the portal, because
+    an elevation nobody removes is a standing tenant-wide administrator that no
+    access review has ever looked at -- precisely the finding this product
+    exists to raise. Offering the elevation without offering its removal would
+    be creating the problem it reports.
+    """
+    spec = actions.get_spec("access.remove_elevation")
+
+    try:
+        actions.authorize(spec, current_user, confirmed=True)
+    except actions.ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    token = _own_tenant_token(body.tenant_id, current_user)
+    principal_id = current_user.get("user_id") or ""
+
+    async with httpx.AsyncClient(timeout=elevate_access.REQUEST_TIMEOUT) as client:
+        assignment, error = await elevate_access.read_elevation(client, token, principal_id)
+        if error:
+            raise HTTPException(status_code=502, detail=error)
+        if not assignment:
+            # Named for what it is. The caller wanted the elevation gone and it
+            # is gone, but reporting success would imply this call removed it.
+            raise HTTPException(
+                status_code=409,
+                detail="You do not currently hold tenant-wide elevated access.",
+            )
+
+        previous = elevate_access.describe(assignment)
+        assignment_id = previous["assignment_id"]
+
+        async def run():
+            ok, message = await elevate_access.remove_elevation(client, token, assignment_id)
+            if not ok:
+                raise HTTPException(status_code=502, detail=message)
+            return {"elevated": False, "removed": assignment_id}
+
+        try:
+            row = await actions.execute(
+                db,
+                spec=spec,
+                user=current_user,
+                tenant_id=body.tenant_id or current_user.get("tenant_id", ""),
+                run=run,
+                confirmed=True,
+                subscription_id="",
+                resource_id=elevate_access.ROOT_SCOPE,
+                resource_name="Tenant root",
+                resource_kind="Microsoft.Authorization/roleAssignments",
+                request={"assignment_id": assignment_id},
                 previous_state=previous,
                 idempotency_key=idempotency_key,
             )

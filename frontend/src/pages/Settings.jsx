@@ -5,6 +5,7 @@ import { useAppStore } from '../store/useAppStore';
 import { deleteTenant, downloadSetupGuide, uploadCSV } from '../api/client';
 import AddTenantModal from '../components/TenantManager/AddTenantModal';
 import IntegrationsPanel from '../components/Settings/IntegrationsPanel';
+import ElevateAccessPanel from '../components/Settings/ElevateAccessPanel';
 import AddSessionTokenModal from '../components/TenantManager/AddSessionTokenModal';
 import PortalGuide from '../components/Common/PortalGuide';
 import { EXPORT_GUIDE } from '../components/Common/portalGuides';
@@ -33,6 +34,7 @@ export default function Settings() {
     removeImportFile,
   } = useAppStore();
   const me = useAppStore(s => s.me);
+  const selectedTenantId = useAppStore(s => s.selectedTenantId);
   // Hiding these is convenience, not the security boundary: the API refuses
   // them for team members regardless of what the browser renders.
   // The owner, plus anyone they gave the Administrator role in this workspace.
@@ -246,6 +248,19 @@ export default function Settings() {
             </p>
           )}
         </div>
+      )}
+
+      {/* Why a Global Administrator can connect a tenant and still see an
+          empty subscription list. Placed directly after the tenant and
+          subscription lists because that is the moment the question arises,
+          and only for administrators -- the API refuses it for anyone else, so
+          showing it to a team member would be offering a button that cannot
+          work. */}
+      {canManageTenants && selectedTenantId && (
+        <ElevateAccessPanel
+          tenantId={selectedTenantId}
+          subscriptionCount={subscriptions ? subscriptions.length : null}
+        />
       )}
 
       {/* Customer-supplied endpoints */}

@@ -1121,6 +1121,35 @@ class TagRequest(BaseModel):
         return v
 
 
+class ElevateAccessRequest(BaseModel):
+    """Take User Access Administrator at the root of a tenant.
+
+    Carries an explicit confirmation because of reach rather than damage.
+    Nothing running is touched and nothing is lost, but the assignment lands
+    above every management group and subscription in the tenant -- including
+    ones created afterwards -- and that is not something anybody should arrive
+    at by clicking through a dialog they did not read.
+
+    No scope field. The scope of this operation is the root and cannot be
+    anything else, so accepting one would only create the impression that a
+    narrower elevation was available.
+    """
+
+    tenant_id: str
+    confirmation: bool = False
+
+
+class RemoveElevationRequest(BaseModel):
+    """Give back a root-scope assignment taken earlier.
+
+    No confirmation, deliberately. This is the action that returns the tenant
+    to its ordinary permissions, and putting a barrier in front of giving
+    access back is how the access stays.
+    """
+
+    tenant_id: str
+
+
 class SnapshotRequest(BaseModel):
     """Copy a disk before something irreversible is done to it.
 
