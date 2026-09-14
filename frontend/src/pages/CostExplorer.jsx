@@ -110,14 +110,26 @@ export default function CostExplorer() {
     (async () => {
       await loadCosts();
       if (!cancelled) await loadServices();
-      // Meter rows last. Nothing on the page needs them until a filter is set,
-      // and they are the widest query of the three -- asking for them before
-      // the totals would delay the chart to prepare for a click that may
-      // never come.
-      if (!cancelled) await loadCostRows();
     })();
     return () => { cancelled = true; };
   }, [selectedTenantId, subsKey, dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Meter rows are fetched only once something on screen needs them.
+   *
+   * They are by far the widest of the three queries -- every meter, every
+   * month, across a window deliberately widened past the chosen range -- and
+   * nothing renders from them until a filter is set or the groups tab is
+   * opened. Loading them with the rest put that whole query on the critical
+   * path of the first paint, so the page waited on detail for a click that
+   * usually never came. */
+  const trendFiltered = hasTrendFilters(filters);
+  const needsRows = trendFiltered || tab === 'groups';
+
+  useEffect(() => {
+    if (!needsRows) return;
+    if (!selectedTenantId || !selectedSubscriptionIds.length) return;
+    loadCostRows();
+  }, [needsRows, selectedTenantId, subsKey, dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const monthly = useMemo(() => costData?.months || [], [costData]);
   const currency = monthly[0]?.currency || costData?.currency || activeServices[0]?.currency || 'INR';
@@ -133,7 +145,6 @@ export default function CostExplorer() {
      were handed directly would only create a chance to disagree with Azure. */
   const rows = useMemo(() => rowsData?.rows || [], [rowsData]);
   const monthKeys = useMemo(() => monthly.map((m) => m.month), [monthly]);
-  const trendFiltered = hasTrendFilters(filters);
 
   const trendMonths = useMemo(() => {
     if (!trendFiltered) return monthly;
