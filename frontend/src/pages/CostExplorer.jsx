@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Layers, Server, Bookmark, X, Search } from 'lucide-react';
+import { TrendingUp, Layers, Server, Bookmark, X, Search, Boxes, ChevronRight } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import DataQuality from '../components/Common/DataQuality';
 import CostTrendChart from '../components/Charts/CostTrendChart';
 import { monthByKey, servicesInMonth, unattributed } from '../utils/monthDrill';
+import { hasTrendFilters, monthsFromRows, rowCoverage } from '../utils/trendFilter';
+import { groupsFromRows, groupsTotal } from '../utils/rgDrill';
 import ServiceBreakdownChart from '../components/Charts/ServiceBreakdownChart';
 import { formatAmount } from '../utils/currency';
 import { Amount } from '../components/Common/Amount';
@@ -82,6 +84,7 @@ export default function CostExplorer() {
   const {
     costData, costLoading, loadCosts,
     activeServices, servicesLoading, servicesError, loadServices,
+    rowsData, rowsLoading, loadCostRows,
     selectedTenantId, selectedSubscriptionIds, subscriptions, months, dateKey,
   } = useAppStore();
 
@@ -92,6 +95,9 @@ export default function CostExplorer() {
   // The month whose services are open under the trend chart. Empty means the
   // reader has not asked, which is not the same as a month with no services.
   const [drillMonth, setDrillMonth] = useState('');
+  // The resource group whose services are open. One at a time: a list where
+  // every row can be expanded at once stops being a list you can compare.
+  const [openGroup, setOpenGroup] = useState('');
 
   const subsKey = selectedSubscriptionIds.join(',');
 
@@ -104,6 +110,11 @@ export default function CostExplorer() {
     (async () => {
       await loadCosts();
       if (!cancelled) await loadServices();
+      // Meter rows last. Nothing on the page needs them until a filter is set,
+      // and they are the widest query of the three -- asking for them before
+      // the totals would delay the chart to prepare for a click that may
+      // never come.
+      if (!cancelled) await loadCostRows();
     })();
     return () => { cancelled = true; };
   }, [selectedTenantId, subsKey, dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -113,9 +124,35 @@ export default function CostExplorer() {
   const fmt = (v) => formatAmount(v, currency);
   const thisMonth = currentMonthKey();
 
+  /* ── the trend, filtered ────────────────────────────────────────────
+     Unfiltered, the chart shows Azure's own monthly totals. Filtered, it is
+     re-summed from the meter rows behind them, which is the only source that
+     knows a row's month, service, group, subscription and region at once.
+
+     Deliberately not the other way round: re-deriving an unfiltered total we
+     were handed directly would only create a chance to disagree with Azure. */
+  const rows = useMemo(() => rowsData?.rows || [], [rowsData]);
+  const monthKeys = useMemo(() => monthly.map((m) => m.month), [monthly]);
+  const trendFiltered = hasTrendFilters(filters);
+
+  const trendMonths = useMemo(() => {
+    if (!trendFiltered) return monthly;
+    return monthsFromRows(rows, filters, { allowed: monthKeys, currency });
+  }, [trendFiltered, monthly, rows, filters, monthKeys, currency]);
+
+  // What share of the real total the meter rows account for. The API caps rows
+  // on a large estate, so a filtered total is a floor -- and a reader watching
+  // the line drop deserves to know that before concluding their spend fell.
+  const coverage = useMemo(
+    () => (trendFiltered ? rowCoverage(rows, monthKeys, monthly) : null),
+    [trendFiltered, rows, monthKeys, monthly],
+  );
+
   const forecast = useMemo(
-    () => linearForecast(monthly, 3, { currentMonth: thisMonth }),
-    [monthly, thisMonth],
+    // A forecast drawn from a filtered slice would project a subset as if it
+    // were the bill, so it is offered only on the whole estate.
+    () => (trendFiltered ? [] : linearForecast(monthly, 3, { currentMonth: thisMonth })),
+    [trendFiltered, monthly, thisMonth],
   );
 
   const filtered = useMemo(
@@ -132,7 +169,34 @@ export default function CostExplorer() {
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
-  const drillMonthRow = useMemo(() => monthByKey(monthly, drillMonth), [monthly, drillMonth]);
+  /* Resource groups, and what is inside them. Summed from the same rows the
+     trend uses, so the two tabs cannot disagree about a group's cost. */
+  const groups = useMemo(
+    () => groupsFromRows(rows, filters, { allowed: monthKeys }),
+    [rows, filters, monthKeys],
+  );
+  const groupsSum = useMemo(() => groupsTotal(groups), [groups]);
+
+  /* What the dropdowns are allowed to offer.
+   *
+   * The resource list alone is not enough. A charge can name a group or region
+   * that no priced resource does -- deleted resources still bill for the days
+   * they ran -- and on the trend tab the resource list may not have arrived
+   * yet, which would leave every dropdown empty next to a chart full of data.
+   * Rows contribute the same four fields under the cost API's own names. */
+  const filterSource = useMemo(() => ([
+    ...activeServices,
+    ...rows.map((r) => ({
+      subscription_id: r.subscription_id,
+      resource_group: r.resource_group,
+      location: r.region,
+      service: r.service,
+    })),
+  ]), [activeServices, rows]);
+
+  // Read from the filtered months, not the raw ones: a drill-down that ignored
+  // the filter would contradict the chart the reader clicked on.
+  const drillMonthRow = useMemo(() => monthByKey(trendMonths, drillMonth), [trendMonths, drillMonth]);
   const drillRows = useMemo(() => servicesInMonth(drillMonthRow), [drillMonthRow]);
   const drillTotal = useMemo(
     () => drillRows.reduce((sum, r) => sum + r.cost, 0),
@@ -180,6 +244,7 @@ export default function CostExplorer() {
 
   const tabs = [
     { key: 'trend', label: 'Trend & forecast', icon: TrendingUp },
+    { key: 'groups', label: 'Resource groups', icon: Boxes, count: groups.length || null },
     { key: 'breakdown', label: 'Breakdown', icon: Layers },
     { key: 'resources', label: 'Resources', icon: Server, count: filtered.length || null },
   ];
@@ -226,12 +291,10 @@ export default function CostExplorer() {
 
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
-      {/* Filters drive the breakdown and the resource table. The trend comes
-          from Cost Management's own monthly totals, which are not resource
-          scoped, so they cannot honestly be filtered here — said plainly
-          rather than leaving a filter that appears to do nothing. */}
-      {tab !== 'trend' && (
-        <Card className="p-4">
+      {/* Filters drive every tab, the trend included. The trend is re-summed
+          from meter rows when a filter is set, so the narrowing is real rather
+          than a control that appears to do nothing. */}
+      <Card className="p-4">
           <FilterBar
             active={activeFilterCount}
             onReset={() => setFilters(EMPTY_FILTERS)}
@@ -249,30 +312,29 @@ export default function CostExplorer() {
               label="Subscription"
               value={filters.subscription}
               onChange={(v) => setFilters({ ...filters, subscription: v })}
-              options={optionsFor(activeServices, 'subscription_id', 'subscriptions')
+              options={optionsFor(filterSource, 'subscription_id', 'subscriptions')
                 .map((o) => (o.value ? { ...o, label: subName(o.value) } : o))}
             />
             <Select
               label="Resource group"
               value={filters.resource_group}
               onChange={(v) => setFilters({ ...filters, resource_group: v })}
-              options={optionsFor(activeServices, 'resource_group', 'groups')}
+              options={optionsFor(filterSource, 'resource_group', 'groups')}
             />
             <Select
               label="Region"
               value={filters.location}
               onChange={(v) => setFilters({ ...filters, location: v })}
-              options={optionsFor(activeServices, 'location', 'regions')}
+              options={optionsFor(filterSource, 'location', 'regions')}
             />
             <Select
               label="Service"
               value={filters.service}
               onChange={(v) => setFilters({ ...filters, service: v })}
-              options={optionsFor(activeServices, 'service', 'services')}
+              options={optionsFor(filterSource, 'service', 'services')}
             />
           </FilterBar>
-        </Card>
-      )}
+      </Card>
 
       {servicesError && tab !== 'trend' && (
         <ErrorState title="Could not load resources" message={servicesError} onRetry={loadServices} />
@@ -288,10 +350,10 @@ export default function CostExplorer() {
               loading={costLoading}
             />
             <Metric
-              label="Latest month"
-              value={monthly.length ? fmt(monthly.at(-1).total_cost) : null}
+              label={trendFiltered ? 'Latest month (filtered)' : 'Latest month'}
+              value={trendMonths.length ? fmt(trendMonths.at(-1).total_cost) : null}
               hint={monthly.at(-1)?.month === thisMonth ? 'Still being billed' : undefined}
-              loading={costLoading}
+              loading={costLoading || (trendFiltered && rowsLoading)}
             />
             {forecast.slice(0, 2).map((f) => (
               <Metric
@@ -304,10 +366,35 @@ export default function CostExplorer() {
             ))}
           </div>
 
-          {forecast.length === 0 && !costLoading && monthly.length > 0 && (
+          {forecast.length === 0 && !trendFiltered && !costLoading && monthly.length > 0 && (
             <Callout tone="info" title="Not enough history to project">
               A forecast needs at least three complete billing months. Widen the date range in
               the header and this will fill in.
+            </Callout>
+          )}
+
+          {/* A filtered line is a slice of the bill, and slices are read from
+              meter rows rather than Azure's own totals. Both facts change what
+              the number means, so both are said rather than left to be
+              discovered by someone wondering why their spend dropped. */}
+          {trendFiltered && !rowsLoading && (
+            <Callout
+              tone={coverage !== null && coverage < 0.95 ? 'warn' : 'info'}
+              title="Showing a filtered slice of the bill"
+            >
+              The chart is re-summed from meter rows that match your filters, so it no
+              longer matches the invoice total. Forecasting is off while a filter is set.
+              {coverage !== null && coverage < 0.95 && (
+                <> Meter rows cover about {Math.round(coverage * 100)}% of the real total for
+                  this range, so treat the filtered figures as a floor.</>
+              )}
+            </Callout>
+          )}
+
+          {trendFiltered && rowsLoading && (
+            <Callout tone="info" title="Fetching the detail behind the totals">
+              Filtering the trend needs the individual meter rows. The chart will narrow
+              once they arrive.
             </Callout>
           )}
 
@@ -316,8 +403,8 @@ export default function CostExplorer() {
             hint="The dashed line is a straight-line projection from completed months, not an Azure forecast."
           >
             <CostTrendChart
-              months={monthly}
-              loading={costLoading}
+              months={trendMonths}
+              loading={costLoading || (trendFiltered && rowsLoading)}
               currency={currency}
               forecast={forecast}
               onSelectMonth={setDrillMonth}
@@ -446,6 +533,98 @@ export default function CostExplorer() {
               />
             )}
           </Panel>
+        </div>
+      )}
+
+      {tab === 'groups' && (
+        <div className="space-y-4">
+          {rowsLoading && groups.length === 0 && <TableSkeleton rows={8} />}
+
+          {!rowsLoading && groups.length === 0 && (
+            <EmptyState
+              title="No resource groups to show"
+              message={
+                activeFilterCount
+                  ? 'No charges match the current filters. Clear one and try again.'
+                  : 'Meter rows are what name a resource group. None came back for this range.'
+              }
+            />
+          )}
+
+          {groups.length > 0 && (
+            <Panel
+              title="Spend by resource group"
+              hint="Open a group to see the services billing inside it. Totals come from meter rows, so they follow the filters above."
+              actions={(
+                <span className="text-xs text-slate-500">
+                  {groups.length} {groups.length === 1 ? 'group' : 'groups'} · {fmt(groupsSum)}
+                </span>
+              )}
+            >
+              <div className="divide-y divide-slate-800">
+                {groups.map((g) => {
+                  const open = openGroup === g.name;
+                  return (
+                    <div key={g.name}>
+                      <button
+                        type="button"
+                        onClick={() => setOpenGroup(open ? '' : g.name)}
+                        aria-expanded={open}
+                        className="flex w-full items-center gap-3 py-2.5 text-left transition hover:bg-slate-900/60"
+                      >
+                        <ChevronRight
+                          className={`h-4 w-4 shrink-0 text-slate-600 transition-transform ${open ? 'rotate-90' : ''}`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm text-slate-200">{g.name}</div>
+                          <div className="text-[11px] text-slate-500">
+                            {g.serviceCount} {g.serviceCount === 1 ? 'service' : 'services'}
+                            {/* Only worth saying when it is true: a group name
+                                repeated across subscriptions is two groups. */}
+                            {g.subscriptions.length > 1 && (
+                              <> · in {g.subscriptions.length} subscriptions</>
+                            )}
+                          </div>
+                        </div>
+                        <div className="hidden w-40 shrink-0 sm:block">
+                          <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                            <div
+                              className="h-full rounded-full bg-blue-500"
+                              style={{ width: `${Math.round((g.share || 0) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="w-16 shrink-0 text-right text-[11px] text-slate-500">
+                          {g.share === null ? '—' : `${(g.share * 100).toFixed(1)}%`}
+                        </div>
+                        <div className="w-28 shrink-0 text-right text-sm tabular-nums text-slate-200">
+                          <Amount value={g.cost} currency={currency} />
+                        </div>
+                      </button>
+
+                      {open && (
+                        <div className="border-l-2 border-slate-800 pb-3 pl-7">
+                          {g.services.map((s) => (
+                            <div key={s.name} className="flex items-center gap-3 py-1.5">
+                              <div className="min-w-0 flex-1 truncate text-[13px] text-slate-400">
+                                {s.name}
+                              </div>
+                              <div className="w-16 shrink-0 text-right text-[11px] text-slate-600">
+                                {s.share === null ? '—' : `${(s.share * 100).toFixed(1)}%`}
+                              </div>
+                              <div className="w-28 shrink-0 text-right text-[13px] tabular-nums text-slate-300">
+                                <Amount value={s.cost} currency={currency} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+          )}
         </div>
       )}
 
