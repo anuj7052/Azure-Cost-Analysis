@@ -21,11 +21,13 @@ export function useBandwidthTraffic() {
   const selectedTenantId = useAppStore((s) => s.selectedTenantId);
   const selectedSubscriptionIds = useAppStore((s) => s.selectedSubscriptionIds);
   const months = useAppStore((s) => s.months);
-  const fromDate = useAppStore((s) => s.fromDate);
-  const toDate = useAppStore((s) => s.toDate);
+  const dateMode = useAppStore((s) => s.dateMode);
+  const imported = useAppStore((s) => s.imported);
+  const fromDate = useAppStore((s) => dateMode === 'custom' ? s.fromDate : null);
+  const toDate = useAppStore((s) => dateMode === 'custom' ? s.toDate : null);
 
   const subs = selectedSubscriptionIds || [];
-  const ready = !!selectedTenantId && subs.length > 0;
+  const ready = !imported && !!selectedTenantId && subs.length > 0;
   const key = [selectedTenantId, subs.join(','), months, fromDate, toDate].join('::');
 
   const [state, setState] = useState({ key: null, data: null, error: null });
@@ -77,7 +79,7 @@ export function useBandwidthTraffic() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, ready]);
 
-  const fresh = state.key === key;
+  const fresh = ready && state.key === key;
   const data = fresh ? state.data : null;
   const error = fresh ? state.error : null;
 

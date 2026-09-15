@@ -53,13 +53,14 @@ export function resourcesInService(rows, service) {
     // Keyed on group as well as name, because two resource groups may hold a
     // resource of the same name and merging them would report one machine
     // costing twice what any machine costs.
-    const key = `${norm(row.resource_group)}/${norm(name)}`;
+    const key = row.resource_id ? norm(row.resource_id) : `${norm(row.subscription_id)}/${norm(row.resource_group)}/${norm(name)}`;
     const held = byResource.get(key) || {
       key,
       name,
       group: row.resource_group || '',
       region: row.region || '',
       subscriptionId: row.subscription_id || '',
+      resourceId: row.resource_id || '',
       service: row.service || service,
       total: 0,
       months: new Map(),
@@ -94,6 +95,7 @@ export function resourcesInService(rows, service) {
       group: r.group,
       region: r.region,
       subscriptionId: r.subscriptionId,
+      resourceId: r.resourceId,
       service: r.service,
       total: round2(r.total),
       share: total > 0 ? round2((r.total / total) * 100) : 0,

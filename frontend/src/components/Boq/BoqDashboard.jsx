@@ -24,6 +24,7 @@ import { formatAmount } from '../../utils/currency';
 import { dailySeries, clickedDay, finops, monthlySeries, recommend, topSpend } from '../../utils/boqDashboard';
 import { DayDetail, DayTimeline, ServiceDetail } from './BoqDayDetail';
 import { ResourceDetail, ServiceResources } from './BoqResourcePanel';
+import Panel from './SpendPanel';
 
 const SEVERITY = {
   critical: { icon: AlertTriangle, tone: 'text-rose-400', chip: 'bg-rose-500/15 text-rose-300', border: 'border-rose-500/30', label: 'Act on this' },
@@ -52,21 +53,6 @@ function Quadrant({ label, value, tone = 'text-white', hint, onClick, actionLabe
         {actionLabel} <ChevronRight size={11} />
       </span>
     </button>
-  );
-}
-
-function Panel({ title, subtitle, children, action }) {
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900">
-      <div className="flex items-start justify-between gap-3 border-b border-slate-800 px-5 py-3">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-200">{title}</h2>
-          {subtitle && <p className="mt-0.5 text-[11px] text-slate-500">{subtitle}</p>}
-        </div>
-        {action}
-      </div>
-      {children}
-    </div>
   );
 }
 
@@ -156,10 +142,10 @@ export default function BoqDashboard({
   // budgeted; an unbudgeted category has no variance to rank by and shows up in
   // its own recommendation instead.
   const overTop = useMemo(
-    () => topSpend({ categories: (report?.categories || []).filter(c => c.variance > 0) }, 'variance', 5),
+    () => topSpend({ categories: (report?.categories || []).filter(c => c.key !== 'reconciliation' && c.variance > 0) }, 'variance', 5),
     [report],
   );
-  const advice = useMemo(() => recommend(report, { per }), [report, per]);
+  const advice = useMemo(() => recommend(report ? { ...report, categories: report.categories.filter(c => c.key !== 'reconciliation') } : report, { per }), [report, per]);
   // Summed for the collapsed header, so the reader can judge whether opening
   // the panel is worth it without opening it.
   const adviceTotal = useMemo(

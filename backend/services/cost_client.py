@@ -288,16 +288,20 @@ def _cache_put(key: str, value: Any, ttl: float = CACHE_TTL_SECONDS) -> None:
 def _retry_delay(resp: httpx.Response | None, attempt: int) -> float:
     """Prefer the server's Retry-After hint, otherwise exponential backoff."""
     if resp is not None:
-        for header in ("Retry-After", "x-ms-ratelimit-microsoft.costmanagement-entity-retry-after"):
-            value = resp.headers.get(header)
-            if value:
+        hints = []
+        for header, value in resp.headers.items():
+            if header.lower() == 'retry-after' or (
+                header.lower().startswith('x-ms-ratelimit-microsoft.costmanagement-')
+                and header.lower().endswith('-retry-after')
+            ):
                 try:
-                    # Azure sometimes answers a 429 with Retry-After: 0, which
-                    # taken literally means "try again immediately" and is how a
-                    # retry becomes another 429. A second is the floor.
-                    return min(max(float(value), 1.0), MAX_RETRY_DELAY)
+                    hints.append(max(float(value), 1.0))
                 except ValueError:
                     pass
+        if hints:
+            # QPU, tenant, client and entity quotas may each supply a wait.
+            # Taking only the first (or capping it to 15s) retries too soon.
+            return max(hints)
     return min(2 ** attempt, MAX_RETRY_DELAY) + random.uniform(0, 1)
 
 
@@ -361,6 +365,10 @@ async def _post_query_serial(
         if resp is not None and resp.status_code == 429:
             _penalise(scope)
             _start_cooldown(scope, delay)
+            if delay > (MAX_PATIENT_WAIT if patient else MAX_COOLDOWN_WAIT):
+                # Preserve the real cooldown but do not hold this response
+                # open for minutes; the caller can serve its cached answer.
+                raise RateLimited(delay)
         if attempt == MAX_RETRIES - 1:
             break
         logger.warning("Cost Management throttled (attempt %s), retrying in %.1fs", attempt + 1, delay)
@@ -802,6 +810,7 @@ async def query_costs(
     granularity: str = "Monthly",
     from_date: str | None = None,
     to_date: str | None = None,
+    filters: Dict[str, str] | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Query Cost Management for a subscription over the last N months.
@@ -823,7 +832,7 @@ async def query_costs(
     }
 
     def _body(period_from: str, period_to: str) -> Dict[str, Any]:
-        return {
+        body = {
             "type": "ActualCost",
             "timeframe": "Custom",
             "timePeriod": {"from": period_from, "to": period_to},
@@ -837,6 +846,11 @@ async def query_costs(
                 ],
             },
         }
+        clauses = [{"dimensions": {"name": name, "operator": "In", "values": [value]}}
+                   for name, value in (filters or {}).items() if value]
+        if clauses:
+            body["dataset"]["filter"] = clauses[0] if len(clauses) == 1 else {"and": clauses}
+        return body
 
     # Ask for the closed months and the open ones separately.
     #

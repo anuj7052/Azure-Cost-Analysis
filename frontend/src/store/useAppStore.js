@@ -3,13 +3,13 @@ import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServi
 import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
 import { readSavedViews, removeView, saveView, writeSavedViews } from '../utils/costExplorer';
 import { readCache, readPrefs, writeCache, writePrefs, evictApiCache, rememberAccount } from '../utils/persistCache';
+import { dedupeRequest as dedupe, partialResponse as isPartial } from '../utils/queryRequest';
 
 /**
  * Azure Cost Management throttles hard (HTTP 429). Several pages mount effects
  * that request the same data at the same time, so identical in-flight requests
  * share a single promise instead of hitting the API once per caller.
  */
-const inFlight = new Map();
 
 /**
  * Move a YYYY-MM-DD date back by whole months, landing on the first of the month.
@@ -24,13 +24,6 @@ function widenBackByMonths(isoDate, back) {
   return start.toISOString().slice(0, 10);
 }
 
-function dedupe(key, run) {
-  const existing = inFlight.get(key);
-  if (existing) return existing;
-  const promise = run().finally(() => inFlight.delete(key));
-  inFlight.set(key, promise);
-  return promise;
-}
 
 /**
  * Stale-while-revalidate around a request.
@@ -59,6 +52,20 @@ const RATE_LIMIT_RETRIES = 2;
  */
 const MAX_COST_RETRIES = 3;
 
+const selectionKey = s => JSON.stringify([s.selectedTenantId, s.selectedSubscriptionIds, s.dateKey, !!s.imported]);
+
+// Slow responses must not replace the answer to a newer selection. Keep a
+// matching answer visible during refresh, but clear it for a different scope.
+function beginRead(get, set, name, extra = null) {
+  const scope = selectionKey(get());
+  const key = JSON.stringify([scope, extra]);
+  const field = `${name}ReadKey`;
+  set({ [field]: key, [`${name}Loading`]: true, [`${name}Error`]: null,
+    ...(get()[field] !== key ? { [`${name}Data`]: null } : {}),
+  });
+  return () => selectionKey(get()) === scope && get()[field] === key;
+}
+
 // Never come back sooner than this, whatever Azure asked for.
 const MIN_COST_RETRY_SECONDS = 5;
 
@@ -74,13 +81,10 @@ function retryAfterSeconds(err) {
  * subscriptions it managed to read plus an `errors` list for the throttled
  * ones. Those totals are wrong, so they must never be cached as fresh.
  */
-function isPartial(data) {
-  return Array.isArray(data?.errors) && data.errors.length > 0;
-}
 
 /** How long to wait before re-asking for the subscriptions that got throttled. */
 function partialRetryDelay(data) {
-  const detail = data.errors.map(e => e?.error).join(' ');
+  const detail = (data.errors || data.coverage?.errors || []).map(e => e?.error).join(' ');
   const match = detail.match(/about (\d+)\s*s/i);
   return Math.min(match ? Number(match[1]) : 5, 30);
 }
@@ -89,7 +93,7 @@ async function cached(key, run, apply, { force = false } = {}) {
   const hit = force ? null : readCache(key);
   if (hit) {
     apply(hit.value, { fromCache: true });
-    if (hit.fresh) return hit.value;
+    if (hit.fresh && !isPartial(hit.value)) return hit.value;
   }
 
   let lastErr;
@@ -102,7 +106,10 @@ async function cached(key, run, apply, { force = false } = {}) {
       if (!isPartial(data)) return data;
       // Show the partial answer now, then quietly go back for the rest.
       partial = data;
-      if (attempt === RATE_LIMIT_RETRIES) return data;
+      // Monthly totals have their own bounded retry scheduler. Permanent
+      // permission failures should never hold later page sections in a retry loop.
+      const errors = data.errors || data.coverage?.errors || [];
+      if (key.startsWith('costs:') || !errors.some(e => e.retryable || /rate limit|throttl/i.test(e.error || '')) || attempt === RATE_LIMIT_RETRIES) return data;
       await new Promise(r => setTimeout(r, (partialRetryDelay(data) + 1) * 1000));
     } catch (err) {
       lastErr = err;
@@ -429,7 +436,8 @@ export const useAppStore = create((set, get) => ({
     if (imported) return recomputeImported();
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
 
-    set({ costLoading: true, costError: null });
+    get().cancelThrottledCostRetry();
+    const isCurrent = beginRead(get, set, 'cost');
     try {
       const payload = {
         tenant_id: selectedTenantId,
@@ -451,13 +459,15 @@ export const useAppStore = create((set, get) => ({
       await cached(
         key,
         () => fetchCosts(payload),
-        (data) => set({ costData: data, costLoading: false, costError: null }),
+        (data) => { if (isCurrent()) set({ costData: data, costLoading: false, costError: null }); },
         opts,
       );
-      set({ costLoading: false });
-      get().scheduleThrottledCostRetry();
+      if (isCurrent()) {
+        set({ costLoading: false });
+        get().scheduleThrottledCostRetry();
+      }
     } catch (err) {
-      set({ costLoading: false, costError: err.response?.data?.detail || err.message });
+      if (isCurrent()) set({ costLoading: false, costError: err.response?.data?.detail || err.message });
     }
   },
 
@@ -532,7 +542,7 @@ export const useAppStore = create((set, get) => ({
     const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate, imported, recomputeImported } = get();
     if (imported) return recomputeImported();
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
-    set({ rgLoading: true, rgError: null });
+    const isCurrent = beginRead(get, set, 'rg');
     try {
       const payload = {
         tenant_id: selectedTenantId,
@@ -543,12 +553,12 @@ export const useAppStore = create((set, get) => ({
       await cached(
         `rg:${JSON.stringify(payload)}`,
         () => fetchRgCosts(payload),
-        (data) => set({ rgData: data, rgLoading: false, rgError: null }),
+        (data) => { if (isCurrent()) set({ rgData: data, rgLoading: false, rgError: null }); },
         opts,
       );
-      set({ rgLoading: false });
+      if (isCurrent()) set({ rgLoading: false });
     } catch (err) {
-      set({ rgLoading: false, rgError: err.response?.data?.detail || err.message });
+      if (isCurrent()) set({ rgLoading: false, rgError: err.response?.data?.detail || err.message });
     }
   },
 
@@ -563,7 +573,8 @@ export const useAppStore = create((set, get) => ({
     // An imported file has no daily granularity, so never fall back to Azure.
     if (imported) return set({ dailyData: null, dailyLoading: false, dailyRg: resourceGroup });
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
-    set({ dailyLoading: true, dailyError: null, dailyRg: resourceGroup });
+    const isCurrent = beginRead(get, set, 'daily', resourceGroup);
+    set({ dailyRg: resourceGroup });
     try {
       const payload = {
         tenant_id: selectedTenantId,
@@ -579,12 +590,12 @@ export const useAppStore = create((set, get) => ({
       await cached(
         `daily:${JSON.stringify(payload)}`,
         () => fetchDailyCosts(payload),
-        (data) => set({ dailyData: data, dailyLoading: false, dailyError: null }),
+        (data) => { if (isCurrent()) set({ dailyData: data, dailyLoading: false, dailyError: null }); },
         opts,
       );
-      set({ dailyLoading: false });
+      if (isCurrent()) set({ dailyLoading: false });
     } catch (err) {
-      set({ dailyLoading: false, dailyError: err.response?.data?.detail || err.message });
+      if (isCurrent()) set({ dailyLoading: false, dailyError: err.response?.data?.detail || err.message });
     }
   },
 
@@ -602,29 +613,29 @@ export const useAppStore = create((set, get) => ({
     // An uploaded file already carries these rows; never overwrite them.
     if (imported) return;
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
-    set({ rowsLoading: true, rowsError: null });
+    const isCurrent = beginRead(get, set, 'rows', !!opts.selectedRange);
     try {
       const payload = {
         tenant_id: selectedTenantId,
         subscription_ids: selectedSubscriptionIds,
-        months: Math.max(months || 1, 6),
+        months: opts.selectedRange ? months || 1 : Math.max(months || 1, 6),
       };
       // Without an explicit range the API only returns whole past months, so a
       // range covering the current month would come back with no meter rows at
       // all and every charge would collapse into a bare service total.
       if (dateMode === 'custom' && fromDate && toDate) {
-        payload.from_date = widenBackByMonths(fromDate, 5);
+        payload.from_date = opts.selectedRange ? fromDate : widenBackByMonths(fromDate, 5);
         payload.to_date = toDate;
       }
       await cached(
         `rows:${JSON.stringify(payload)}`,
         () => fetchCostRows(payload),
-        (data) => set({ rowsData: data, rowsLoading: false, rowsError: null }),
+        (data) => { if (isCurrent()) set({ rowsData: data, rowsLoading: false, rowsError: null }); },
         opts,
       );
-      set({ rowsLoading: false });
+      if (isCurrent()) set({ rowsLoading: false });
     } catch (err) {
-      set({ rowsLoading: false, rowsError: err.response?.data?.detail || err.message });
+      if (isCurrent()) set({ rowsLoading: false, rowsError: err.response?.data?.detail || err.message });
     }
   },
 
@@ -637,7 +648,7 @@ export const useAppStore = create((set, get) => ({
     const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate, imported, recomputeImported } = get();
     if (imported) return recomputeImported();
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
-    set({ bandwidthLoading: true, bandwidthError: null });
+    const isCurrent = beginRead(get, set, 'bandwidth');
     try {
       const payload = {
         tenant_id: selectedTenantId,
@@ -648,12 +659,12 @@ export const useAppStore = create((set, get) => ({
       await cached(
         `bandwidth:${JSON.stringify(payload)}`,
         () => fetchBandwidth(payload),
-        (data) => set({ bandwidthData: data, bandwidthLoading: false, bandwidthError: null }),
+        (data) => { if (isCurrent()) set({ bandwidthData: data, bandwidthLoading: false, bandwidthError: null }); },
         opts,
       );
-      set({ bandwidthLoading: false });
+      if (isCurrent()) set({ bandwidthLoading: false });
     } catch (err) {
-      set({ bandwidthLoading: false, bandwidthError: err.response?.data?.detail || err.message });
+      if (isCurrent()) set({ bandwidthLoading: false, bandwidthError: err.response?.data?.detail || err.message });
     }
   },
 
@@ -1146,4 +1157,3 @@ export const useAppStore = create((set, get) => ({
 // Re-apply a persisted import so the very first render already shows file data
 // (subscription list, date span and every summary) instead of live Azure data.
 if (restoredImport) useAppStore.getState().setImported(restoredImport);
-

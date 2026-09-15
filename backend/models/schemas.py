@@ -799,6 +799,9 @@ class CostQueryRequest(BaseModel):
     months: int = Field(default=6, ge=1, le=24)
     from_date: Optional[str] = None   # ISO date "YYYY-MM-DD" (overrides months)
     to_date: Optional[str] = None     # ISO date "YYYY-MM-DD" (overrides months)
+    service: Optional[str] = None
+    resource_group: Optional[str] = None
+    location: Optional[str] = None
     group_by: List[str] = Field(
         default=["ServiceName", "SubscriptionId"]
     )
@@ -851,6 +854,7 @@ class CostRow(BaseModel):
     meter: str = ""
     resource_group: str = ""
     resource_name: str = ""
+    resource_id: str = ""
     subscription_id: str = ""
     region: str = ""
 
@@ -879,6 +883,7 @@ class ServiceResourceRequest(BaseModel):
     months: int = Field(default=6, ge=1, le=24)
     from_date: Optional[str] = None
     to_date: Optional[str] = None
+    resource_group: Optional[str] = None
 
 
 # ── Services ───────────────────────────────────────────────────────────────
@@ -940,6 +945,7 @@ class RgCostResponse(BaseModel):
     resource_groups: List[RgCostItem]
     total: float
     currency: str
+    coverage: Optional[Coverage] = None
 
 
 # ── Daily Cost ─────────────────────────────────────────────────────────────
@@ -964,6 +970,7 @@ class DailyCostResponse(BaseModel):
     days: List[DailyCostItem]
     total: float
     currency: str
+    coverage: Optional[Coverage] = None
 
 
 # ── Bandwidth / Data Transfer ──────────────────────────────────────────────

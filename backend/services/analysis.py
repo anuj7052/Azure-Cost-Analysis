@@ -139,6 +139,7 @@ def to_cost_rows(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "resource_group": _first(r, "ResourceGroupName", "ResourceGroup")
             or _resource_group_of(_first(r, "ResourceId")),
             "resource_name": _first(r, "ResourceId").split("/")[-1],
+            "resource_id": _first(r, "ResourceId"),
             "subscription_id": _first(r, "SubscriptionId", "SubscriptionGuid"),
             "region": _first(r, "ResourceLocation", "Location"),
         })

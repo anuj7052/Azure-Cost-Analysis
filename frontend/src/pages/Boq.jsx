@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { reconcileCostRows } from '../utils/costReconciliation';
 import { uploadBoq } from '../api/client';
 import { formatAmount } from '../utils/currency';
 import { Quantity } from '../components/Common/Amount';
@@ -48,6 +49,7 @@ export default function Boq() {
   const [perMonth, setPerMonth] = useState(false);
   const inputRef = useRef(null);
   const t = useChartTheme();
+  const hasActiveBoq = boqs.some(boq => boq.enabled !== false);
 
   // Matching a budget line to the resource that actually billed needs meter
   // level detail, which the cost summary does not carry — fetch both on a plain
@@ -56,19 +58,19 @@ export default function Boq() {
   // keeps the previous account's meters or, worse, falls back to service totals
   // and reports a charge like "Backup" as one figure that cannot be explained.
   useEffect(() => {
-    if (imported) return;
+    if (imported || !hasActiveBoq) return;
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
     loadCosts();
-    loadCostRows();
+    loadCostRows({ selectedRange: true });
     // The day-by-day line is the only thing on the page that can show a month
     // drifting over budget before the month is over, so it is fetched here
     // rather than left to whichever page happened to be visited first.
     loadDailyCosts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imported, selectedTenantId, selectedSubscriptionIds.join(','), dateKey]);
+  }, [imported, hasActiveBoq, selectedTenantId, selectedSubscriptionIds.join(','), dateKey]);
 
   const active = boqs.filter(b => b.enabled !== false);
-  const currency = costData?.currency || active[0]?.currency || 'INR';
+  const currency = costData?.months?.[0]?.currency || costData?.currency || active[0]?.currency || 'INR';
   const fmt = (v) => formatAmount(v, currency);
 
   // How much of the selected period actually has spend behind it. A BOQ is a
@@ -109,13 +111,14 @@ export default function Boq() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [costData, imported, rowsData, rowsLoading]);
 
+  const reconciliation = useMemo(() => reconcileCostRows(movementRows || [], costData?.months || [], costData?.months?.[0]?.currency || costData?.currency || 'INR'), [movementRows, costData]);
   const report = useMemo(() => {
     if (!active.length || !movementRows?.length) return null;
-    return compareBoqToUsage(active, movementRows, costData.months.length, currency, {
+    return compareBoqToUsage(active, reconciliation.rows, costData.months.length, currency, {
       perMonth, ...coverage,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boqs, costData, currency, movementRows, perMonth, coverage]);
+  }, [boqs, costData, currency, movementRows, reconciliation, perMonth, coverage]);
 
   const months = report?.months || 1;
   // The phrase every figure on the page is qualified with. One string so the
@@ -410,6 +413,12 @@ export default function Boq() {
               </div>
             </div>
           )}
+
+          {reconciliation.adjustments.length > 0 && <div role="note" className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-slate-300">
+            <p className="font-semibold">Actual cost reconciled to Dashboard</p>
+            <p className="mt-1 text-xs">Azure monthly totals: {fmt(reconciliation.total)} · Returned meter detail: {fmt(reconciliation.detailTotal)} (full selected period).
+              The difference is shown separately as “Unallocated billing difference”. It may reflect incomplete detail or separately refreshed queries; it is not attributed to a resource or a saving.</p>
+          </div>}
 
           {/* The dashboard read: commitment against actual, the shape of the
               spend over time, where it went, and what to do about it. Sits

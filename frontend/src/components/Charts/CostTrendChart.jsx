@@ -1,8 +1,9 @@
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine
 } from 'recharts';
 import { formatAmount } from '../../utils/currency';
 import { monthFromPoint } from '../../utils/monthDrill';
+import { clickedPoint } from '../../utils/dailyTimeline';
 import { useChartTheme } from '../../store/useTheme';
 
 function formatMonth(m) {
@@ -26,32 +27,28 @@ export default function CostTrendChart({
   // Forecast months appended to chart data
   const forecastData = forecast.map(m => ({
     month: formatMonth(m.month),
-    total: parseFloat(m.total_cost.toFixed(2)),
+    projected: Number.isFinite(m.total_cost) ? m.total_cost : null,
     _isForecast: true,
   }));
   const forecastStartLabel = forecastData[0]?.month;
 
-  // Get all unique subscriptions
-  const allSubs = [...new Set(months.flatMap(m => Object.keys(m.by_subscription || {})))];
-
   const actualData = months.map(m => {
     const point = {
       month: formatMonth(m.month),
-      total: parseFloat(m.total_cost.toFixed(2)),
+      total: Number.isFinite(m.total_cost) ? m.total_cost : null,
       // The raw key travels with the point because the label is formatted for
       // reading -- "Sep 26" cannot be looked up again, and two years sharing a
       // month would collide.
       _key: m.month,
     };
-    allSubs.forEach(sub => {
-      point[sub.slice(-8)] = parseFloat((m.by_subscription?.[sub] || 0).toFixed(2));
-    });
     return point;
   });
 
   const data = [...actualData, ...forecastData];
-  const keys = allSubs.length > 1 ? allSubs.map(s => s.slice(-8)) : ['total'];
-  if (allSubs.length <= 1) keys[0] = 'total';
+  // Plot the same total as the headline, not overlapping subscription areas
+  // (which made the axis appear to show only the largest subscription).
+  const keys = ['total'];
+  if (forecastData.length && actualData.length) actualData.at(-1).projected = actualData.at(-1).total;
 
   const selectedLabel = selectedMonth
     ? (actualData.find(p => p._key === selectedMonth)?.month || '')
@@ -59,7 +56,7 @@ export default function CostTrendChart({
 
   const handleClick = (state) => {
     if (!onSelectMonth) return;
-    const key = monthFromPoint(state?.activePayload?.[0]?.payload);
+    const key = monthFromPoint(clickedPoint(state, data));
     // A click that lands on a forecast month, or between points, is ignored
     // rather than clearing the selection: the reader aimed at something.
     if (key) onSelectMonth(key);
@@ -99,7 +96,6 @@ export default function CostTrendChart({
             undefined,
           ]}
         />
-        {keys.length > 1 && <Legend iconType="circle" iconSize={8} wrapperStyle={{ color: t.axis, fontSize: 12 }} />}
         {selectedLabel && (
           <ReferenceLine x={selectedLabel} stroke={COLORS[0]} strokeWidth={2} />
         )}
@@ -112,13 +108,15 @@ export default function CostTrendChart({
             key={key}
             type="monotone"
             dataKey={key}
+            name="Actual cost"
             stroke={COLORS[i % COLORS.length]}
             fill={`url(#grad-${i})`}
             strokeWidth={2}
-            dot={false}
+            dot={actualData.length === 1 ? { r: 4 } : false}
             activeDot={{ r: 4 }}
           />
         ))}
+        {forecastData.length > 0 && <Area dataKey="projected" name="Forecast" type="monotone" stroke={COLORS[0]} strokeDasharray="5 5" fill="none" connectNulls={false} dot={false} />}
       </AreaChart>
     </ResponsiveContainer>
   );

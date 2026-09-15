@@ -170,26 +170,27 @@ function ResourceRow({ row, currency, open, onToggle }) {
 }
 
 /** One resource's cost, day by day, with the peak called out. */
-function DailyTrack({ row, currency }) {
+function DailyTrack({ row, currency: fallbackCurrency }) {
   const selectedTenantId = useAppStore((s) => s.selectedTenantId);
   const selectedSubscriptionIds = useAppStore((s) => s.selectedSubscriptionIds);
   const fromDate = useAppStore((s) => s.fromDate);
   const toDate = useAppStore((s) => s.toDate);
   const months = useAppStore((s) => s.months);
+  const dateMode = useAppStore((s) => s.dateMode);
 
   // Cost Management needs an explicit window for a daily query. Where the page
   // is on a rolling "last N months" filter there is no start date to pass, so
   // one is derived from the same N — the alternative is refusing to load.
   const range = useMemo(() => {
-    if (fromDate && toDate) return { from: fromDate, to: toDate };
+    if (dateMode === 'custom' && fromDate && toDate) return { from: fromDate, to: toDate };
     const end = new Date();
     const start = new Date();
     start.setMonth(start.getMonth() - (months || 1));
     return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
-  }, [fromDate, toDate, months]);
+  }, [dateMode, fromDate, toDate, months]);
 
   const [state, setState] = useState({ key: null, data: null, error: null });
-  const key = `${row.key}::${range.from}::${range.to}`;
+  const key = `${selectedTenantId}::${selectedSubscriptionIds.join(',')}::${row.key}::${range.from}::${range.to}`;
 
   useEffect(() => {
     let live = true;
@@ -217,6 +218,7 @@ function DailyTrack({ row, currency }) {
 
   const fresh = state.key === key;
   const daily = fresh ? state.data : null;
+  const currency = daily?.currency || fallbackCurrency;
   const error = fresh ? state.error : null;
   const peakCost = daily?.days?.reduce((max, d) => Math.max(max, d.cost), 0) || 0;
 
@@ -228,6 +230,7 @@ function DailyTrack({ row, currency }) {
 
       {!daily && !error && <div className="h-20 animate-pulse rounded bg-slate-800/40" />}
       {error && <p className="text-[11px] text-amber-400/80">{error}</p>}
+      {!!daily?.errors?.length && <p className="text-xs text-amber-300">Partial daily costs — {daily.errors.map(e => e.error).join('; ')}</p>}
 
       {daily && daily.days.length === 0 && (
         <p className="text-[11px] leading-relaxed text-slate-500">{daily.note}</p>
@@ -374,8 +377,9 @@ function FlowQueries({ row }) {
   );
 }
 
-export default function BandwidthTrackPanel({ currency }) {
+export default function BandwidthTrackPanel({ currency: fallbackCurrency }) {
   const { ready, data, error, loading } = useBandwidthTraffic();
+  const currency = data?.currency || fallbackCurrency;
   const [openRow, setOpenRow] = useState(null);
   const level = LEVEL_NOTE[data?.level] || LEVEL_NOTE.resource;
 
@@ -417,6 +421,7 @@ export default function BandwidthTrackPanel({ currency }) {
 
       {data && (
         <>
+          {!!data.errors?.length && <p className="mb-3 text-xs text-amber-300">Partial resource costs — totals exclude unread subscriptions. {data.errors.map(e => e.error).join('; ')}</p>}
           <div className={`mb-4 rounded-lg border px-3 py-2 text-xs ${level.tone}`}>
             <span className="font-semibold">{level.label}.</span>{' '}
             <span className="text-slate-300">{level.text}</span>

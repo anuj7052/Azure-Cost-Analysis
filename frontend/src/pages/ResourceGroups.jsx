@@ -7,9 +7,9 @@ import { FolderOpen, TrendingUp, Calendar, History } from 'lucide-react';
 import DetailPanel from '../components/Common/DetailPanel';
 import GroupTimeline from '../components/Common/GroupTimeline';
 
-export default function ResourceGroups() {
+export default function ResourceGroups({ embedded = false }) {
   const {
-    selectedTenantId, selectedSubscriptionIds, months, dateKey,
+    selectedTenantId, selectedSubscriptionIds, months, dateKey, dateMode, fromDate, toDate,
     rgData, rgLoading, rgError, loadRgCosts,
     dailyData, dailyLoading, loadDailyCosts,
   } = useAppStore();
@@ -31,7 +31,7 @@ export default function ResourceGroups() {
     if (selectedRg && drillView === 'daily') {
       loadDailyCosts(selectedRg);
     }
-  }, [selectedRg, drillView]);
+  }, [selectedRg, drillView, selectedTenantId, selectedSubscriptionIds, dateKey, loadDailyCosts]);
 
   const currency = rgData?.currency || 'INR';
   const fmt = (v) => formatAmount(v, currency);
@@ -50,11 +50,11 @@ export default function ResourceGroups() {
   }));
 
   return (
-    <div className="p-6 space-y-6 max-w-screen-2xl mx-auto">
-      <div>
+    <div className={embedded ? 'space-y-6' : 'p-6 space-y-6 max-w-screen-2xl mx-auto'}>
+      {!embedded && <div>
         <h1 className="text-2xl font-bold text-white">Resource Groups</h1>
         <p className="text-slate-400 text-sm mt-1">Cost breakdown by Azure Resource Group — click any row to drill down</p>
-      </div>
+      </div>}
 
       {!selectedTenantId && (
         <div className="bg-blue-950/40 border border-blue-500/30 rounded-2xl p-6 text-center">
@@ -72,7 +72,7 @@ export default function ResourceGroups() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-sm font-semibold text-slate-300">All Resource Groups</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Last {months} months combined</p>
+            <p className="text-xs text-slate-500 mt-0.5">{dateMode === 'custom' ? `${fromDate} → ${toDate}` : `Last ${months} months combined`} · Uses the header subscription selection. Open a row for costs or History for recorded changes.</p>
           </div>
           {rgData && (
             <span className="text-xs text-slate-400">

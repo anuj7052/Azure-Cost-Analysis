@@ -16,17 +16,14 @@ import { setRates, subscribeCurrency } from './utils/currency';
 // Lazy load pages — only loaded when user navigates to them
 const Dashboard      = lazy(() => import('./pages/Dashboard'));
 const CostExplorer   = lazy(() => import('./pages/CostExplorer'));
-const Compare        = lazy(() => import('./pages/Compare'));
 const Anomalies      = lazy(() => import('./pages/Anomalies'));
 const Settings       = lazy(() => import('./pages/Settings'));
-const ResourceGroups = lazy(() => import('./pages/ResourceGroups'));
 const Provision = lazy(() => import('./pages/Provision'));
 const Orphaned       = lazy(() => import('./pages/Orphaned'));
 const Compute        = lazy(() => import('./pages/Compute'));
 const GlobalSearch   = lazy(() => import('./pages/GlobalSearch'));
 const Changes        = lazy(() => import('./pages/Changes'));
 const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
-const Bandwidth      = lazy(() => import('./pages/Bandwidth'));
 const Boq            = lazy(() => import('./pages/Boq'));
 const Commitments    = lazy(() => import('./pages/Commitments'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
@@ -282,16 +279,18 @@ function AppShell() {
                 redirects so existing links and bookmarks still land. */}
             <Route path="/trends" element={<Navigate to="/explorer" replace />} />
             <Route path="/services" element={<Navigate to="/explorer" replace />} />
-            <Route path="/compare" element={<Compare />} />
+            {/* Month Compare and Bandwidth are tabs of the explorer now, so
+                the old paths land on the tab rather than a dead link. */}
+            <Route path="/compare" element={<Navigate to="/explorer?tab=compare" replace />} />
             <Route path="/anomalies" element={<Anomalies />} />
-            <Route path="/resource-groups" element={<ResourceGroups />} />
+            <Route path="/resource-groups" element={<Navigate to="/explorer?tab=groups" replace />} />
             <Route path="/provision" element={<Provision />} />
             <Route path="/orphaned" element={<Orphaned />} />
             <Route path="/compute" element={<Compute />} />
             <Route path="/search" element={<GlobalSearch />} />
             <Route path="/changes" element={<Changes />} />
             <Route path="/activity" element={<ActivityLog />} />
-            <Route path="/bandwidth" element={<Bandwidth />} />
+            <Route path="/bandwidth" element={<Navigate to="/explorer?tab=bandwidth" replace />} />
             <Route path="/boq" element={<Boq />} />
             <Route path="/commitments" element={<Commitments />} />
             <Route path="/deploy" element={<Deploy />} />

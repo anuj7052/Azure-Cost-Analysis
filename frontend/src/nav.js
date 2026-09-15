@@ -1,5 +1,5 @@
 import {
-  Activity, AlertTriangle, Boxes, ClipboardList, Cpu, FileCode, FolderOpen, Gauge,
+  Activity, AlertTriangle, Boxes, ClipboardList, Cpu, FileCode, Gauge,
   GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, Network,
   PiggyBank, Plug, Scale,
   Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
@@ -32,15 +32,7 @@ export const SECTIONS = [
       },
       {
         to: '/explorer', label: 'Cost Explorer', icon: TrendingUp,
-        blurb: 'Spend over time with a forecast, split by service, region, resource group or meter, down to the resource.',
-      },
-      {
-        to: '/compare', label: 'Month Compare', icon: GitCompareArrows,
-        blurb: 'Two months side by side, with the services that drove the difference.',
-      },
-      {
-        to: '/bandwidth', label: 'Bandwidth', icon: Network,
-        blurb: 'Data transfer costs by resource, with the egress meters that caused them.',
+        blurb: 'Spend over time with a forecast, a daily timeline, month-on-month variance and data transfer — split by service, region, resource group or meter, down to the resource.',
       },
       {
         to: '/commitments', label: 'Commitments', icon: PiggyBank,
@@ -86,10 +78,6 @@ export const SECTIONS = [
       {
         to: '/orphaned', label: 'Orphaned Resources', icon: Trash2,
         blurb: 'Disks, IPs and NICs still being billed with nothing attached to them.',
-      },
-      {
-        to: '/resource-groups', label: 'Resource Groups', icon: FolderOpen,
-        blurb: 'Spend by resource group, for chargeback and ownership questions.',
       },
       {
         to: '/provision', label: 'Build', icon: Boxes,

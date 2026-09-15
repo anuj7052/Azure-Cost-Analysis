@@ -6,8 +6,8 @@ foot-gun: the blast radius is unbounded and the audit trail lives somewhere
 else, so this endpoint reports what to remove and leaves the removal to the
 owner in the portal or their own IaC.
 """
+import asyncio
 import logging
-from typing import Any, Dict, List
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,7 +17,7 @@ from services.azure_errors import azure_error
 from core.db import get_db
 from models.schemas import OrphanedRequest, OrphanedResponse
 from services.analysis import latest_billing_month, resource_cost_index
-from services.cost_client import error_entry, query_costs
+from services.cost_client import gather_by_subscription, query_costs
 from services.orphaned import find_orphaned_resources
 from services.token_resolver import resolve_tenant_token, subscription_names
 
@@ -43,33 +43,25 @@ async def get_orphaned_resources(
     than failing the request. The findings are true either way.
     """
     token = await resolve_tenant_token(body.tenant_id, current_user, db)
-    # Named rather than a GUID, because "this subscription's costs are missing"
-    # is only actionable if the reader can tell which subscription it is.
-    names = subscription_names(body.tenant_id, token)
+    async def read_cost(sub_id):
+        return await query_costs(
+            token=token, subscription_id=sub_id, months=2,
+            group_by=["ResourceId", "ServiceName", "Meter"], granularity="Monthly",
+        )
 
-    cost_records: List[Dict[str, Any]] = []
-    cost_errors: List[Dict[str, Any]] = []
-    for sub_id in body.subscription_ids:
-        try:
-            cost_records.extend(await query_costs(
-                token=token,
-                subscription_id=sub_id,
-                # Two months, not one. One month means month-to-date, and on
-                # the 1st -- or on the 2nd, with Azure's billing latency --
-                # that window is empty, which put "Not available" against every
-                # orphan on the page and made the whole scan look worthless.
-                months=2,
-                group_by=["ResourceId", "ServiceName", "Meter"],
-                granularity="Monthly",
-            ))
-        except Exception as exc:
-            # Logged *and* returned. Swallowing this was the second half of the
-            # missing-cost problem: a throttled or unauthorised billing query
-            # left every finding priced at nothing, and the page had no way to
-            # tell that apart from an estate where nothing is being billed. One
-            # of those means "look again later", the other means "delete these".
-            log.warning("Orphan cost lookup failed for %s: %s", sub_id, exc)
-            cost_errors.append(error_entry(sub_id, exc, names))
+    # Inventory is independent of billing. Start both now, and bound the
+    # optional price join so a throttled cost query cannot hide the findings.
+    try:
+        (cost_records, cost_errors), result = await asyncio.gather(
+            gather_by_subscription(body.subscription_ids, read_cost, budget=15),
+            find_orphaned_resources(token, body.subscription_ids),
+        )
+    except Exception as exc:
+        raise azure_error(exc, "your resources")
+
+    names = subscription_names(body.tenant_id, token)
+    for error in cost_errors:
+        error["subscription_name"] = names.get(error["subscription_id"], error["subscription_id"])
 
     # One month of the two, or the sum would be double what any of these costs
     # to run for a month.
@@ -77,10 +69,13 @@ async def get_orphaned_resources(
     cost_index = resource_cost_index(cost_records, month=cost_month)
     currency = next((r.get("Currency") for r in cost_records if r.get("Currency")), "USD")
 
-    try:
-        result = await find_orphaned_resources(token, body.subscription_ids, cost_index)
-    except Exception as exc:
-        raise azure_error(exc, "your resources")
+    for category in result["categories"]:
+        for item in category["items"]:
+            item["monthly_cost"] = cost_index.get(item["id"].lower(), {}).get("cost")
+        category["items"].sort(key=lambda item: (item["monthly_cost"] is None, -(item["monthly_cost"] or 0)))
+        category["monthly_cost"] = round(sum(item["monthly_cost"] or 0 for item in category["items"]), 2)
+    result["categories"].sort(key=lambda category: (-category["monthly_cost"], -category["count"]))
+    result["total_monthly_cost"] = round(sum(category["monthly_cost"] for category in result["categories"]), 2)
 
     return OrphanedResponse(
         currency=currency,

@@ -1,6 +1,7 @@
 import { useMsal } from '@azure/msal-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../../store/useAppStore';
+import { usePageRefresh } from '../../store/usePageRefresh';
 import { useTheme } from '../../store/useTheme';
 import { useNav } from '../../store/useNav';
 import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Menu, Search, Coins } from 'lucide-react';
@@ -30,6 +31,8 @@ const ALL_MONTHS = [
 
 export default function Topbar() {
   const { accounts, instance } = useMsal();
+  const pageRefresh = usePageRefresh(s => s.handler);
+  const refreshLock = useRef(false);
   const {
     costLoading, months, setMonths,
     dateMode, fromDate, toDate, setCustomDateRange,
@@ -102,12 +105,20 @@ export default function Topbar() {
    * re-fetching cannot bring those back, so wiping them would turn a refresh
    * into data loss and a forced logout.
    */
-  const hardRefresh = () => {
-    setRefreshing(true);
+   const hardRefresh = async () => {
+     if (refreshLock.current) return;
+     if (pageRefresh) {
+       refreshLock.current = true;
+       setRefreshing(true);
+       try { await pageRefresh(); }
+       finally { refreshLock.current = false; setRefreshing(false); }
+       return;
+     }
+     setRefreshing(true);
     evictApiCache();
     window.location.reload();
   };
-  const busy = refreshing || costLoading;
+   const busy = refreshing || (!pageRefresh && costLoading);
 
   const user = accounts[0];
   const initials = user?.name
@@ -491,5 +502,4 @@ export default function Topbar() {
     </header>
   );
 }
-
 

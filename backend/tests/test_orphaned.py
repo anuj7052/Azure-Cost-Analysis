@@ -9,10 +9,61 @@ either failing the scan or silently reporting "nothing found".
 from __future__ import annotations
 
 import pytest
+import asyncio
 
 from models.schemas import OrphanedRequest
 from services import orphaned as orphaned_module
 from services.orphaned import RULES, find_orphaned_resources
+
+
+@pytest.mark.asyncio
+async def test_rules_overlap_but_are_bounded(monkeypatch):
+    running = 0
+    peak = 0
+    first_wave = asyncio.Event()
+
+    async def query(*args):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        if running == 4:
+            first_wave.set()
+        await asyncio.wait_for(first_wave.wait(), 0.5)
+        await asyncio.sleep(0)
+        running -= 1
+        return []
+
+    monkeypatch.setattr(orphaned_module, 'run_graph_query', query)
+    result = await find_orphaned_resources('tok', ['s'])
+    assert peak == 4
+    assert not result['errors']
+
+
+@pytest.mark.asyncio
+async def test_scan_starts_without_waiting_for_billing(monkeypatch):
+    from routers import orphaned as route
+    from unittest.mock import AsyncMock
+
+    scan_started = asyncio.Event()
+
+    async def scan(*args):
+        scan_started.set()
+        return {'categories': [{'key': 'disks', 'title': 'Disks', 'count': 1, 'severity': 'certain', 'reason': 'unattached',
+                'monthly_cost': 0, 'items': [{'id': '/DISK', 'name': 'disk', 'type': 'disk', 'resource_group': 'rg', 'subscription_id': 's', 'location': 'eastus'}]}],
+                'total_count': 1, 'total_monthly_cost': 0, 'errors': []}
+
+    async def costs(*args, budget):
+        assert budget == 15
+        await asyncio.wait_for(scan_started.wait(), 0.5)
+        return [], [{'subscription_id': 's', 'error': 'Cost lookup timed out'}]
+
+    monkeypatch.setattr(route, 'resolve_tenant_token', AsyncMock(return_value='tok'))
+    monkeypatch.setattr(route, 'find_orphaned_resources', scan)
+    monkeypatch.setattr(route, 'gather_by_subscription', costs)
+    result = await route.get_orphaned_resources(OrphanedRequest(tenant_id='t', subscription_ids=['s']), {}, None)
+    assert result.total_count == 1
+    assert result.categories[0].items[0].monthly_cost is None
+    assert result.cost_errors
 
 
 def test_every_rule_has_a_reason_the_ui_can_show():
@@ -229,11 +280,10 @@ async def test_a_monthly_cost_is_one_month_of_the_two_that_were_fetched(monkeypa
              "Currency": "INR"},
         ]
 
-    seen = {}
-
     async def capture(token, subs, cost_index=None):
-        seen["index"] = cost_index
-        return {"categories": [], "total_count": 0, "total_monthly_cost": 0.0, "errors": []}
+        return {'categories': [{'key': 'disks', 'title': 'Disks', 'count': 1, 'severity': 'certain', 'reason': 'unattached',
+                'monthly_cost': 0, 'items': [{'id': '/S/Disk1', 'name': 'disk', 'type': 'disk', 'resource_group': 'rg', 'subscription_id': 's1', 'location': 'eastus'}]}],
+                'total_count': 1, 'total_monthly_cost': 0, 'errors': []}
 
     async def fake_token(*a, **k):
         return "tok"
@@ -247,7 +297,8 @@ async def test_a_monthly_cost_is_one_month_of_the_two_that_were_fetched(monkeypa
     result = await router_module.get_orphaned_resources(body, {"id": 1}, None)
 
     # August, not 220 -- the sum of the window would be double a month's cost.
-    assert seen["index"]["/s/disk1"]["cost"] == 120.0
+    assert result.categories[0].items[0].monthly_cost == 120.0
+    assert result.total_monthly_cost == 120.0
     assert result.cost_month == "2026-08"
     assert result.cost_partial is False
     assert result.priced_count == 1

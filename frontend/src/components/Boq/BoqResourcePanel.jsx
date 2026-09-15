@@ -23,6 +23,7 @@ import {
 } from '../../api/client';
 import { formatAmount } from '../../utils/currency';
 import { resourcesInService, summariseTimeline } from '../../utils/boqResources';
+import { dedupeRequest } from '../../utils/queryRequest';
 
 const when = (iso) => {
   if (!iso) return null;
@@ -88,21 +89,22 @@ export function ServiceResources({
   // quantity query produces; that is the case worth a second call, not a
   // service that genuinely has nothing under it.
   const askAzure = !!service && !!query && !local?.resources?.length;
+  const requestKey = JSON.stringify([query, service]);
 
   const [remote, setRemote] = useState({ for: null, rows: null, error: '' });
-  const loading = askAzure && remote.for !== service;
+  const loading = askAzure && remote.for !== requestKey;
 
   useEffect(() => {
     if (!askAzure) return undefined;
     let alive = true;
     (async () => {
       try {
-        const data = await fetchServiceResources({ ...query, service });
-        if (alive) setRemote({ for: service, rows: data?.rows || [], error: '' });
+        const data = await dedupeRequest(`service-resources:${requestKey}`, () => fetchServiceResources({ ...query, service }));
+        if (alive) setRemote({ for: requestKey, rows: data?.rows || [], error: '', errors: data?.errors || [] });
       } catch (err) {
         if (alive) {
           setRemote({
-            for: service,
+            for: requestKey,
             rows: null,
             error: err.response?.data?.detail || err.message,
           });
@@ -111,11 +113,11 @@ export function ServiceResources({
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [askAzure, service, JSON.stringify(query || {})]);
+  }, [askAzure, requestKey]);
 
   const fetched = useMemo(
-    () => (remote.for === service ? resourcesInService(remote.rows, service) : null),
-    [remote, service],
+    () => (remote.for === requestKey ? resourcesInService(remote.rows, service) : null),
+    [remote, requestKey, service],
   );
   const listing = local?.resources?.length ? local : fetched;
 
@@ -184,6 +186,7 @@ export function ServiceResources({
     <div className="rounded-2xl border border-slate-800 bg-slate-900">
       {head}
 
+      {!!remote.errors?.length && <p role="alert" className="px-5 py-2 text-xs text-amber-400">Partial resource costs: {remote.errors.map(error => error.error).join(' · ')}</p>}
       {listing.unnamed > 0 && (
         <p className="border-b border-slate-800 px-5 py-2 text-[11px] text-amber-400/80">
           {fmt(listing.unnamed)} of this service is billed without a resource name and cannot be
@@ -235,7 +238,7 @@ export function ServiceResources({
  * there is no history to show, and that is said plainly rather than shown as
  * an empty list.
  */
-export function ResourceDetail({ resource, tenantId, currency, onBack, onClose }) {
+export function ResourceDetail({ resource, tenantId, currency, onBack, onClose, fromDate, toDate }) {
   // The key the state belongs to travels with it, so switching resource reads
   // as loading without having to blank the state first -- setting state at the
   // top of an effect just to clear it costs an extra render of the wrong data.
@@ -260,11 +263,15 @@ export function ResourceDetail({ resource, tenantId, currency, onBack, onClose }
       try {
         // Billing knows the name; the timeline needs the full ARM id. The scan
         // index is the only thing that holds both.
-        const found = await searchResources(tenantId, resource.name);
+        const found = resource.resourceId ? { results: [{ resource_id: resource.resourceId }] } : await searchResources(tenantId, resource.name);
         const hits = found?.results || found?.resources || [];
-        const match = hits.find(
-          h => String(h.name || '').toLowerCase() === resource.name.toLowerCase(),
-        ) || hits[0];
+        const matches = resource.resourceId ? hits : hits.filter(h => {
+          const id = String(h.resource_id || '').toLowerCase();
+          return String(h.name || '').toLowerCase() === resource.name.toLowerCase()
+            && (!resource.subscriptionId || id.includes(`/subscriptions/${resource.subscriptionId.toLowerCase()}/`))
+            && (!resource.group || id.includes(`/resourcegroups/${resource.group.toLowerCase()}/`));
+        });
+        const match = matches.length === 1 ? matches[0] : null;
 
         if (!match?.resource_id) {
           settle({
@@ -277,7 +284,8 @@ export function ResourceDetail({ resource, tenantId, currency, onBack, onClose }
           return;
         }
 
-        const timeline = await fetchResourceTimeline(tenantId, match.resource_id);
+        const timeline = await fetchResourceTimeline(tenantId, match.resource_id, { includeCost: false });
+        if (fromDate || toDate) timeline.events = (timeline.events || []).filter(event => (!fromDate || event.at?.slice(0, 10) >= fromDate) && (!toDate || event.at?.slice(0, 10) <= toDate));
         settle({ error: '', id: match.resource_id, data: summariseTimeline(timeline) });
       } catch (err) {
         settle({
@@ -289,7 +297,7 @@ export function ResourceDetail({ resource, tenantId, currency, onBack, onClose }
     })();
 
     return () => { alive = false; };
-  }, [tenantId, resource?.key, resource?.name]);
+  }, [tenantId, resource?.key, resource?.name, resource?.resourceId, resource?.subscriptionId, resource?.group, fromDate, toDate]);
 
   const life = loading ? null : state.data;
 

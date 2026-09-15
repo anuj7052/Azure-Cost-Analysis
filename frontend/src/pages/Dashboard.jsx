@@ -19,7 +19,7 @@ import { formatBytes, formatGB, formatTB, pctOf, splitBytes, toGB } from '../uti
 
 export default function Dashboard() {
   const {
-    costData, costLoading, loadCosts,
+    costData, costLoading: costsPending, loadCosts,
     selectedSubscriptionIds, selectedTenantId, months, dateKey, dateMode, fromDate, toDate,
     subscriptions,
     bandwidthData: bw, bandwidthLoading: bwLoading, loadBandwidth,
@@ -27,12 +27,13 @@ export default function Dashboard() {
     computeData, computeLoading, loadCompute,
     orphanedData, orphanedLoading, loadOrphaned,
     activityData, activityLoading, activityError, loadActivity,
-    rowsData, rowsLoading, loadCostRows, dailyData, loadDailyCosts, detailedUsageRows,
+     rowsData, rowsLoading, rowsError, loadCostRows, dailyData, dailyLoading, dailyError, loadDailyCosts, detailedUsageRows,
     costViews, saveCostView, removeCostView,
     imported, boqs,
   } = useAppStore();
 
   const navigate = useNavigate();
+  const costLoading = costsPending && !costData;
   const [detail, setDetail] = useState(null);
 
   // The savings and activity panels are not loaded with the page.
@@ -80,14 +81,8 @@ export default function Dashboard() {
       await loadCosts();
       if (cancelled) return;
       await Promise.allSettled([loadBandwidth(), loadPricing()]);
-      if (cancelled) return;
-      // The explorer's finer dimensions -- resource group, meter, region --
-      // only exist in the meter rows, and its daily grain only in the daily
-      // totals. Both are fetched last and in the background: the tiles above
-      // do not need them, and both are cached and de-duplicated with the other
-      // pages that ask for the same window, so arriving here second usually
-      // costs nothing at all.
-      await Promise.allSettled([loadCostRows(), loadDailyCosts()]);
+      // The chart requests daily/meter detail when its controls need it.
+      // Its first monthly service view is already available in costData.
     })();
 
     return () => { cancelled = true; };
@@ -466,7 +461,7 @@ export default function Dashboard() {
             </p>
           </div>
           <button
-            onClick={() => navigate('/bandwidth')}
+            onClick={() => navigate('/explorer?tab=bandwidth')}
             className="text-xs text-blue-400 hover:text-blue-300 transition"
           >
             Open full report →
@@ -526,6 +521,13 @@ export default function Dashboard() {
             days={dailyData?.days || []}
             currency={currency}
             loading={costLoading || (rowsLoading && !explorerRows.length)}
+            detailLoading={rowsLoading}
+            dailyLoading={dailyLoading}
+            detailError={rowsError}
+            dailyError={dailyError}
+            onLoadRows={loadCostRows}
+            onLoadDaily={loadDailyCosts}
+            requestKey={`${selectedTenantId}:${selectedSubscriptionIds.join(',')}:${dateKey}`}
             saved={costViews}
             onSave={saveCostView}
             onDelete={removeCostView}
@@ -974,4 +976,3 @@ function BoqVarianceBanner({ report, onOpen }) {
     </div>
   );
 }
-

@@ -101,12 +101,12 @@ export const CATEGORY_TITLE = {
 export const CATEGORY_ROUTE = {
   compute: '/compute',
   storage: '/orphaned',
-  network: '/bandwidth',
+  network: '/explorer?tab=bandwidth',
   database: '/explorer',
   appservice: '/explorer',
   containers: '/explorer',
   security: '/security',
-  other: '/resource-groups',
+  other: '/explorer?tab=groups',
 };
 
 export function categoryOf(type) {
@@ -1559,7 +1559,7 @@ export function kpiStrip({
       label: 'Total resources',
       value: inventory ? inventory.total.toLocaleString() : null,
       hint: inventory ? `${inventory.categories.length} categories` : NOT_LOADED,
-      to: '/resource-groups',
+      to: '/explorer?tab=groups',
       loading: Boolean(loading.services),
     },
     {
@@ -1600,7 +1600,7 @@ export function kpiStrip({
         ? 'No earlier period of equal length to compare against'
         : (spend?.previousMonth ? `vs ${spend.previousMonth}` : 'No previous month to compare'),
       tone: costTone(spend?.changePct),
-      to: '/compare',
+      to: '/explorer?tab=compare',
       loading: Boolean(loading.cost),
     },
     {

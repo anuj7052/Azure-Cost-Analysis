@@ -348,7 +348,7 @@ export default function Settings() {
 
             {imported.months.length > 1 && (
               <Link
-                to="/compare"
+                to="/explorer?tab=compare"
                 className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-[#fff] text-xs font-medium transition"
               >
                 <GitCompareArrows className="w-3.5 h-3.5" />

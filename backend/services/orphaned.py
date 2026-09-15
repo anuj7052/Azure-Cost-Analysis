@@ -10,6 +10,7 @@ Each rule states the exact condition that makes the resource waste, so the UI
 can explain *why* something was flagged rather than asking the user to trust a
 number.
 """
+import asyncio
 from typing import Any, Dict, List
 
 import httpx
@@ -330,11 +331,19 @@ async def find_orphaned_resources(
     total_monthly_cost = 0.0
     total_count = 0
 
-    for rule in RULES:
-        try:
-            rows = await run_graph_query(token, subscription_ids, rule.query)
-        except Exception as exc:
-            errors.append({"rule": rule.key, "error": str(exc)[:200]})
+    gate = asyncio.Semaphore(4)
+
+    async def read_rule(rule):
+        # Include queue time in the deadline so a slow provider cannot turn
+        # a scan into many consecutive 60-second waits.
+        async with asyncio.timeout(30):
+            async with gate:
+                return await run_graph_query(token, subscription_ids, rule.query)
+
+    results = await asyncio.gather(*(read_rule(rule) for rule in RULES), return_exceptions=True)
+    for rule, rows in zip(RULES, results):
+        if isinstance(rows, BaseException):
+            errors.append({"rule": rule.key, "error": str(rows)[:200] or "Resource scan timed out; retry this scan."})
             continue
 
         items: List[Dict[str, Any]] = []

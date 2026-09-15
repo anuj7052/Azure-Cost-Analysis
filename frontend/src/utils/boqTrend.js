@@ -15,6 +15,8 @@
  * a page about variance those two read identically and mean opposite things.
  */
 
+import { previousDate } from './dailyTimeline';
+
 const round2 = (n) => Math.round(n * 100) / 100;
 const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
 
@@ -45,7 +47,8 @@ export function dayDetail(days, date, budget = null) {
   if (index === -1) return null;
 
   const day = list[index];
-  const before = index > 0 ? list[index - 1] : null;
+  const candidate = index > 0 ? list[index - 1] : null;
+  const before = candidate?.date === previousDate(day.date) && (!candidate.currency || !day.currency || candidate.currency === day.currency) ? candidate : null;
   const prior = (before && before.by_service) || null;
   const total = round2(day.total);
 
@@ -71,7 +74,7 @@ export function dayDetail(days, date, budget = null) {
 
   // Services that stopped: they are part of the explanation for a day that
   // fell, and they are invisible if only today's services are listed.
-  const gone = prior
+  const gone = prior && day.by_service != null
     ? Object.entries(prior)
       .filter(([name, cost]) => isNum(cost) && cost > 0 && !(name in (day.by_service || {})))
       .map(([name, cost]) => ({
@@ -132,6 +135,7 @@ export function dayTimeline(days, budget = null, { sensitivity = 0.25, limit = 4
   for (let i = 1; i < list.length; i += 1) {
     const day = list[i];
     const before = list[i - 1];
+    if (before.date !== previousDate(day.date) || (before.currency && day.currency && before.currency !== day.currency)) continue;
     const delta = day.total - before.total;
     const services = day.by_service || {};
     const prior = before.by_service || {};
@@ -225,11 +229,11 @@ export function serviceDetail(days, name, dailyBudget = null) {
 
   const points = list.map(d => ({
     date: d.date,
-    cost: isNum(d.by_service?.[name]) ? round2(d.by_service[name]) : 0,
+    cost: d.by_service == null ? null : isNum(d.by_service[name]) ? d.by_service[name] : 0,
     dayTotal: round2(d.total),
   }));
 
-  const billed = points.filter(p => p.cost > 0);
+  const billed = points.filter(p => isNum(p.cost) && p.cost !== 0);
   if (!billed.length) return null;
 
   const total = round2(billed.reduce((s, p) => s + p.cost, 0));
@@ -240,6 +244,7 @@ export function serviceDetail(days, name, dailyBudget = null) {
   // total while swinging wildly underneath, and that is worth seeing.
   const moves = [];
   for (let i = 1; i < points.length; i += 1) {
+    if (previousDate(points[i].date) !== points[i - 1].date || !isNum(points[i].cost) || !isNum(points[i - 1].cost)) continue;
     const delta = round2(points[i].cost - points[i - 1].cost);
     if (Math.abs(delta) > 0.5) {
       moves.push({ date: points[i].date, from: points[i - 1].cost, to: points[i].cost, delta });
@@ -249,8 +254,8 @@ export function serviceDetail(days, name, dailyBudget = null) {
   // Runs of days with no charge, between the first and last day it was billed.
   // Leading and trailing zeroes are not gaps -- they are simply before it
   // started and after it stopped, which the dates already say.
-  const firstIndex = points.findIndex(p => p.cost > 0);
-  const lastIndex = points.length - 1 - points.slice().reverse().findIndex(p => p.cost > 0);
+  const firstIndex = points.findIndex(p => isNum(p.cost) && p.cost !== 0);
+  const lastIndex = points.length - 1 - points.slice().reverse().findIndex(p => isNum(p.cost) && p.cost !== 0);
   const gaps = [];
   let run = null;
   for (let i = firstIndex; i <= lastIndex; i += 1) {

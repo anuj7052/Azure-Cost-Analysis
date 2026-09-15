@@ -392,7 +392,13 @@ function currentMonthKey() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
-export default function Compare() {
+/**
+ * Meter-by-meter month variance.
+ *
+ * `embedded` renders it inside the Cost Explorer's Month compare tab, which
+ * supplies the page heading and the padding around it.
+ */
+export default function Compare({ embedded = false }) {
   const imported = useAppStore(s => s.imported);
   const rowsData = useAppStore(s => s.rowsData);
   const rowsLoading = useAppStore(s => s.rowsLoading);
@@ -400,6 +406,7 @@ export default function Compare() {
   const loadCostRows = useAppStore(s => s.loadCostRows);
   const selectedTenantId = useAppStore(s => s.selectedTenantId);
   const selectedSubscriptionIds = useAppStore(s => s.selectedSubscriptionIds);
+  const dateKey = useAppStore(s => s.dateKey);
 
   const [groupBy, setGroupBy] = useState('service');
   const [expanded, setExpanded] = useState(() => new Set());
@@ -465,7 +472,7 @@ export default function Compare() {
 
   useEffect(() => {
     if (shouldLoad) loadCostRows();
-  }, [shouldLoad, loadCostRows, selectedTenantId, subsKey]);
+  }, [shouldLoad, loadCostRows, selectedTenantId, subsKey, dateKey]);
 
   // Before anything is fetched there are no billing months to offer, so the
   // dropdowns fall back to the calendar — which is what makes picking first and
@@ -563,11 +570,11 @@ export default function Compare() {
     // than a "load everything" button is the whole point: the two months the
     // user chooses are what the query is for.
     return (
-      <div className="p-6 space-y-5">
+      <div className={embedded ? 'space-y-5' : 'p-6 space-y-5'}>
         <div>
-          <h1 className="text-2xl font-bold text-white">Month comparison</h1>
+          {!embedded && <h1 className="text-2xl font-bold text-white">Month comparison</h1>}
           <p className="text-slate-400 text-sm mt-1">
-            This page reads two months meter by meter. It opens on the latest pair; change
+            This reads two months meter by meter. It opens on the latest pair; change
             either dropdown to compare any other two.
           </p>
         </div>
@@ -619,10 +626,10 @@ export default function Compare() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className={embedded ? 'space-y-5' : 'p-6 space-y-5'}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Month comparison</h1>
+          {!embedded && <h1 className="text-2xl font-bold text-white">Month comparison</h1>}
           <p className="text-slate-400 text-sm mt-1">
             {mode === 'all'
               ? `All ${months.length} billing months side by side${live ? ', live from Azure' : ''}.`

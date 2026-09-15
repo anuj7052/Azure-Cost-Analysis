@@ -75,7 +75,7 @@ const QUICK_ACTIONS = [
   { to: '/activity', label: 'Activity Explorer', icon: Activity },
   { to: '/changes', label: 'Change Tracking', icon: GitCompare },
   { to: '/orphaned', label: 'Orphaned Resources', icon: Unlink },
-  { to: '/resource-groups', label: 'Resource Groups', icon: Layers },
+  { to: '/explorer?tab=groups', label: 'Resource Groups', icon: Layers },
   { to: '/advisor', label: 'Azure Advisor', icon: Lightbulb },
   { to: '/defender', label: 'Microsoft Defender', icon: Shield },
   { to: '/policy', label: 'Policy Governance', icon: ShieldCheck },
@@ -905,7 +905,7 @@ export default function Estate() {
         <Panel
           title="Top resource groups"
           icon={FolderTree}
-          action={<Link to="/resource-groups" className="flex items-center gap-1 font-mono text-xs text-blue-400 hover:text-blue-300">Resource Groups <ArrowRight className="h-3.5 w-3.5" /></Link>}
+          action={<Link to="/explorer?tab=groups" className="flex items-center gap-1 font-mono text-xs text-blue-400 hover:text-blue-300">Resource Groups <ArrowRight className="h-3.5 w-3.5" /></Link>}
         >
           <SectionState
             loading={rgLoading && !rgs}
@@ -954,7 +954,7 @@ export default function Estate() {
               {inventory.categories.map(cat => (
                 <Link
                   key={cat.key}
-                  to={CATEGORY_ROUTE[cat.key] || '/resource-groups'}
+                  to={CATEGORY_ROUTE[cat.key] || '/explorer?tab=groups'}
                   className="group rounded-xl border border-slate-800 bg-slate-900/60 p-3 transition hover:border-blue-500/30 hover:bg-slate-800/50"
                 >
                   <p className="font-mono text-[10px] uppercase tracking-wide text-slate-500">{cat.title}</p>

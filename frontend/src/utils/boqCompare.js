@@ -550,7 +550,7 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
   for (const row of rows) {
     // Egress meters hide under many services (Virtual Network, CDN, Storage),
     // so any data-transfer row is pulled into Bandwidth regardless of service.
-    const bucket = isBandwidthRow(row)
+    const bucket = row.reconciliation ? { key: 'reconciliation', label: 'Unallocated billing difference' } : isBandwidthRow(row)
       ? BANDWIDTH_BUCKET
       : isBackupRow(row)
         ? BACKUP_BUCKET
@@ -580,7 +580,7 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
       variance,
       variancePct: budgeted > 0 ? variancePct(variance, budgeted) : null,
       // Nothing was budgeted for it at all — the clearest kind of extra charge.
-      unbudgeted: budgeted === 0 && spent > 0,
+      unbudgeted: key !== 'reconciliation' && budgeted === 0 && spent > 0,
       unused: spent === 0 && budgeted > 0,
       budgetLines: b?.lines || [],
       // Per-resource breakdown: every estimate line with what it really cost,
@@ -598,7 +598,7 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
       // the reader, not a reason to net the charge out of this total. Netting
       // it out here while the row-level `attributions` still carried it is what
       // made the full breakdown disagree with the figure above it.
-      notInBoqTotal: detail.unmatchedTotal,
+      notInBoqTotal: key === 'reconciliation' ? 0 : detail.unmatchedTotal,
       // Every usage row in this category, carrying the verdict the category
       // table reached, so the same money can be regrouped by any dimension.
       attributions: detail.attributions.map(item => ({
@@ -609,7 +609,7 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
         bytes: item.bytes,
         boqLine: item.boqLine,
         boqName: item.boqName,
-        coverage: item.matched ? 'line' : 'none',
+      coverage: item.matched ? 'line' : 'none',
       })),
       traffic: trafficSummary(a?.rows || [], divisor),
       actualServices: [...(a?.services || new Map())]
@@ -619,11 +619,12 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
   }).sort((x, y) => y.variance - x.variance);
 
   const monthlyActual = round(actualTotal / divisor);
-  const overspend = categories.filter(c => c.variance > 0);
+  const overspend = categories.filter(c => c.key !== 'reconciliation' && c.variance > 0);
 
   // Every individual charge with no BOQ line behind it, flattened so it can be
   // shown as one list regardless of which category it landed in.
   const notInBoq = categories
+    .filter(c => c.key !== 'reconciliation')
     .flatMap(c => c.unmatched.map(u => ({ ...u, category: c.label, categoryKey: c.key })))
     .sort((a, b) => b.cost - a.cost);
 
@@ -655,7 +656,7 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
       categories.filter(c => c.unbudgeted).reduce((sum, c) => sum + c.actual, 0),
     ),
     savingTotal: round(
-      categories.filter(c => c.variance < 0).reduce((sum, c) => sum - c.variance, 0),
+      categories.filter(c => c.key !== 'reconciliation' && c.variance < 0).reduce((sum, c) => sum - c.variance, 0),
     ),
   };
 }

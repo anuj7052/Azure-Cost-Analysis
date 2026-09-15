@@ -28,6 +28,26 @@ export function hasTrendFilters(filters) {
   return FIELDS.some((key) => Boolean(filters[key]));
 }
 
+/** A single marginal can be read exactly from the same summary as Dashboard.
+ * Two dimensions require intersecting meter rows; never cross marginal totals. */
+export function summaryFilterSupported(filters = {}) {
+  return !filters.search && !filters.location && !filters.resource_group
+    && !(filters.service && filters.subscription);
+}
+
+export function monthsFromSummary(months = [], filters = {}) {
+  if (!summaryFilterSupported(filters)) return null;
+  if (!filters.service && !filters.subscription) return months;
+  return months.map(month => {
+    const split = filters.service ? month.by_service : month.by_subscription;
+    const value = filters.service || filters.subscription;
+    const total = split == null ? null : split[value] ?? 0;
+    return { ...month, total_cost: total,
+      by_service: filters.service && total !== null ? { [value]: total } : null,
+      by_subscription: filters.subscription && total !== null ? { [value]: total } : {} };
+  });
+}
+
 /**
  * Does one meter row survive the filters?
  *

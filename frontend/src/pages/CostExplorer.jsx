@@ -1,15 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, Layers, Server, Bookmark, X, Search, Boxes, ChevronRight } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { TrendingUp, Layers, Bookmark, X, Search, Boxes, ChevronRight, GitCompareArrows, Network, RefreshCw } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
+import { usePageRefresh } from '../store/usePageRefresh';
+import { useFilteredCosts } from '../hooks/useFilteredCosts';
 import DataQuality from '../components/Common/DataQuality';
 import CostTrendChart from '../components/Charts/CostTrendChart';
+import CostDailyTimeline from '../components/Charts/CostDailyTimeline';
+import CostChangeExplainer from '../components/Charts/CostChangeExplainer';
+import CostDeltaDetails from '../components/Charts/CostDeltaDetails';
+import ServiceCostDetails from '../components/Charts/ServiceCostDetails';
+import MonthCompare from '../components/Charts/MonthCompare';
+import { migrateExplorerView } from '../utils/monthCompare';
+import { previousMonth } from '../utils/dailyTimeline';
 import { monthByKey, servicesInMonth, unattributed } from '../utils/monthDrill';
-import { hasTrendFilters, monthsFromRows, rowCoverage } from '../utils/trendFilter';
+import { hasTrendFilters, monthsFromRows, monthsFromSummary, summaryFilterSupported, rowCoverage } from '../utils/trendFilter';
 import { groupsFromRows, groupsTotal } from '../utils/rgDrill';
 import ServiceBreakdownChart from '../components/Charts/ServiceBreakdownChart';
 import { formatAmount } from '../utils/currency';
 import { Amount } from '../components/Common/Amount';
-import { DIMENSIONS, aggregate, totalOf, linearForecast, currentMonthKey } from '../utils/breakdown';
+import { linearForecast, currentMonthKey } from '../utils/breakdown';
 import {
   Button, Badge, Card, Panel, Metric, Tabs, SegmentedControl,
   FilterBar, Select, DataTable, EmptyState, ErrorState, Callout, TableSkeleton,
@@ -24,11 +34,26 @@ import {
  */
 const VIEWS_KEY = 'aca:views:explorer';
 
+/* Month Compare and Bandwidth used to be their own sidebar pages. They are the
+ * same dataset seen from a different angle, and having them elsewhere meant
+ * leaving the filters and the month you were looking at behind to reach them.
+ *
+ * Both are loaded lazily: each drags in its own panels and charts, and a reader
+ * who only opens the trend tab should not pay to download either. */
+const MonthVariance = lazy(() => import('./Compare'));
+const ResourceGroupsReport = lazy(() => import('./ResourceGroups'));
+const BandwidthTab = lazy(() => import('../components/Common/BandwidthTab'));
+
+function TabLoading({ what }) {
+  return <div role="status" className="p-6 text-sm text-slate-400">Loading {what}…</div>;
+}
+
+
 function readViews() {
   try {
     const raw = window.localStorage.getItem(VIEWS_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.map(migrateExplorerView) : [];
   } catch {
     return [];
   }
@@ -41,8 +66,6 @@ function saveViews(views) {
     /* storage unavailable or full — the views just will not persist */
   }
 }
-
-const SHORT_TYPE = (t) => (t || '').split('/').slice(1).join('/') || t || '—';
 
 const EMPTY_FILTERS = {
   search: '', subscription: '', resource_group: '', location: '', service: '',
@@ -58,19 +81,6 @@ function optionsFor(resources, field, label) {
   ];
 }
 
-function matches(r, f) {
-  if (f.subscription && r.subscription_id !== f.subscription) return false;
-  if (f.resource_group && r.resource_group !== f.resource_group) return false;
-  if (f.location && r.location !== f.location) return false;
-  if (f.service && (r.service || r.type) !== f.service) return false;
-  if (f.search) {
-    const q = f.search.toLowerCase();
-    const hay = `${r.name} ${r.type} ${r.service} ${r.resource_group} ${r.sku}`.toLowerCase();
-    if (!hay.includes(q)) return false;
-  }
-  return true;
-}
-
 /**
  * Cost Trends and Service Analysis, merged.
  *
@@ -82,14 +92,26 @@ function matches(r, f) {
  */
 export default function CostExplorer() {
   const {
-    costData, costLoading, loadCosts,
-    activeServices, servicesLoading, servicesError, loadServices,
-    rowsData, rowsLoading, loadCostRows,
-    selectedTenantId, selectedSubscriptionIds, subscriptions, months, dateKey,
+    costData, costLoading: costsPending, costError, loadCosts,
+    activeServices, servicesError, loadServices,
+    rowsData, rowsLoading: rowsPending, rowsError, loadCostRows,
+    selectedTenantId, selectedSubscriptionIds, subscriptions, months, dateKey, dateMode, fromDate, toDate, imported,
   } = useAppStore();
+  const costLoading = costsPending && !costData;
 
-  const [tab, setTab] = useState('trend');
-  const [dimension, setDimension] = useState('service');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = migrateExplorerView({ tab: searchParams.get('tab') }).tab;
+  const setTab = (next) => setSearchParams(previous => {
+    const params = new URLSearchParams(previous);
+    params.set('tab', migrateExplorerView({ tab: next }).tab);
+    return params;
+  });
+  const [timeline, setTimeline] = useState('daily');
+  // The compare tab holds two different questions: the full meter-by-meter
+  // variance (its own page until it moved here) and a quick total-vs-total read
+  // that honours the filter bar above. Neither subsumes the other.
+  const [compareMode, setCompareMode] = useState('full');
+  const [groupMode, setGroupMode] = useState('report');
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [views, setViews] = useState(readViews);
   // The month whose services are open under the trend chart. Empty means the
@@ -100,19 +122,22 @@ export default function CostExplorer() {
   const [openGroup, setOpenGroup] = useState('');
 
   const subsKey = selectedSubscriptionIds.join(',');
+  const filterRequest = useRef('');
+  const loadFilterOptions = () => {
+    const key = `${selectedTenantId}:${subsKey}:${dateKey}`;
+    if (filterRequest.current === key && !servicesError) return;
+    filterRequest.current = key;
+    loadServices();
+  };
+  const quickCompare = tab === 'compare' && compareMode === 'quick';
+  const filteredGroups = tab === 'groups' && groupMode === 'filtered';
+  const needsMonthly = (tab === 'trend' && timeline === 'monthly') || filteredGroups || quickCompare;
 
   useEffect(() => {
-    if (!selectedTenantId || !selectedSubscriptionIds.length) return;
-    // Costs first, then resources. Both are cost queries per subscription and
-    // Azure throttles them together, so firing both at once reliably earned a
-    // 429 on the second.
-    let cancelled = false;
-    (async () => {
-      await loadCosts();
-      if (!cancelled) await loadServices();
-    })();
-    return () => { cancelled = true; };
-  }, [selectedTenantId, subsKey, dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!needsMonthly) return;
+    if (!selectedTenantId || !subsKey) return;
+    loadCosts();
+  }, [selectedTenantId, subsKey, dateKey, needsMonthly, loadCosts]);
 
   /* Meter rows are fetched only once something on screen needs them.
    *
@@ -123,12 +148,45 @@ export default function CostExplorer() {
    * path of the first paint, so the page waited on detail for a click that
    * usually never came. */
   const trendFiltered = hasTrendFilters(filters);
-  const needsRows = trendFiltered || tab === 'groups';
+  const usesServerFilters = trendFiltered && !summaryFilterSupported(filters) && !filters.search && !imported;
+  const filteredResult = useFilteredCosts({ tenant_id: selectedTenantId,
+    subscription_ids: filters.subscription ? [filters.subscription] : selectedSubscriptionIds,
+    months, ...(dateMode === 'custom' ? { from_date: fromDate, to_date: toDate } : {}),
+    service: filters.service || null, resource_group: filters.resource_group || null, location: filters.location || null,
+  }, Boolean(needsMonthly && usesServerFilters && selectedTenantId && subsKey));
+  const usesMeterRows = trendFiltered && !summaryFilterSupported(filters) && !usesServerFilters;
+  const needsRows = (usesMeterRows && (quickCompare || (tab === 'trend' && timeline === 'monthly'))) || filteredGroups;
+  const rowsLoading = (rowsPending && needsRows) || filteredResult.loading;
+  const registerRefresh = usePageRefresh(s => s.register);
+  const refreshFilteredCosts = filteredResult.refresh;
+  const [comparisonRefreshing, setComparisonRefreshing] = useState(false);
+  const comparisonRefresh = useRef(null);
+  const refreshComparison = useCallback(() => {
+    if (comparisonRefresh.current) return comparisonRefresh.current;
+    setComparisonRefreshing(true);
+    const pending = (async () => {
+      if (imported) return useAppStore.getState().recomputeImported();
+      if (compareMode === 'full') return loadCostRows({ force: true });
+      if (usesServerFilters) return refreshFilteredCosts();
+      // Quick compare reads the monthly summary; search-based comparisons
+      // additionally require the selected-range meter detail.
+      await loadCosts({ force: true });
+      if (usesMeterRows) await loadCostRows({ force: true, selectedRange: true });
+    })().finally(() => {
+      comparisonRefresh.current = null;
+      setComparisonRefreshing(false);
+    });
+    comparisonRefresh.current = pending;
+    return pending;
+  }, [compareMode, imported, usesServerFilters, usesMeterRows, refreshFilteredCosts, loadCostRows, loadCosts]);
+  useEffect(() => {
+    if (tab === 'compare') return registerRefresh(refreshComparison);
+  }, [tab, registerRefresh, refreshComparison]);
 
   useEffect(() => {
     if (!needsRows) return;
     if (!selectedTenantId || !selectedSubscriptionIds.length) return;
-    loadCostRows();
+    loadCostRows({ selectedRange: true });
   }, [needsRows, selectedTenantId, subsKey, dateKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const monthly = useMemo(() => costData?.months || [], [costData]);
@@ -148,15 +206,17 @@ export default function CostExplorer() {
 
   const trendMonths = useMemo(() => {
     if (!trendFiltered) return monthly;
+    if (usesServerFilters) return filteredResult.data?.months || [];
+    if (!usesMeterRows) return monthsFromSummary(monthly, filters);
     return monthsFromRows(rows, filters, { allowed: monthKeys, currency });
-  }, [trendFiltered, monthly, rows, filters, monthKeys, currency]);
+  }, [trendFiltered, usesMeterRows, usesServerFilters, filteredResult.data, monthly, rows, filters, monthKeys, currency]);
 
   // What share of the real total the meter rows account for. The API caps rows
   // on a large estate, so a filtered total is a floor -- and a reader watching
   // the line drop deserves to know that before concluding their spend fell.
   const coverage = useMemo(
-    () => (trendFiltered ? rowCoverage(rows, monthKeys, monthly) : null),
-    [trendFiltered, rows, monthKeys, monthly],
+    () => (usesMeterRows ? rowCoverage(rows, monthKeys, monthly) : null),
+    [usesMeterRows, rows, monthKeys, monthly],
   );
 
   const forecast = useMemo(
@@ -164,18 +224,6 @@ export default function CostExplorer() {
     // were the bill, so it is offered only on the whole estate.
     () => (trendFiltered ? [] : linearForecast(monthly, 3, { currentMonth: thisMonth })),
     [trendFiltered, monthly, thisMonth],
-  );
-
-  const filtered = useMemo(
-    () => activeServices.filter((r) => matches(r, filters)),
-    [activeServices, filters],
-  );
-
-  const breakdown = useMemo(() => aggregate(filtered, dimension), [filtered, dimension]);
-  const breakdownTotal = useMemo(() => totalOf(breakdown), [breakdown]);
-  const unpricedCount = useMemo(
-    () => breakdown.reduce((n, r) => n + r.unpriced, 0),
-    [breakdown],
   );
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
@@ -197,13 +245,15 @@ export default function CostExplorer() {
    * Rows contribute the same four fields under the cost API's own names. */
   const filterSource = useMemo(() => ([
     ...activeServices,
+    ...monthly.flatMap(month => Object.keys(month.by_service || {}).map(service => ({ service }))),
+    ...subscriptions.filter(sub => selectedSubscriptionIds.includes(sub.subscription_id)).map(sub => ({ subscription_id: sub.subscription_id })),
     ...rows.map((r) => ({
       subscription_id: r.subscription_id,
       resource_group: r.resource_group,
       location: r.region,
       service: r.service,
     })),
-  ]), [activeServices, rows]);
+  ]), [activeServices, rows, monthly, subscriptions, selectedSubscriptionIds]);
 
   // Read from the filtered months, not the raw ones: a drill-down that ignored
   // the filter would contradict the chart the reader clicked on.
@@ -231,13 +281,16 @@ export default function CostExplorer() {
     if (!name?.trim()) return;
     persistViews([
       ...views.filter((v) => v.name !== name.trim()),
-      { name: name.trim(), tab, dimension, filters },
+      { name: name.trim(), tab, timeline, compareMode, groupMode, filters },
     ]);
   };
 
   const applyView = (v) => {
-    setTab(v.tab || 'trend');
-    setDimension(v.dimension || 'service');
+    const migrated = migrateExplorerView(v);
+    setTab(migrated.tab);
+    setTimeline(migrated.timeline);
+    setCompareMode(v.compareMode === 'quick' ? 'quick' : 'full');
+    setGroupMode(v.groupMode === 'filtered' ? 'filtered' : 'report');
     setFilters({ ...EMPTY_FILTERS, ...(v.filters || {}) });
   };
 
@@ -256,9 +309,13 @@ export default function CostExplorer() {
   const tabs = [
     { key: 'trend', label: 'Trend & forecast', icon: TrendingUp },
     { key: 'groups', label: 'Resource groups', icon: Boxes, count: groups.length || null },
-    { key: 'breakdown', label: 'Breakdown', icon: Layers },
-    { key: 'resources', label: 'Resources', icon: Server, count: filtered.length || null },
+    { key: 'compare', label: 'Month compare', icon: GitCompareArrows },
+    { key: 'bandwidth', label: 'Bandwidth', icon: Network },
   ];
+
+  // The two moved-in tabs answer the header selection, not the filter bar, so
+  // the filter bar is not shown pretending otherwise.
+  const showFilters = tab === 'trend' || filteredGroups || quickCompare;
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5 p-6">
@@ -275,7 +332,11 @@ export default function CostExplorer() {
       </div>
 
       {/* Coverage sits with the figures, not in a console log. */}
-      <DataQuality coverage={costData?.coverage} />
+      {needsMonthly && <DataQuality coverage={costData?.coverage} />}
+      {needsMonthly && costError && <ErrorState title="Could not load monthly costs" message={costError} onRetry={loadCosts} />}
+      {usesServerFilters && filteredResult.error && <ErrorState title="Could not load filtered costs" message={filteredResult.error} />}
+      {usesServerFilters && <DataQuality coverage={filteredResult.data?.coverage} />}
+      {needsRows && rowsError && <ErrorState title="Could not load cost detail" message={rowsError} onRetry={loadCostRows} />}
 
       {views.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -305,7 +366,7 @@ export default function CostExplorer() {
       {/* Filters drive every tab, the trend included. The trend is re-summed
           from meter rows when a filter is set, so the narrowing is real rather
           than a control that appears to do nothing. */}
-      <Card className="p-4">
+      {showFilters && <Card className="p-4" onFocusCapture={loadFilterOptions}>
           <FilterBar
             active={activeFilterCount}
             onReset={() => setFilters(EMPTY_FILTERS)}
@@ -324,6 +385,7 @@ export default function CostExplorer() {
               value={filters.subscription}
               onChange={(v) => setFilters({ ...filters, subscription: v })}
               options={optionsFor(filterSource, 'subscription_id', 'subscriptions')
+                .filter(o => !o.value || selectedSubscriptionIds.includes(o.value))
                 .map((o) => (o.value ? { ...o, label: subName(o.value) } : o))}
             />
             <Select
@@ -345,15 +407,30 @@ export default function CostExplorer() {
               options={optionsFor(filterSource, 'service', 'services')}
             />
           </FilterBar>
-      </Card>
+      </Card>}
 
-      {servicesError && tab !== 'trend' && (
+      {tab === 'bandwidth' && (
+        <Suspense fallback={<TabLoading what="the bandwidth report" />}>
+          <BandwidthTab resetKey={`${selectedTenantId}:${subsKey}:${dateKey}`} />
+        </Suspense>
+      )}
+
+      {servicesError && showFilters && tab !== 'trend' && (
         <ErrorState title="Could not load resources" message={servicesError} onRetry={loadServices} />
       )}
 
       {tab === 'trend' && (
         <div className="space-y-5">
+          <SegmentedControl
+            options={[{ value: 'monthly', label: 'Monthly' }, { value: 'daily', label: 'Daily timeline' }]}
+            value={timeline}
+            onChange={setTimeline}
+          />
+          {timeline === 'daily' ? <CostDailyTimeline filters={filters} /> : <>
+          {trendFiltered && !usesMeterRows && <Callout tone="info" title="Filtered Azure summary">{usesServerFilters ? 'These filters are applied by Azure Cost Management to the selected dates and subscriptions.' : 'Service-only and subscription-only amounts come directly from the same monthly summary as Dashboard.'} All figures below follow your selection.</Callout>}
+          {filters.service === 'Bandwidth' && <Callout tone="info" title="Bandwidth service scope">This filter selects the Azure service named Bandwidth. The Bandwidth tab includes transfer-related meters under other services too; it is a broader total.</Callout>}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Metric label="Actual cost in selected range" value={trendMonths.length ? fmt(trendMonths.reduce((sum, month) => sum + (month.total_cost || 0), 0)) : null} loading={costLoading || rowsLoading} hint={trendFiltered ? 'Selected filters · full range' : 'Same monthly totals as Dashboard'} />
             <Metric
               label="Months loaded"
               value={monthly.length || null}
@@ -388,9 +465,9 @@ export default function CostExplorer() {
               meter rows rather than Azure's own totals. Both facts change what
               the number means, so both are said rather than left to be
               discovered by someone wondering why their spend dropped. */}
-          {trendFiltered && !rowsLoading && (
+          {usesMeterRows && !rowsLoading && (
             <Callout
-              tone={coverage !== null && coverage < 0.95 ? 'warn' : 'info'}
+              tone={coverage !== null && coverage < 0.95 ? 'medium' : 'info'}
               title="Showing a filtered slice of the bill"
             >
               The chart is re-summed from meter rows that match your filters, so it no
@@ -402,7 +479,7 @@ export default function CostExplorer() {
             </Callout>
           )}
 
-          {trendFiltered && rowsLoading && (
+          {usesMeterRows && rowsLoading && (
             <Callout tone="info" title="Fetching the detail behind the totals">
               Filtering the trend needs the individual meter rows. The chart will narrow
               once they arrive.
@@ -410,7 +487,7 @@ export default function CostExplorer() {
           )}
 
           <Panel
-            title={`Monthly spend${months ? ` (${months} months)` : ''}`}
+            title={`Monthly spend (${trendMonths.length} returned ${trendMonths.length === 1 ? 'month' : 'months'})`}
             hint="The dashed line is a straight-line projection from completed months, not an Azure forecast."
           >
             <CostTrendChart
@@ -424,9 +501,11 @@ export default function CostExplorer() {
             <p className="mt-2 text-[11px] text-slate-500">
               Click any month to see the services billed in it.
             </p>
+            <Select label="Inspect month" value={drillMonth} onChange={setDrillMonth}
+              options={[{ value: '', label: 'Choose a month' }, ...trendMonths.map(m => ({ value: m.month, label: m.month }))]} />
           </Panel>
 
-          {drillMonth && (
+          {drillMonth && !costLoading && !(trendFiltered && rowsLoading) && (
             <Panel
               title={`What made ${drillMonth}`}
               actions={(
@@ -439,6 +518,12 @@ export default function CostExplorer() {
                 </button>
               )}
             >
+              {drillMonth === thisMonth && <Callout tone="medium" title="Current month is partial">This month is still being billed; comparison with a completed month is not like-for-like.</Callout>}
+              <CostChangeExplainer current={drillMonthRow} prior={monthByKey(trendMonths, previousMonth(drillMonth))}
+                label={drillMonth} priorLabel={previousMonth(drillMonth)} currency={currency} totalKey="total_cost"
+                partial={drillMonth === thisMonth} priorPartial={previousMonth(drillMonth) === thisMonth} />
+              <CostDeltaDetails current={drillMonthRow} prior={monthByKey(trendMonths, previousMonth(drillMonth))}
+                label={drillMonth} priorLabel={previousMonth(drillMonth)} currency={currency} totalKey="total_cost" />
               {!drillRows.length ? (
                 <p className="py-6 text-center text-sm text-slate-500">
                   Azure returned no service breakdown for this month.
@@ -480,16 +565,21 @@ export default function CostExplorer() {
           )}
 
           <Panel title="Spend by service, month over month">
-            <ServiceBreakdownChart months={monthly} loading={costLoading} currency={currency} />
+            <ServiceBreakdownChart months={trendMonths} loading={costLoading || (trendFiltered && rowsLoading)} currency={currency} />
           </Panel>
+          {!costLoading && !rowsLoading && <ServiceCostDetails periods={trendMonths} currency={currency} filters={filters}
+            query={imported || filters.location ? null : { tenant_id: selectedTenantId,
+              subscription_ids: filters.subscription ? [filters.subscription] : selectedSubscriptionIds,
+              months, ...(dateMode === 'custom' ? { from_date: fromDate, to_date: toDate } : {}),
+            }} />}
 
           <Panel title="Month-over-month" bodyClassName="">
-            {costLoading ? (
+            {costLoading || (trendFiltered && rowsLoading) ? (
               <TableSkeleton rows={6} cols={5} />
             ) : (
               <DataTable
-                rows={monthly.map((m, i) => {
-                  const prev = monthly[i - 1];
+                rows={trendMonths.map((m) => {
+                  const prev = monthByKey(trendMonths, previousMonth(m.month));
                   const top = Object.entries(m.by_service || {}).sort((a, b) => b[1] - a[1])[0];
                   return {
                     id: m.month,
@@ -544,10 +634,21 @@ export default function CostExplorer() {
               />
             )}
           </Panel>
+          </>}
         </div>
       )}
 
-      {tab === 'groups' && (
+      {tab === 'groups' && <>
+        <SegmentedControl value={groupMode} onChange={setGroupMode} options={[
+          { value: 'report', label: 'Costs & history' },
+          { value: 'filtered', label: 'Filtered service breakdown' },
+        ]} />
+        {groupMode === 'report' && <Suspense fallback={<TabLoading what="resource groups" />}>
+          <ResourceGroupsReport embedded key={`${selectedTenantId}:${subsKey}:${dateKey}`} />
+        </Suspense>}
+      </>}
+
+      {filteredGroups && (
         <div className="space-y-4">
           {rowsLoading && groups.length === 0 && <TableSkeleton rows={8} />}
 
@@ -639,142 +740,40 @@ export default function CostExplorer() {
         </div>
       )}
 
-      {tab === 'breakdown' && (
-        <div className="space-y-4">
+      {tab === 'compare' && (
+        <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <SegmentedControl
-              options={DIMENSIONS.map((d) => ({ value: d.value, label: d.label }))}
-              value={dimension}
-              onChange={setDimension}
-            />
-            <p className="text-xs text-slate-500">
-              {breakdown.length} {breakdown.length === 1 ? 'group' : 'groups'} · {fmt(breakdownTotal)}
-            </p>
+          <SegmentedControl
+            options={[
+              { value: 'full', label: 'Full variance' },
+              { value: 'quick', label: 'Quick compare (uses filters)' },
+            ]}
+            value={compareMode}
+            onChange={setCompareMode}
+          />
+          <Button variant="secondary" size="sm" icon={RefreshCw}
+            onClick={refreshComparison} disabled={comparisonRefreshing}
+            aria-busy={comparisonRefreshing}>
+            {comparisonRefreshing ? 'Refreshing comparison…' : 'Refresh comparison'}
+          </Button>
           </div>
-
-          {unpricedCount > 0 && (
-            <Callout tone="medium" title={`${unpricedCount} resources have no cost reported`}>
-              They are counted here but add nothing to the totals. Azure reports no cost for a
-              resource that has not been billed in this period, or that your account cannot read
-              cost for — so this is a floor, not the full figure.
-            </Callout>
-          )}
-
-          {servicesLoading ? (
-            <Card><TableSkeleton rows={10} cols={4} /></Card>
+          {compareMode === 'full' ? (
+            <Suspense fallback={<TabLoading what="the month-by-month variance" />}>
+              <MonthVariance embedded />
+            </Suspense>
           ) : (
-            <Panel title={DIMENSIONS.find((d) => d.value === dimension)?.label} bodyClassName="">
-              <DataTable
-                rows={breakdown.map((b) => ({
-                  id: b.key,
-                  name: dimension === 'subscription' ? subName(b.key) : b.key,
-                  cost: b.cost,
-                  count: b.count,
-                  share: breakdownTotal ? (b.cost / breakdownTotal) * 100 : null,
-                }))}
-                initialSort={{ key: 'cost', dir: 'desc' }}
-                columns={[
-                  {
-                    key: 'name', header: 'Name', sortable: true,
-                    render: (r) => <span className="text-slate-200">{r.name}</span>,
-                  },
-                  { key: 'count', header: 'Items', align: 'right', sortable: true },
-                  {
-                    key: 'share', header: 'Share', align: 'right', sortable: true,
-                    render: (r) => (r.share == null ? '—' : (
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="h-1.5 w-16 rounded-full bg-slate-800">
-                          <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(100, r.share)}%` }} />
-                        </div>
-                        <span className="w-10 text-right text-xs text-slate-400">{r.share.toFixed(1)}%</span>
-                      </div>
-                    )),
-                  },
-                  {
-                    key: 'cost', header: `Cost (${currency})`, align: 'right', sortable: true,
-                    render: (r) => <Amount value={r.cost} currency={currency} />,
-                  },
-                ]}
-                empty={(
-                  <EmptyState
-                    title="Nothing matches these filters"
-                    description="Clear a filter to widen the breakdown."
-                    actions={<Button size="sm" variant="secondary" onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</Button>}
-                  />
-                )}
-              />
-            </Panel>
+            <MonthCompare
+              months={trendMonths}
+              currency={currency}
+              loading={costLoading || (trendFiltered && rowsLoading)}
+              filtered={trendFiltered}
+              coverage={coverage}
+              currentMonth={thisMonth}
+            />
           )}
         </div>
       )}
 
-      {tab === 'resources' && (
-        <div className="space-y-4">
-          {servicesLoading ? (
-            <Card><TableSkeleton rows={12} cols={6} /></Card>
-          ) : (
-            <Panel title="Active resources" hint={`${filtered.length} of ${activeServices.length}`} bodyClassName="">
-              <DataTable
-                rows={filtered.map((r, i) => ({ ...r, id: `${r.name}-${i}` }))}
-                initialSort={{ key: 'cost', dir: 'desc' }}
-                columns={[
-                  {
-                    key: 'name', header: 'Name', sortable: true,
-                    render: (r) => (
-                      <span className="block max-w-[220px] truncate font-medium text-slate-200" title={r.name}>
-                        {r.name}
-                      </span>
-                    ),
-                  },
-                  {
-                    key: 'type', header: 'Type', sortable: true,
-                    render: (r) => (
-                      <span className="text-xs text-slate-400">
-                        {SHORT_TYPE(r.type)}
-                        {r.service && r.service !== r.type && (
-                          <span className="block text-[10px] text-slate-600">{r.service}</span>
-                        )}
-                      </span>
-                    ),
-                  },
-                  {
-                    key: 'sku', header: 'SKU / size',
-                    render: (r) => (r.sku || r.size || r.tier ? (
-                      <span className="text-xs">
-                        {r.sku && <Badge tone="neutral">{r.sku}</Badge>}
-                        {r.size && <span className="ml-1.5 text-slate-300">{r.size}</span>}
-                        {r.tier && <span className="block text-[10px] text-slate-600">{r.tier}</span>}
-                      </span>
-                    ) : <span className="text-slate-600">—</span>),
-                  },
-                  {
-                    key: 'resource_group', header: 'Resource group', sortable: true,
-                    render: (r) => <span className="text-xs text-slate-500">{r.resource_group || '—'}</span>,
-                  },
-                  {
-                    key: 'location', header: 'Region', sortable: true,
-                    render: (r) => <span className="text-xs text-slate-500">{r.location || '—'}</span>,
-                  },
-                  {
-                    key: 'cost', header: `Cost (${currency})`, align: 'right', sortable: true,
-                    render: (r) => (r.cost == null
-                      ? <span className="text-slate-600" title="Azure reported no cost for this resource">—</span>
-                      : <Amount value={r.cost} currency={currency} />),
-                  },
-                ]}
-                empty={(
-                  <EmptyState
-                    title="No resources match"
-                    description={activeServices.length
-                      ? 'Clear a filter to see more.'
-                      : 'No resources were returned. This usually means the account lacks Reader on these subscriptions.'}
-                  />
-                )}
-              />
-            </Panel>
-          )}
-        </div>
-      )}
     </div>
   );
 }

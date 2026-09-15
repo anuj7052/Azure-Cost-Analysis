@@ -57,21 +57,19 @@ async def get_costs(
     token = await resolve_tenant_token(body.tenant_id, current_user, db)
 
     # Query each subscription and combine
-    all_records = []
-    errors = []
-    for sub_id in body.subscription_ids:
-        try:
-            records = await query_costs(
-                token=token,
-                subscription_id=sub_id,
-                months=body.months,
-                group_by=body.group_by,
-                from_date=getattr(body, 'from_date', None),
-                to_date=getattr(body, 'to_date', None),
-            )
-            all_records.extend(records)
-        except Exception as exc:
-            errors.append(error_entry(sub_id, exc, subscription_names(body.tenant_id, token)))
+    async def read_sub(sub_id):
+        return await query_costs(
+            token=token, subscription_id=sub_id, months=body.months,
+            group_by=body.group_by, from_date=body.from_date, to_date=body.to_date,
+            filters={key: value for key, value in {
+                'ServiceName': body.service, 'ResourceGroupName': body.resource_group,
+                'ResourceLocation': body.location,
+            }.items() if value},
+        )
+
+    # The cost client already enforces global and per-subscription limits.
+    # Reading serially here adds every subscription's latency to the first paint.
+    all_records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
 
     if not all_records and errors:
         raise HTTPException(
@@ -153,16 +151,14 @@ async def get_service_resources(
     on its own, for one service at a time, the same API will name the resource.
     The quantities are the price of that, and are simply absent here.
 
-    The service filter is applied after the fact rather than as a query filter
-    because Azure's dimension filter matches the service name exactly, and the
-    name shown on screen came from these same records -- comparing it against
-    itself, case-insensitively, cannot miss what a stricter filter would.
+    Service and optional resource-group filters are applied by Azure to avoid
+    loading unrelated resources; returned rows retain their full ARM identity.
     """
     token = await _get_token(body.tenant_id, current_user, db)
     wanted = body.service.strip().lower()
 
     async def read_sub(sub_id: str):
-        return await query_costs(
+        records = await query_costs(
             token=token,
             subscription_id=sub_id,
             months=body.months,
@@ -170,7 +166,9 @@ async def get_service_resources(
             granularity="Monthly",
             from_date=body.from_date,
             to_date=body.to_date,
+            filters={"ServiceName": body.service, **({"ResourceGroupName": body.resource_group} if body.resource_group else {})},
         )
+        return [{**record, "SubscriptionId": record.get("SubscriptionId") or sub_id} for record in records]
 
     records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
 
@@ -442,22 +440,14 @@ async def get_rg_costs(
     """Return total cost split by Resource Group for the given subscriptions."""
     token = await _get_token(body.tenant_id, current_user, db)
 
-    all_records = []
-    errors = []
-    for sub_id in body.subscription_ids:
-        try:
-            records = await query_costs(
-                token=token,
-                subscription_id=sub_id,
-                months=body.months,
-                group_by=["ResourceGroupName", "ServiceName"],
-                granularity="Monthly",
-                from_date=getattr(body, 'from_date', None),
-                to_date=getattr(body, 'to_date', None),
-            )
-            all_records.extend(records)
-        except Exception as exc:
-            errors.append(error_entry(sub_id, exc, subscription_names(body.tenant_id, token)))
+    async def read_sub(sub_id):
+        return await query_costs(
+            token=token, subscription_id=sub_id, months=body.months,
+            group_by=["ResourceGroupName", "ServiceName"], granularity="Monthly",
+            from_date=body.from_date, to_date=body.to_date,
+        )
+
+    all_records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
 
     if not all_records and errors:
         raise HTTPException(status_code=502, detail=summarise_errors(errors, "resource group costs"))
@@ -466,7 +456,8 @@ async def get_rg_costs(
     rg_items = [RgCostItem(**v) for v in rg_map.values()]
     total = round(sum(r.total for r in rg_items), 2)
     currency = rg_items[0].currency if rg_items else "USD"
-    return RgCostResponse(resource_groups=rg_items, total=total, currency=currency)
+    return RgCostResponse(resource_groups=rg_items, total=total, currency=currency,
+                          coverage=build_coverage(body.subscription_ids, errors))
 
 
 @router.post("/daily", response_model=DailyCostResponse)
@@ -484,22 +475,14 @@ async def get_daily_costs(
         # so we group by RG and filter post-query.
         group_by = ["ResourceGroupName", "ServiceName"]
 
-    all_records = []
-    errors = []
-    for sub_id in body.subscription_ids:
-        try:
-            records = await query_costs(
-                token=token,
-                subscription_id=sub_id,
-                months=body.months,
-                group_by=group_by,
-                granularity="Daily",
-                from_date=getattr(body, 'from_date', None),
-                to_date=getattr(body, 'to_date', None),
-            )
-            all_records.extend(records)
-        except Exception as exc:
-            errors.append(error_entry(sub_id, exc, subscription_names(body.tenant_id, token)))
+    async def read_sub(sub_id):
+        return await query_costs(
+            token=token, subscription_id=sub_id, months=body.months,
+            group_by=group_by, granularity="Daily",
+            from_date=body.from_date, to_date=body.to_date,
+        )
+
+    all_records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
 
     if not all_records and errors:
         raise HTTPException(status_code=502, detail=summarise_errors(errors, "daily costs"))
@@ -516,7 +499,8 @@ async def get_daily_costs(
     day_items = [DailyCostItem(**v) for v in daily_map.values()]
     total = round(sum(d.total for d in day_items), 2)
     currency = day_items[0].currency if day_items else "USD"
-    return DailyCostResponse(days=day_items, total=total, currency=currency)
+    return DailyCostResponse(days=day_items, total=total, currency=currency,
+                             coverage=build_coverage(body.subscription_ids, errors))
 
 
 @router.post("/pricing", response_model=PricingResponse)

@@ -887,11 +887,13 @@ export const fetchEntityHistory = (tenantId, resourceId) =>
  * did the bill step up on the exact day it changed -- so it is only asked when
  * somebody explicitly opens it.
  */
-export const fetchResourceTimeline = (tenantId, resourceId, { granularity = 'monthly' } = {}) =>
+export const fetchResourceTimeline = (tenantId, resourceId, { granularity = 'monthly', includeCost = true, includeActivity = true } = {}) =>
   api.post('/timeline/resource', {
     tenant_id: tenantId,
     resource_id: resourceId,
     granularity,
+    include_cost: includeCost,
+    include_activity: includeActivity,
   }).then(r => r.data);
 
 /** Which changes are currently being suppressed, and who suppressed them. */

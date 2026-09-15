@@ -13,7 +13,7 @@
  * grouping that would quietly return an empty chart, the view says which
  * grouping it cannot do and why.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -49,6 +49,8 @@ function Choice({ label, value, options, onChange, disabled }) {
 export default function CostAnalysisChart({
   rows = [], days = [], currency = 'INR', loading = false,
   saved = [], onSave, onDelete,
+  onLoadRows, onLoadDaily, requestKey, detailLoading = false, dailyLoading = false,
+  detailError, dailyError,
 }) {
   const t = useChartTheme();
   const [view, setView] = useState(defaultView);
@@ -63,6 +65,17 @@ export default function CostAnalysisChart({
   );
 
   const dailyOnly = view.granularity === 'daily';
+  const needsRows = !dailyOnly && (
+    !['none', 'service'].includes(view.groupBy)
+    || filterOn !== 'service'
+    || Object.keys(view.filters).some(key => key !== 'service')
+  );
+  useEffect(() => {
+    if (dailyOnly) onLoadDaily?.();
+    else if (needsRows) onLoadRows?.();
+  }, [dailyOnly, needsRows, requestKey, onLoadDaily, onLoadRows]);
+  const pending = dailyOnly ? dailyLoading && !days.length : loading || (needsRows && detailLoading);
+  const error = dailyOnly ? dailyError : needsRows ? detailError : null;
   // Daily data carries a service split and nothing else, so the other
   // dimensions are shown as unavailable rather than silently missing.
   const groupOptions = DIMENSIONS.map(d => ({
@@ -228,7 +241,8 @@ export default function CostAnalysisChart({
         )}
       </div>
 
-      {loading ? (
+      {error && <p role="alert" className="text-xs text-amber-400">{String(error)}</p>}
+      {pending ? (
         <div className="h-[280px] animate-pulse rounded-xl bg-slate-800/40" />
       ) : built.note ? (
         <p className="flex h-[280px] items-center justify-center px-8 text-center text-sm leading-relaxed text-slate-500">
