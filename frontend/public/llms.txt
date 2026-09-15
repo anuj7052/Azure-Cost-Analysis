@@ -1,7 +1,7 @@
 # Cloudledger
 
 > Azure cost and estate reporting, read with your own Microsoft Entra
-> permissions. Nothing is estimated, and nothing is written back.
+> permissions. Read-only reporting and explicitly confirmed Build deployments.
 
 Cloudledger connects to an Azure tenant and reports what it is costing, what is
 running, what changed, and who has access. It reads the Azure Cost Management
@@ -16,7 +16,8 @@ rather than left to be recovered from rendered markup.
 
 - A web application. Nothing to install, no agent inside the tenant.
 - Free to run. It calls Azure APIs that Microsoft does not charge for.
-- Read-only. Every screen reads. No screen writes to Azure.
+- Read-only reporting. Build can create resources after explicit confirmation,
+  workspace-admin authorization and Azure permission checks.
 - Signed in with Microsoft Entra. There is no separate password.
 
 ## What it reports
@@ -34,9 +35,8 @@ rather than left to be recovered from rendered markup.
 ## Answers to the questions people actually ask
 
 **Does it change anything in Azure?**
-No. Every screen reads. The one feature that produces infrastructure writes a
-template to a file for the operator to review and run themselves. The app never
-applies it.
+Reporting reads data. Build can create supported resources after explicit
+confirmation, workspace-admin authorization and Azure permission checks.
 
 **What does it cost?**
 Nothing to run. It reads the Azure Cost Management and Resource Graph APIs,
@@ -54,9 +54,9 @@ Yes. Each tenant is connected separately and switched between from the top bar.
 Data from one tenant is never mixed into another.
 
 **Where do the numbers come from?**
-From Azure, at the time of asking. Nothing is estimated or modelled. When a
-figure is genuinely unavailable the screen says so, rather than showing a zero
-that would read as a real measurement of nothing.
+Billed costs come from Azure Cost Management. Forecasts, retail estimates and
+optimization projections are distinct from actual charges. Check freshness and
+partial-data messages before comparing reports.
 
 **Can colleagues use it?**
 People can be invited from the directory, each with a chosen role. Roles are
@@ -72,11 +72,15 @@ resource inventory and the access log side by side rather than one at a time.
 
 - It does not store your Azure credentials in order to poll you in the
   background.
-- It does not estimate a figure Azure did not return.
-- It does not apply infrastructure changes.
+- It does not treat forecasts or retail estimates as billed actuals.
+- Build deployment requires explicit confirmation and appropriate permissions.
 - It does not sell or share the data it reads.
 
 ## Links
 
 - Site: https://azure.microsoftupdates.co.in/
+- Cost: https://azure.microsoftupdates.co.in/features/azure-cost-intelligence/
+- Resources: https://azure.microsoftupdates.co.in/features/azure-resource-optimization/
+- Governance: https://azure.microsoftupdates.co.in/features/azure-access-governance/
+- Workspace: https://azure.microsoftupdates.co.in/features/azure-team-workspace/
 - Source: https://github.com/anuj7052/Azure-Cost-Analysis

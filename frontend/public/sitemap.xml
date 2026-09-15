@@ -1,9 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  One entry, because there is one public page. A sitemap listing the signed-in
-  routes would be listing pages that return a sign-in screen to the only
-  visitor who ever reads a sitemap, and a sitemap full of URLs that do not hold
-  what they promise costs trust rather than buying reach.
+  Only public pages are included. Private application routes require sign-in.
 
   The section anchors on the landing page (#features, #how, #security, #faq)
   are deliberately absent. They are one document, and listing a fragment as
@@ -17,8 +14,56 @@
          date that moves on every build claims the text is new every time, and
          a source that has cried new once too often is re-read less often
          rather than more. -->
-    <lastmod>2026-09-09</lastmod>
+    <lastmod>2026-09-15</lastmod>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/guides/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/guides/investigate-azure-cost-spikes/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/guides/actual-vs-amortized-reservation-costs/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/guides/azure-pricing-calculator-vs-actual-bill/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/guides/find-idle-and-orphaned-azure-resources/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/guides/understand-azure-bandwidth-data-transfer-costs/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/guides/rightsize-azure-virtual-machines/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/guides/monthly-azure-cost-review-checklist/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/features/azure-cost-intelligence/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/features/azure-resource-optimization/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/features/azure-access-governance/</loc>
+    <lastmod>2026-09-15</lastmod>
+  </url>
+  <url>
+    <loc>https://azure.microsoftupdates.co.in/features/azure-team-workspace/</loc>
+    <lastmod>2026-09-15</lastmod>
   </url>
 </urlset>

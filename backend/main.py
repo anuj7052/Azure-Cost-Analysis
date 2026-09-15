@@ -495,7 +495,7 @@ if (_FRONTEND_DIR / "index.html").is_file():
         name="assets",
     )
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def spa(full_path: str):
         """
         Hand any non-API path back to the SPA so client-side routes survive a
@@ -514,6 +514,11 @@ if (_FRONTEND_DIR / "index.html").is_file():
         # prefix check is what stops `../` in the URL reaching outside the
         # build directory.
         candidate = (_FRONTEND_DIR / full_path).resolve()
+        if full_path.split("/", 1)[0] in {"guides", "features"}:
+            public_page = candidate / "index.html"
+            if public_page.is_relative_to(_FRONTEND_DIR.resolve()) and public_page.is_file():
+                return FileResponse(public_page)
+            raise HTTPException(status_code=404, detail="Public page not found")
         if (
             full_path
             and candidate.is_file()
@@ -521,4 +526,12 @@ if (_FRONTEND_DIR / "index.html").is_file():
         ):
             return FileResponse(candidate)
 
-        return FileResponse(_FRONTEND_DIR / "index.html")
+        if not full_path:
+            return FileResponse(_FRONTEND_DIR / "index.html")
+        # Private routes must not serve the prerendered marketing homepage or
+        # become duplicate search results. Older builds still have one shell.
+        shell = _FRONTEND_DIR / "app.html"
+        return FileResponse(
+            shell if shell.is_file() else _FRONTEND_DIR / "index.html",
+            headers={"X-Robots-Tag": "noindex, follow"},
+        )

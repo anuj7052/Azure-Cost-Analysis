@@ -83,8 +83,11 @@ class TestBudget:
 
         assert message.strip(), "a timeout must not produce an empty reason"
         assert "time" in message.lower()
-        # It must tell the user what to actually do about it.
-        assert "fewer subscriptions" in message or "date range" in message
+        # Recovery keeps the requested reporting scope intact; partial totals
+        # must be identified before the user retries the failed read.
+        assert "retry" in message.lower()
+        assert "exclude failed subscriptions" in message.lower()
+        assert "coverage" in message.lower()
 
     @pytest.mark.asyncio
     async def test_slow_subscriptions_do_not_discard_the_fast_ones(self):

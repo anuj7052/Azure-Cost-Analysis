@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FAQ } from '../src/content/faq';
+import { GUIDES, SITE, guidePath } from '../src/content/guides';
+import { PRODUCTS, productPath } from '../src/content/products';
+import { SECTIONS } from '../src/nav';
 
 const root = resolve(import.meta.dirname, '..');
 const read = (p) => readFileSync(resolve(root, p), 'utf8');
@@ -24,6 +27,16 @@ const nodeOfType = (type) =>
   jsonLd()['@graph'].find((n) => n['@type'] === type);
 
 describe('structured data', () => {
+  it('has public details for every advertised product workflow', () => {
+    for (const section of SECTIONS) {
+      const product = PRODUCTS.find(p => p.key === section.key);
+      expect(product).toBeDefined();
+      for (const item of section.items.filter(i => !i.overview)) {
+        expect(product.details[item.to.slice(1)]?.length).toBeGreaterThan(80);
+      }
+    }
+    expect(new Set(PRODUCTS.map(productPath)).size).toBe(PRODUCTS.length);
+  });
   it('is valid JSON', () => {
     // A trailing comma costs the whole block. Google does not warn; the rich
     // result simply never appears, which is indistinguishable from not having
@@ -49,6 +62,11 @@ describe('structured data', () => {
 });
 
 describe('canonical host', () => {
+  it('names the search topic in the title and description', () => {
+    expect(html).toMatch(/<title>Azure Cost Analysis/);
+    expect(html).toContain('Analyze Azure costs, compare monthly spend');
+  });
+
   it('is declared once', () => {
     const links = html.match(/<link rel="canonical"/g) || [];
     expect(links).toHaveLength(1);
@@ -156,7 +174,7 @@ describe('sitemap', () => {
 
   it('lists only pages a signed-out visitor can read', () => {
     const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
-    expect(locs).toEqual(['https://azure.microsoftupdates.co.in/']);
+    expect(locs).toEqual([`${SITE}/`, `${SITE}/guides/`, ...GUIDES.map(guide => `${SITE}${guidePath(guide)}`), ...PRODUCTS.map(product => `${SITE}${productPath(product)}`)]);
   });
 
   it('gives every entry a last-modified date', () => {

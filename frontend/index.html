@@ -4,12 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <!-- The name alone does not say which cloud, and a tab title is often all
          someone sees of a page they left open yesterday. -->
-    <title>Cloudledger — Azure cost and estate</title>
+    <title>Azure Cost Analysis &amp; Optimization | Cloudledger</title>
     <meta
       name="description"
-      content="Cloudledger reads your Azure cost, running resources, changes and access with your own permissions. Nothing is estimated, and nothing is written back."
+      content="Analyze Azure costs, compare monthly spend, review reservations and find idle resources with Cloudledger. Connect your Microsoft account to explore your cloud bill."
     />
     <meta name="theme-color" content="#020617" />
 
@@ -27,7 +29,7 @@
          back to a small text-only card, and the absolute URL is not optional —
          both refuse a relative one and simply show no image at all. -->
     <meta property="og:site_name" content="Cloudledger" />
-    <meta property="og:title" content="Cloudledger — Azure cost and estate" />
+    <meta property="og:title" content="Azure Cost Analysis &amp; Optimization | Cloudledger" />
     <meta
       property="og:description"
       content="Know what Azure is costing you, and why it moved. Read-only, signed in with Microsoft Entra."
@@ -45,7 +47,7 @@
       content="Cloudledger — know what Azure is costing you, and why it moved. Read-only by default, Microsoft Entra sign-in, nothing estimated."
     />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Cloudledger — Azure cost and estate" />
+    <meta name="twitter:title" content="Azure Cost Analysis &amp; Optimization | Cloudledger" />
     <meta
       name="twitter:description"
       content="Know what Azure is costing you, and why it moved. Read-only, signed in with Microsoft Entra."
@@ -93,6 +95,15 @@
             "inLanguage": "en"
           },
           {
+            "@type": "WebPage",
+            "@id": "https://azure.microsoftupdates.co.in/#webpage",
+            "url": "https://azure.microsoftupdates.co.in/",
+            "name": "Azure Cost Analysis & Optimization | Cloudledger",
+            "isPartOf": { "@id": "https://azure.microsoftupdates.co.in/#website" },
+            "about": { "@id": "https://azure.microsoftupdates.co.in/#app" },
+            "inLanguage": "en"
+          },
+          {
             "@type": "SoftwareApplication",
             "@id": "https://azure.microsoftupdates.co.in/#app",
             "name": "Cloudledger",
@@ -100,7 +111,7 @@
             "applicationCategory": "BusinessApplication",
             "applicationSubCategory": "Cloud cost management",
             "operatingSystem": "Web browser",
-            "description": "Cloudledger reads your Azure cost, running resources, changes and access with your own permissions. Nothing is estimated, and nothing is written back.",
+            "description": "Explore Azure billed costs, resource inventory, commitments and access. Review forecasts and retail estimates separately from actual costs; Build requires explicit deployment confirmation.",
             "featureList": [
               "Azure cost trends and month-on-month comparison",
               "Cost anomaly detection with likely cause",
@@ -126,7 +137,7 @@
                 "name": "Does it change anything in my Azure account?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "No. Every screen reads. The only feature that produces infrastructure writes a template to a file for you to review and run yourself — the app never applies it."
+                  "text": "Reporting and cost exploration are read-only. Build can create supported Azure resources, but requires explicit confirmation, workspace-admin authorization and sufficient Azure permissions. Review generated templates and deployment details before creating resources."
                 }
               },
               {
@@ -150,7 +161,7 @@
                 "name": "Where do the numbers come from?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "From Azure, at the time you ask. Nothing is estimated or modelled. When a figure is genuinely unavailable the screen says so rather than showing a zero."
+                  "text": "Billed costs come from Azure Cost Management. Resource inventory and findings come from the relevant Azure services. Forecasts, retail-price estimates and optimization projections are distinct from billed actuals. Check the reporting period, freshness and any partial-data messages."
                 }
               },
               {

@@ -6,8 +6,10 @@ import {
   ShieldCheck, Sparkles, Sun, X,
 } from 'lucide-react';
 import { SECTIONS } from '../nav';
+import { GUIDES, guidePath } from '../content/guides';
 import { FAQ as PUBLIC_FAQ } from '../content/faq';
 import { useTheme } from '../store/useTheme';
+import { PRODUCTS, productPath } from '../content/products';
 
 /**
  * The public front door.
@@ -65,8 +67,8 @@ const SECURITY = [
   },
   {
     icon: ShieldCheck,
-    title: 'Generation, never deployment',
-    body: 'The Deployment Assistant writes Terraform and Bicep for you to review and run. It holds no write credentials for your subscription.',
+    title: 'Explicit deployment controls',
+    body: 'Reporting reads Azure data. Creating resources through Build requires workspace-admin authorization, explicit confirmation and sufficient Azure permissions.',
   },
   {
     icon: Database,
@@ -287,6 +289,15 @@ function FeatureTabs() {
               id={`tab-${s.key}`}
               aria-selected={selected}
               aria-controls={`panel-${s.key}`}
+              tabIndex={selected ? 0 : -1}
+              onKeyDown={(event) => {
+                const index = SECTIONS.findIndex(item => item.key === s.key);
+                const next = event.key === 'ArrowRight' ? (index + 1) % SECTIONS.length : event.key === 'ArrowLeft' ? (index + SECTIONS.length - 1) % SECTIONS.length : event.key === 'Home' ? 0 : event.key === 'End' ? SECTIONS.length - 1 : null;
+                if (next === null) return;
+                event.preventDefault();
+                setActive(SECTIONS[next].key);
+                document.getElementById(`tab-${SECTIONS[next].key}`)?.focus();
+              }}
               onClick={() => setActive(s.key)}
               className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition ${
                 selected
@@ -315,25 +326,28 @@ function FeatureTabs() {
           <h3 className="mt-5 text-2xl font-semibold tracking-tight">{section.title}</h3>
           <p className="mt-2 text-base leading-7 text-slate-400">{section.tagline}</p>
           <p className="mt-6 text-xs text-slate-500">
-            {items.length} pages · generated from the app's own navigation
+            {items.length} connected workflows · one reporting context
           </p>
+          <a href={productPath(PRODUCTS.find(p => p.key === section.key))} className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-blue-400">Explore {section.title} <ArrowRight size={16} /></a>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           {items.map((item) => (
-            <div
+            <a
               key={item.to}
-              className="group rounded-2xl border border-slate-800 bg-slate-900/70 p-5 transition-colors hover:border-blue-500/40"
+              href={`${productPath(PRODUCTS.find(p => p.key === section.key))}#${item.to.slice(1)}`}
+              className="marketing-link group rounded-2xl border border-slate-800 bg-slate-900/70 p-5"
             >
               <div className="flex items-center justify-between">
                 <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-800/80 text-slate-300 transition-colors group-hover:bg-blue-600/20 group-hover:text-blue-300">
                   <item.icon className="h-4 w-4" />
                 </span>
-                <ArrowUpRight className="h-4 w-4 text-slate-600 opacity-0 transition group-hover:opacity-100" />
+                <ArrowUpRight className="h-4 w-4 text-blue-400 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
               </div>
               <p className="mt-4 text-sm font-semibold">{item.label}</p>
               <p className="mt-1.5 text-[13px] leading-6 text-slate-400">{item.blurb}</p>
-            </div>
+              <span className="mt-4 block text-xs font-semibold text-blue-400">See workflow details →</span>
+            </a>
           ))}
         </div>
       </div>
@@ -399,7 +413,7 @@ export default function Landing() {
   );
 
   return (
-    <div className="aca-motion min-h-screen scroll-smooth bg-slate-950 text-white">
+    <div className="marketing aca-motion min-h-screen scroll-smooth bg-slate-950 text-white">
       <style>{`
         @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
       `}</style>
@@ -514,8 +528,8 @@ export default function Landing() {
 
             <p className="mt-6 max-w-xl text-base leading-7 text-slate-400 sm:text-lg sm:leading-8">
               Cost, running resources, changes and access across every Azure tenant you can
-              reach — read live from your own account with your own permissions. Nothing is
-              estimated, and nothing is written back.
+               reach. Bring billing evidence, resource context and governance into one
+               workspace, with your connected Azure permissions.
             </p>
 
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
@@ -535,7 +549,7 @@ export default function Landing() {
             </div>
 
             <ul className="mt-7 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
-              {['No new password', 'No credit card', 'No agent to install', 'Nothing written back'].map((t) => (
+              {['Microsoft Entra sign-in', 'Multi-tenant context', 'Read-only reporting', 'Explicit build actions'].map((t) => (
                 <li key={t} className="flex items-center gap-1.5">
                   <Check className="h-3.5 w-3.5 text-emerald-400" />
                   {t}
@@ -573,16 +587,32 @@ export default function Landing() {
         </Reveal>
       </section>
 
+      <section aria-labelledby="platform-heading" className="mx-auto max-w-6xl px-5 py-16 sm:px-8">
+        <Reveal><div className="flex flex-col justify-between gap-5 md:flex-row md:items-end"><div><p className="marketing-eyebrow">One connected platform</p><h2 id="platform-heading" className="mt-3 max-w-2xl text-3xl font-semibold sm:text-4xl">Follow the question.<br /><span className="aca-accent-text">Get the context behind it.</span></h2></div><a href="/guides/" className="inline-flex items-center gap-2 text-sm font-medium text-blue-400">Explore practical Azure guides <ArrowUpRight size={18} /></a></div></Reveal>
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{PRODUCTS.map((product, index) => {
+          const Icon = SECTIONS.find(s => s.key === product.key).icon;
+          return <Reveal key={product.key} delay={index * 70}><a href={productPath(product)} className="marketing-link marketing-panel flex h-full flex-col rounded-2xl border border-slate-800 p-6"><div className="flex items-center justify-between"><Icon className="text-blue-400" /><span className="font-mono text-xs text-slate-500">0{index + 1}</span></div><h3 className="mt-8 text-xl font-semibold">{product.label}</h3><p className="mt-3 flex-1 text-sm leading-7 text-slate-400">{product.description}</p><span className="mt-6 inline-flex items-center justify-between text-sm font-semibold text-blue-400">Explore the capabilities <ArrowRight size={16} /></span></a></Reveal>;
+        })}</div>
+      </section>
+
       {/* --- features --------------------------------------------- */}
       <section id="features" className="scroll-mt-16 border-t border-slate-800 px-5 py-24 sm:px-8">
         <div className="mx-auto max-w-6xl">
           <SectionHeading
-            eyebrow="Product"
-            title="Four questions, answered properly"
-            body="Every page exists to answer one question. This list is generated from the application's own navigation, so it describes the product as it is today."
+            eyebrow="Azure cost analysis"
+            title="Understand your cloud bill, down to the resource"
+            body="Compare Azure spend month by month, investigate daily cost changes, and review reservations and savings plans. Connect billing with resource inventory and access in one workspace."
           />
           <FeatureTabs />
         </div>
+      </section>
+
+      <section aria-labelledby="workflow-heading" className="mx-auto max-w-6xl px-5 pb-24 sm:px-8">
+        <Reveal><div className="marketing-flow marketing-panel overflow-hidden rounded-3xl border border-slate-800 p-7 sm:p-10"><p className="marketing-eyebrow">A review that ends with an explanation</p><h2 id="workflow-heading" className="mt-3 text-3xl font-semibold">From “what changed?” to “here’s why.”</h2><p className="mt-4 max-w-2xl leading-7 text-slate-400">Keep the reporting scope consistent as you move from the bill to its contributors. Bring the findings back to the people who own the workload.</p><div className="mt-10 grid gap-6 md:grid-cols-3">{[
+          { title: 'Spot the variance', text: 'Compare periods and isolate the services driving the change. Check missing subscriptions and billing freshness first.', href: '/features/azure-cost-intelligence/#explorer' },
+          { title: 'Connect the evidence', text: 'Inspect resource and meter costs alongside configuration changes, utilization and activity history.', href: '/features/azure-resource-optimization/#changes' },
+          { title: 'Review the next action', text: 'Validate cost, access and operational context with the owner before a resize, commitment or deployment.', href: '/features/azure-access-governance/' },
+        ].map((step, index) => <a key={step.title} href={step.href} className="marketing-link rounded-xl border border-slate-800 bg-slate-950/50 p-6"><span className="text-sm font-semibold text-blue-400">STEP 0{index + 1}</span><h3 className="mt-4 text-lg font-semibold">{step.title}</h3><p className="mt-3 text-sm leading-7 text-slate-400">{step.text}</p><ArrowUpRight className="mt-5 text-blue-400" size={18} /></a>)}</div></div></Reveal>
       </section>
 
       {/* --- how it works ----------------------------------------- */}
@@ -590,8 +620,8 @@ export default function Landing() {
         <div className="mx-auto max-w-6xl">
           <SectionHeading
             eyebrow="How it works"
-            title="Running in about a minute"
-            body="There is nothing to deploy and no agent to install. The app reads Azure's own APIs on your behalf."
+            title="A clear path from sign-in to insight"
+            body="Sign in, connect the right scope, and start a review. Azure permissions, directory consent and data availability determine which reports you can access."
             align="center"
           />
 
@@ -665,9 +695,9 @@ export default function Landing() {
                 </p>
                 <ul className="mt-5 space-y-2.5 text-sm text-slate-400">
                   {[
-                    'Templates are generated, never applied — you run them',
+                    'Review generated templates and pricing assumptions before taking action',
                     'Lines it could not represent are named, with the reason',
-                    'A review step always sits in front of the step that spends money',
+                    'Build deployment requires confirmation, an admin role and Azure permissions',
                   ].map((t) => (
                     <li key={t} className="flex gap-2.5">
                       <Check className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
@@ -766,6 +796,14 @@ export default function Landing() {
         </div>
       </section>
 
+      <section className="mx-auto max-w-6xl px-5 pb-20 sm:px-8" aria-labelledby="guides-heading">
+        <h2 id="guides-heading" className="text-3xl font-semibold">Learn to understand your Azure bill</h2>
+        <div className="mt-8 grid gap-5 md:grid-cols-3">{GUIDES.map(guide => <a key={guide.slug} href={guidePath(guide)} className="rounded-2xl border border-slate-800 bg-slate-900 p-6 hover:border-blue-500">
+          <h3 className="text-lg font-semibold">{guide.title}</h3><p className="mt-3 text-sm leading-7 text-slate-400">{guide.description}</p><span className="mt-4 block text-sm text-blue-400">Read guide →</span>
+        </a>)}</div>
+        <a className="mt-6 inline-block text-sm text-blue-400" href="/guides/">Browse all guides →</a>
+      </section>
+
       {/* --- closing cta ------------------------------------------ */}
       <section className="px-5 pb-24 sm:px-8">
         <Reveal>
@@ -781,8 +819,8 @@ export default function Landing() {
               See your own numbers
             </h2>
             <p className="relative mx-auto mt-4 max-w-lg text-base leading-7 text-[#cbd5e1]">
-              Sign in with your work account and connect a tenant. If you do not like what you
-              see, disconnect it — nothing was changed.
+              Sign in with your work account, connect a tenant, and start with a read-only
+              cost review. Bring the evidence to your next cloud planning conversation.
             </p>
             <div className="relative mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <button
@@ -824,7 +862,7 @@ export default function Landing() {
             <ul className="mt-4 space-y-2.5 text-sm text-slate-400">
               {SECTIONS.map((s) => (
                 <li key={s.key}>
-                  <a href="#features" className="hover:text-white">{s.title}</a>
+                  <a href={productPath(PRODUCTS.find(p => p.key === s.key))} className="hover:text-white">{s.title}</a>
                 </li>
               ))}
             </ul>

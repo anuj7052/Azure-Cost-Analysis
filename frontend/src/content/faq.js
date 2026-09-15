@@ -14,7 +14,7 @@
 export const FAQ = [
   {
     q: 'Does it change anything in my Azure account?',
-    a: 'No. Every screen reads. The only feature that produces infrastructure writes a template to a file for you to review and run yourself — the app never applies it.',
+    a: 'Reporting and cost exploration are read-only. Build can create supported Azure resources, but requires explicit confirmation, workspace-admin authorization and sufficient Azure permissions. Review generated templates and deployment details before creating resources.',
   },
   {
     q: 'What does it cost to run?',
@@ -26,7 +26,7 @@ export const FAQ = [
   },
   {
     q: 'Where do the numbers come from?',
-    a: 'From Azure, at the time you ask. Nothing is estimated or modelled. When a figure is genuinely unavailable the screen says so rather than showing a zero.',
+    a: 'Billed costs come from Azure Cost Management. Resource inventory and findings come from the relevant Azure services. Forecasts, retail-price estimates and optimization projections are distinct from billed actuals. Check the reporting period, freshness and any partial-data messages.',
   },
   {
     q: 'Can my colleagues use it?',

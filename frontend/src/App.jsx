@@ -350,6 +350,17 @@ function PublicSite() {
   );
 }
 
+const Guides = lazy(() => import('./pages/Guides'));
+const ProductDetail = lazy(() => import('./pages/ProductDetail'));
+
+function SiteRoutes() {
+  return <Routes>
+    <Route path="/features/*" element={<Suspense fallback={<PageLoader />}><ProductDetail /></Suspense>} />
+    <Route path="/guides/*" element={<Suspense fallback={<PageLoader />}><Guides /></Suspense>} />
+    <Route path="*" element={<RequireAuth signedOut={<PublicSite />}><AppShell /></RequireAuth>} />
+  </Routes>;
+}
+
 export default function App() {
   const theme = useTheme(s => s.theme);
   const light = theme === 'light';
@@ -364,9 +375,7 @@ export default function App() {
               : { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' },
           }}
         />
-        <RequireAuth signedOut={<PublicSite />}>
-          <AppShell />
-        </RequireAuth>
+        <SiteRoutes />
       </BrowserRouter>
     </AuthProvider>
   );
