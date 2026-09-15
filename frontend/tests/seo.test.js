@@ -26,6 +26,35 @@ function jsonLd() {
 const nodeOfType = (type) =>
   jsonLd()['@graph'].find((n) => n['@type'] === type);
 
+describe('guide library', () => {
+  it('gives every guide a topic, a unique slug and real content', () => {
+    const slugs = GUIDES.map((guide) => guide.slug);
+    expect(new Set(slugs).size).toBe(slugs.length);
+
+    for (const guide of GUIDES) {
+      expect(guide.topic, guide.slug).toBeTruthy();
+      expect(guide.title.length, guide.slug).toBeGreaterThan(15);
+      expect(guide.description.length, guide.slug).toBeGreaterThan(60);
+      expect(guide.sections.length, guide.slug).toBeGreaterThanOrEqual(4);
+      expect(guide.sources.length, guide.slug).toBeGreaterThanOrEqual(2);
+
+      for (const section of guide.sections) {
+        // Thin sections are the failure mode of a growing library: a page that
+        // looks complete in a list and answers nothing when it is opened.
+        expect(section.body.length, `${guide.slug} / ${section.title}`).toBeGreaterThan(220);
+      }
+      for (const source of guide.sources) {
+        expect(source.url, guide.slug).toMatch(/^https:\/\//);
+      }
+    }
+  });
+
+  it('does not reuse one description across guides', () => {
+    const descriptions = GUIDES.map((guide) => guide.description);
+    expect(new Set(descriptions).size).toBe(descriptions.length);
+  });
+});
+
 describe('structured data', () => {
   it('has public details for every advertised product workflow', () => {
     for (const section of SECTIONS) {

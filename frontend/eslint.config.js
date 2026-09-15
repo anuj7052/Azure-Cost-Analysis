@@ -23,7 +23,16 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // Uppercase identifiers are components and constants. Without
+      // eslint-plugin-react there is no `jsx-uses-vars`, so anything consumed
+      // only inside JSX reads as unused. `varsIgnorePattern` already covers
+      // imported components; `argsIgnorePattern` extends the same rule to a
+      // component passed in as a prop (`function Card({ icon: Icon })`), which
+      // is otherwise reported as dead code in a file that renders it.
+      'no-unused-vars': ['error', {
+        varsIgnorePattern: '^[A-Z_]',
+        argsIgnorePattern: '^[A-Z_]',
+      }],
 
       // Downgraded, not dismissed.
       //

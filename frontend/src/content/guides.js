@@ -2,6 +2,7 @@ export const SITE = 'https://azure.microsoftupdates.co.in';
 export const GUIDES = [
   {
     slug: 'investigate-azure-cost-spikes',
+    topic: 'Cost troubleshooting',
     title: 'How to investigate an Azure cost spike',
     description: 'Find why your Azure bill increased: align billing periods, compare services, drill into resources and separate reservation payments from usage growth.',
     sections: [
@@ -16,6 +17,7 @@ export const GUIDES = [
   },
   {
     slug: 'actual-vs-amortized-reservation-costs',
+    topic: 'Commitments',
     title: 'Azure Actual cost vs Amortized cost explained',
     description: 'Understand Azure reservation charges, upfront purchases, amortized allocation and unused benefits so you can compare cloud costs on the right basis.',
     sections: [
@@ -30,6 +32,7 @@ export const GUIDES = [
   },
   {
     slug: 'azure-pricing-calculator-vs-actual-bill',
+    topic: 'Cost troubleshooting',
     title: 'Compare an Azure Pricing Calculator estimate with your bill',
     description: 'Reconcile an Azure BOQ or Pricing Calculator estimate with actual costs by matching resources, periods, usage assumptions and billing rates.',
     sections: [
@@ -45,6 +48,7 @@ export const GUIDES = [
   },
   {
     slug: 'find-idle-and-orphaned-azure-resources',
+    topic: 'Optimization',
     title: 'Find idle and orphaned Azure resources that still cost money',
     description: 'Review unattached disks, snapshots, public IPs and idle workloads. Confirm ownership, dependencies and billing before retiring Azure resources.',
     sections: [
@@ -59,6 +63,7 @@ export const GUIDES = [
   },
   {
     slug: 'understand-azure-bandwidth-data-transfer-costs',
+    topic: 'Cost troubleshooting',
     title: 'Understand Azure bandwidth and data transfer charges',
     description: 'Trace Azure data transfer costs by service, region and meter, distinguish network processing fees, and investigate unexpected bandwidth increases.',
     sections: [
@@ -73,6 +78,7 @@ export const GUIDES = [
   },
   {
     slug: 'rightsize-azure-virtual-machines',
+    topic: 'Optimization',
     title: 'Rightsize Azure virtual machines using utilization data',
     description: 'Assess Azure VM CPU, memory, storage and network demand, compare compatible sizes, and validate performance and savings after a resize.',
     sections: [
@@ -87,6 +93,7 @@ export const GUIDES = [
   },
   {
     slug: 'monthly-azure-cost-review-checklist',
+    topic: 'Product guides',
     title: 'A monthly Azure cost review checklist for cloud teams',
     description: 'Run a repeatable Azure cost review: confirm billing completeness, explain variance, review commitments, assign actions and measure realized savings.',
     sections: [
@@ -99,6 +106,231 @@ export const GUIDES = [
       { title: 'Publish a concise monthly summary', body: 'Summarize total spend, the main contributors to variance, open data gaps, actions completed and savings verified. Keep an appendix with filters and supporting resource IDs so another reviewer can reproduce the figures. Cloudledger’s Dashboard, Cost Explorer, Commitments and BOQ views can support this review; the action register and budget configuration can be maintained in the team’s existing tools.' },
     ],
     sources: [{ label: 'Microsoft: Create and manage Azure budgets', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-acm-create-budgets' }, { label: 'Microsoft: Cost Management best practices', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/cost-mgt-best-practices' }, { label: 'Microsoft: Azure Advisor overview', url: 'https://learn.microsoft.com/en-us/azure/advisor/advisor-overview' }],
+  },
+  {
+    slug: 'why-azure-vm-costs-more-than-expected',
+    title: 'Why an Azure VM costs more than the VM price',
+    description: 'A virtual machine bill combines compute, licensing, disks, snapshots, IP addresses, bandwidth and backup. Learn to read every meter behind one VM.',
+    topic: 'Cost troubleshooting',
+    sections: [
+      { title: 'One resource, several billing meters', body: 'People compare a Pricing Calculator compute rate with the total charge for a virtual machine and conclude the bill is wrong. Usually it is not: a running VM is billed through several separate meters. Compute hours, operating-system licensing, each attached managed disk, snapshots, public IP addresses, outbound data transfer, backup storage and monitoring can all appear as distinct lines. Read the bill at meter level before deciding anything looks incorrect.' },
+      { title: 'Group the cost by resource and meter', body: 'In Cost Management, filter to the VM’s resource group or resource ID and group by meter. You will normally see compute separated from storage and networking. Disks usually bill by provisioned capacity and performance tier rather than by how full they are, so an almost-empty 1 TB disk can cost as much as a full one.', steps: ['Filter costs to the resource or resource group for a complete period.', 'Group by meter category and meter to see every component.', 'Note quantity and unit for each meter before comparing rates.', 'Check whether the disks, IPs and backups belong only to this VM.'] },
+      { title: 'Licensing is often the missing line', body: 'Windows Server and some Linux distributions include licence charges in addition to compute. If your organisation has eligible licences, Azure Hybrid Benefit may apply, but eligibility, coverage and terms come from your licensing agreement rather than from the portal view alone. Confirm entitlement with whoever owns your licensing before assuming a discount applies.' },
+      { title: 'Stopped is not always free', body: 'A VM stopped from inside the guest operating system can remain allocated and continue to incur compute charges. Deallocating the VM in Azure stops normal VM compute billing, but attached disks, reserved IP addresses, snapshots and backups continue to be billed. Check the power state in Azure rather than relying on what the guest reports.' },
+      { title: 'A worked read of one VM', body: 'Illustrative example: a VM shows ₹10,000 of compute, ₹2,500 of managed disks, ₹800 of backup and ₹400 of bandwidth in a month. The total of ₹13,700 is roughly 37% above the compute figure alone. Nothing is wrong with the bill; the estimate simply covered one meter. These figures are for illustration and are not Azure price quotes.' },
+      { title: 'Turn the finding into an action', body: 'Once you know which meter dominates, the action differs. High compute suggests rightsizing or scheduling; high disk cost suggests reviewing capacity, tier and orphaned disks; high bandwidth suggests examining traffic paths. Cloudledger’s Cost Explorer can show these meters together for a single resource, and Compute Intelligence can inform a sizing decision.' },
+    ],
+    sources: [{ label: 'Microsoft: Azure VM states and billing', url: 'https://learn.microsoft.com/en-us/azure/virtual-machines/states-billing' }, { label: 'Microsoft: Azure Hybrid Benefit', url: 'https://learn.microsoft.com/en-us/azure/virtual-machines/windows/hybrid-use-benefit-licensing' }, { label: 'Microsoft: Managed disks overview', url: 'https://learn.microsoft.com/en-us/azure/virtual-machines/managed-disks-overview' }],
+  },
+  {
+    slug: 'azure-storage-cost-growth',
+    title: 'Why Azure Storage costs keep growing',
+    description: 'Understand Azure Storage billing: capacity, access tiers, transactions, redundancy, snapshots, versioning and soft delete, and how to investigate steady growth.',
+    topic: 'Cost troubleshooting',
+    sections: [
+      { title: 'Storage bills on more than stored bytes', body: 'A storage account can be charged for stored capacity, transactions, data retrieval in cooler tiers, redundancy options and features such as versioning, snapshots, soft delete and change feed. Steady growth is often retained data rather than new uploads. Establish which component is growing before changing anything.' },
+      { title: 'Separate capacity growth from transaction growth', body: 'Group costs by meter to distinguish capacity from operations. An application that reads the same blobs frequently can generate significant transaction cost without increasing stored bytes. Conversely, an archive workload can grow capacity slowly with almost no transactions. The two need different responses.', steps: ['Compare capacity and transaction meters across the same periods.', 'Check per-account and per-container growth using storage metrics.', 'Review lifecycle policies, retention settings and backup schedules.', 'Look for versioning, snapshots and soft-deleted data retained beyond need.'] },
+      { title: 'Access tiers change the trade-off, not just the price', body: 'Cool and archive tiers generally reduce storage cost per GB but can add retrieval charges, minimum retention periods and rehydration latency. Moving frequently read data to a cooler tier can increase total cost. Base tiering on measured access patterns, and check the current pricing and retention rules for your account type and region.' },
+      { title: 'Redundancy is a deliberate cost', body: 'Locally redundant, zone-redundant and geo-redundant options offer different durability and availability guarantees at different prices. Reducing redundancy lowers cost and lowers protection. That decision belongs with whoever owns the data’s recovery requirements, not with a cost report alone.' },
+      { title: 'Investigate a specific growth curve', body: 'Plot daily storage cost alongside capacity metrics and deployment dates. If cost rises while capacity is flat, examine transactions, retrieval and feature charges. If capacity rises steadily with no new business volume, examine retention, snapshots, log exports and backup copies. Cloudledger’s Cost Explorer can isolate the storage meters and the resources behind them.' },
+    ],
+    sources: [{ label: 'Microsoft: Blob storage access tiers', url: 'https://learn.microsoft.com/en-us/azure/storage/blobs/access-tiers-overview' }, { label: 'Microsoft: Azure Storage redundancy', url: 'https://learn.microsoft.com/en-us/azure/storage/common/storage-redundancy' }, { label: 'Microsoft: Blob lifecycle management', url: 'https://learn.microsoft.com/en-us/azure/storage/blobs/lifecycle-management-overview' }],
+  },
+  {
+    slug: 'azure-backup-and-recovery-costs',
+    title: 'Understand Azure Backup and Site Recovery charges',
+    description: 'Review Azure Backup billing: protected instances, backup storage, retention, redundancy and restore points, plus how recovery services affect your monthly cost.',
+    topic: 'Cost troubleshooting',
+    sections: [
+      { title: 'Protection charges and storage charges are separate', body: 'Azure Backup typically bills a protected-instance component alongside the storage consumed by recovery points. Retention settings drive the storage part: longer retention keeps more restore points, and daily, weekly, monthly and yearly rules compound. A backup bill can rise for months after a policy change as older points accumulate.' },
+      { title: 'Retention policy is the main cost lever', body: 'Review each policy against an actual recovery requirement. Many estates run default long-term retention on non-critical workloads. Shortening retention reduces cost but reduces how far back you can restore, so agree the change with the data owner and record the decision.', steps: ['List vaults, policies and the workloads attached to each.', 'Compare retention against documented recovery requirements.', 'Check redundancy settings on the vault.', 'Identify protected items that no longer exist or are no longer needed.'] },
+      { title: 'Watch for protection that outlives the workload', body: 'When a VM is deleted, its recovery points can remain and continue to incur storage charges. That may be intentional. If it is not, removing protection requires care: deleting recovery points removes the ability to restore. Confirm ownership and compliance requirements before cleaning up.' },
+      { title: 'Site Recovery has its own model', body: 'Azure Site Recovery is charged per protected instance in addition to the storage and any compute used during test failovers or actual failovers. A disaster-recovery test can therefore create a temporary cost increase that is expected rather than anomalous. Record test windows so later cost reviews can explain the spike.' },
+      { title: 'Check the figure against the workload', body: 'Compare backup cost with the value and recovery requirement of the protected data. A small database with seven years of retention can cost more than the workload it protects. Cloudledger’s Cost Explorer can show backup and recovery meters alongside the rest of the estate for that comparison.' },
+    ],
+    sources: [{ label: 'Microsoft: Azure Backup pricing overview', url: 'https://learn.microsoft.com/en-us/azure/backup/azure-backup-pricing' }, { label: 'Microsoft: Backup policies', url: 'https://learn.microsoft.com/en-us/azure/backup/backup-architecture' }, { label: 'Microsoft: Azure Site Recovery overview', url: 'https://learn.microsoft.com/en-us/azure/site-recovery/site-recovery-overview' }],
+  },
+  {
+    slug: 'control-azure-monitor-log-analytics-costs',
+    title: 'Control Azure Monitor and Log Analytics costs',
+    description: 'Reduce log ingestion and retention charges by reviewing data sources, table plans, sampling, diagnostic settings and retention against real operational need.',
+    topic: 'Cost troubleshooting',
+    sections: [
+      { title: 'Ingestion volume drives the bill', body: 'Azure Monitor Logs is generally charged on the volume of data ingested and on retention beyond the included period, with commitment tiers available at higher volumes. A single verbose diagnostic setting, a chatty application log or a newly onboarded subscription can change the monthly figure sharply.' },
+      { title: 'Find the tables and resources responsible', body: 'Use workspace usage queries to rank data volume by table and by resource. Ingestion is rarely spread evenly: a small number of tables usually dominates. Investigate the top contributors before adjusting anything globally.', steps: ['Review workspace usage by table over a representative period.', 'Identify the resources sending the largest volumes.', 'Check which diagnostic settings and agents produce that data.', 'Confirm which logs are used by alerts, dashboards or investigations.'] },
+      { title: 'Keep what is used, reduce what is not', body: 'Options include narrowing diagnostic categories, filtering at the source, choosing a lower-cost table plan where appropriate, adjusting retention and archiving data that is needed only occasionally. Each option changes what you can query later, so review with the people who rely on those logs during incidents.' },
+      { title: 'Retention and archive are different questions', body: 'Interactive retention keeps data immediately queryable; archive or long-term retention usually costs less but adds a restore or search step. Security and compliance requirements often set a floor. Confirm those requirements before reducing retention to save money.' },
+      { title: 'Verify the change', body: 'After adjusting settings, compare ingestion volume and cost over a complete period and confirm alerts and dashboards still work. A saving that quietly breaks an incident workflow is not a saving. Cloudledger can surface the monitoring meters in the wider cost picture so the trade-off is visible.' },
+    ],
+    sources: [{ label: 'Microsoft: Azure Monitor cost and usage', url: 'https://learn.microsoft.com/en-us/azure/azure-monitor/cost-usage' }, { label: 'Microsoft: Analyze usage in a Log Analytics workspace', url: 'https://learn.microsoft.com/en-us/azure/azure-monitor/logs/analyze-usage' }, { label: 'Microsoft: Data retention and archive', url: 'https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-retention-configure' }],
+  },
+  {
+    slug: 'azure-managed-disk-cost-optimization',
+    title: 'Optimize Azure managed disk costs',
+    description: 'Review disk tiers, provisioned capacity, performance settings, snapshots and unattached disks to reduce Azure storage spend without risking workload performance.',
+    topic: 'Optimization',
+    sections: [
+      { title: 'You pay for what is provisioned', body: 'Managed disks are generally billed on provisioned size and performance characteristics rather than on the data actually written. A 1 TB disk holding 80 GB usually costs the same as a full one. That makes provisioning decisions, not cleanup inside the guest, the main cost lever.' },
+      { title: 'Match the tier to measured demand', body: 'Disk families differ in latency, throughput and IOPS behaviour. Some workloads need consistent low latency; others are largely idle. Review disk metrics over a representative period, including peaks and scheduled jobs, before changing tier. Changing a disk type can require the VM to be stopped, and some conversions are restricted.', steps: ['Collect disk IOPS, throughput and latency for a representative window.', 'Compare observed demand with the limits of the candidate tier.', 'Check VM-level limits, which can cap disk performance regardless of tier.', 'Plan a maintenance window and a rollback option before converting.'] },
+      { title: 'Snapshots and images accumulate quietly', body: 'Snapshots are separate billable resources. Automated processes that snapshot before every change can build a long tail of forgotten copies. Review snapshot inventory and age, confirm retention requirements, and remove only what an owner agrees is no longer needed.' },
+      { title: 'Unattached disks are the obvious win — with a caveat', body: 'Disks left after a VM is deleted keep billing. Many are safe to remove, but some are retained deliberately for recovery or forensics. Confirm ownership and check for resource locks, then consider a snapshot-and-delete approach where policy allows — remembering the snapshot itself has a cost.' },
+      { title: 'Measure the result properly', body: 'Illustrative example: removing four unattached disks that cost ₹500 each per month suggests around ₹2,000 per month less spend. Verify against the next complete billing period, since mid-month deletion leaves partial charges. Cloudledger’s Orphaned Resources view helps build the candidate list with billing evidence.' },
+    ],
+    sources: [{ label: 'Microsoft: Managed disk types', url: 'https://learn.microsoft.com/en-us/azure/virtual-machines/disks-types' }, { label: 'Microsoft: Azure disk pricing', url: 'https://azure.microsoft.com/en-us/pricing/details/managed-disks/' }, { label: 'Microsoft: Snapshots overview', url: 'https://learn.microsoft.com/en-us/azure/virtual-machines/snapshot-copy-managed-disk' }],
+  },
+  {
+    slug: 'schedule-azure-vms-to-cut-costs',
+    title: 'Schedule Azure VMs to cut non-production cost',
+    description: 'Use start and stop schedules for development and test workloads, and understand what continues to bill while a virtual machine is deallocated.',
+    topic: 'Optimization',
+    sections: [
+      { title: 'Scheduling suits predictable workloads', body: 'Development, test, training and demonstration environments often run continuously while being used only during working hours. Where a workload genuinely has idle windows, deallocating it during those hours reduces compute charges. Production systems, batch jobs and anything with an availability commitment need a different approach.' },
+      { title: 'Know what stops and what continues', body: 'Deallocating a VM stops normal VM compute billing. Managed disks, static public IP addresses, snapshots, backups and many platform services continue to be charged. Scheduling therefore reduces part of the bill, not all of it. Estimate the saving from the compute meter rather than from the VM’s total cost.' },
+      { title: 'Plan the schedule with the people who use it', body: 'A schedule that shuts down an environment during someone’s working hours creates lost time, not savings. Agree operating windows, time zones, public holidays and exceptions with the teams who use the environment, and give them an easy manual override for the days they need to work late. Write down who owns the schedule and how to request a change, so the first unexpected shutdown does not end with the automation being disabled entirely.', steps: ['List candidate environments and confirm their owners.', 'Agree operating hours, including time zones and exceptions.', 'Check dependencies: databases, agents, licences and startup order.', 'Implement the schedule with a documented manual override.', 'Review after a full billing period.'] },
+      { title: 'Choose an implementation you can support', body: 'Azure offers several ways to automate start and stop, including built-in VM auto-shutdown, Azure Automation and other scheduling approaches. Whichever you choose, treat it as production automation: it needs permissions, logging, failure handling and someone responsible when a machine does not come back up.' },
+      { title: 'Verify the saving against reality', body: 'Illustrative example: a VM billed for 730 hours a month, scheduled to run only 12 hours a day on weekdays, runs roughly 260 hours. The compute portion falls in proportion, while disks and other retained resources continue. Confirm both the actual running hours and the billed amount afterwards rather than reporting the projection.' },
+    ],
+    sources: [{ label: 'Microsoft: Azure VM states and billing', url: 'https://learn.microsoft.com/en-us/azure/virtual-machines/states-billing' }, { label: 'Microsoft: Auto-shutdown for VMs', url: 'https://learn.microsoft.com/en-us/azure/virtual-machines/auto-shutdown-vm' }, { label: 'Microsoft: Start/Stop VMs', url: 'https://learn.microsoft.com/en-us/azure/azure-functions/start-stop-vms/overview' }],
+  },
+  {
+    slug: 'reduce-azure-dev-test-environment-costs',
+    title: 'Reduce Azure development and test environment costs',
+    description: 'Control non-production Azure spend with sizing, scheduling, retention, environment lifecycle rules and clear ownership, without slowing delivery teams down.',
+    topic: 'Optimization',
+    sections: [
+      { title: 'Non-production accumulates by default', body: 'Test environments are usually created quickly and removed slowly. Over a year, an estate can accumulate environments for projects that shipped, proofs of concept that ended and duplicated stacks per developer. The cost is rarely one large item; it is many small ones that nobody owns.' },
+      { title: 'Start with ownership, not deletion', body: 'Attribute non-production cost to a team, project or environment using subscriptions, resource groups and tags. Without attribution, every cleanup conversation becomes a search for whoever recognises a resource name. With it, the conversation is about a specific owner’s environment and a specific figure.', steps: ['Group non-production spend by subscription, resource group and tag.', 'Identify environments with no recent activity or deployments.', 'Confirm each environment’s owner and its expected end date.', 'Agree scheduling, resizing or removal for each candidate.'] },
+      { title: 'Apply the cheapest safe change first', body: 'Scheduling and rightsizing usually carry less risk than deletion. Reduced redundancy, shorter retention and smaller data copies can also help in non-production. Keep production-like performance where teams genuinely need it to validate behaviour; a test that no longer reflects production has a cost of its own.' },
+      { title: 'Use policy to prevent regrowth', body: 'Consider guardrails such as naming and tagging requirements, allowed SKUs and regions, budget alerts per environment, and an expiry convention for temporary stacks. Guardrails work better when the owning teams help define them, and when there is a clear process for legitimate exceptions.' },
+      { title: 'Review it on a schedule', body: 'Non-production spend drifts back without a recurring review. Include it in the monthly cost review, track actions to completion, and record the verified saving separately from the projected one. Cloudledger’s resource group and change views can support that recurring check.' },
+    ],
+    sources: [{ label: 'Microsoft: Cost Management best practices', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/cost-mgt-best-practices' }, { label: 'Microsoft: Azure Policy overview', url: 'https://learn.microsoft.com/en-us/azure/governance/policy/overview' }, { label: 'Microsoft: Tag resources for cost management', url: 'https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-tagging' }],
+  },
+  {
+    slug: 'azure-reservations-vs-savings-plans',
+    title: 'Azure reservations vs savings plans: how to choose',
+    description: 'Compare Azure reservations and savings plans by flexibility, scope, eligible services and commitment risk, and decide which fits a workload you can predict.',
+    topic: 'Commitments',
+    sections: [
+      { title: 'Both are commitments, not discounts you can cancel freely', body: 'A reservation commits to a specific resource type for a term. A savings plan commits to an hourly spend amount across eligible compute services. Both exchange flexibility for a lower rate. Exchange, refund and cancellation rules are set by Microsoft and change over time, so check the current terms before committing.' },
+      { title: 'Reservations: predictable shape, stronger match', body: 'Reservations generally suit workloads whose size, region and service are stable for the term. Instance size flexibility can broaden coverage within a family. The risk is a workload that changes: an unused reservation still costs money unless it can be exchanged or its scope changed to cover other eligible usage.' },
+      { title: 'Savings plans: flexible placement, hourly commitment', body: 'A savings plan applies to eligible compute usage up to the hourly amount you commit. That suits estates that change shape but keep a stable baseline of spend. Usage above the commitment is billed at normal rates; commitment left unused in an hour is generally not recovered later.' },
+      { title: 'Size the commitment from history, not ambition', body: 'Use a representative period of actual usage, exclude one-off events and leave headroom for planned decommissioning. Consider committing to the stable floor of your usage rather than its average, so that normal variation does not leave the commitment unused.', steps: ['Review eligible usage over a representative recent period.', 'Identify the stable baseline rather than the peak.', 'Check planned migrations, shutdowns and rightsizing work.', 'Confirm current term, scope, exchange and refund rules.', 'Record who approved the commitment and why.'] },
+      { title: 'Review after purchase', body: 'Check utilization and coverage after the first full period. Low utilization means committed money is not being used; low coverage means eligible usage is still billed at normal rates. Cloudledger’s Commitments view can support that review, and the amortized cost basis helps compare periods fairly.' },
+    ],
+    sources: [{ label: 'Microsoft: What are Azure Reservations', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/reservations/save-compute-costs-reservations' }, { label: 'Microsoft: Azure savings plan for compute', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/savings-plan/savings-plan-compute-overview' }, { label: 'Microsoft: Reservation utilization', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/reservations/reservation-utilization' }],
+  },
+  {
+    slug: 'plan-azure-reservation-expiry',
+    title: 'Plan for Azure reservation expiry before it costs you',
+    description: 'Track reservation and savings plan end dates, review utilization and workload plans, and decide whether to renew, resize, exchange or let a commitment lapse.',
+    topic: 'Commitments',
+    sections: [
+      { title: 'Expiry is a scheduled cost change', body: 'When a reservation ends, the covered usage returns to normal pay-as-you-go rates unless it is renewed or replaced. If nobody is tracking end dates, that appears later as an unexplained cost increase. Treat expiry as a planned event with an owner and a decision date.' },
+      { title: 'Build the expiry calendar', body: 'List every reservation and savings plan with its scope, term, end date and current utilization. Add the workloads each one covers and the team responsible. Review the list monthly so decisions are made before the last week of a term.', steps: ['Export or record all commitments with end dates and scopes.', 'Note utilization and coverage for the recent period.', 'Map each commitment to the workloads it covers.', 'Set a decision date at least a month before expiry.', 'Record the decision and who approved it.'] },
+      { title: 'Decide from the workload, not the habit', body: 'Renewal makes sense when the workload will persist and utilization has been high. It makes less sense when the workload is being migrated, rearchitected or rightsized. Where the shape has changed, a different size, scope or commitment type may fit better than repeating the previous purchase.' },
+      { title: 'Check auto-renewal settings deliberately', body: 'Automatic renewal avoids an accidental lapse but can also renew a commitment you intended to end, at whatever the terms are on the renewal date. Confirm the setting for each commitment and make sure the outcome matches the decision recorded by the owner. Where a workload is being migrated or retired during the term, put the renewal decision date in the same calendar as the migration plan so the two are not decided by different people in different weeks.' },
+      { title: 'Verify the following period', body: 'After a renewal or lapse, compare the next complete billing period against the previous one and confirm the change is what you expected. Use the amortized view for like-for-like comparison, and record the explanation for the next cost review.' },
+    ],
+    sources: [{ label: 'Microsoft: Renew Azure reservations', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/reservations/reservation-renew' }, { label: 'Microsoft: Manage reservations', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/reservations/manage-reserved-vm-instance' }, { label: 'Microsoft: View amortized costs', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/reservations/view-amortized-costs' }],
+  },
+  {
+    slug: 'azure-sql-database-cost-guide',
+    title: 'Understand and reduce Azure SQL Database costs',
+    description: 'Review Azure SQL purchasing models, service tiers, storage, backup retention and idle databases to explain and control your database spend.',
+    topic: 'Service guides',
+    sections: [
+      { title: 'The purchasing model shapes the bill', body: 'Azure SQL Database offers vCore and DTU-based models, along with options such as serverless and elastic pools. Each bills differently, so two databases with similar workloads can have very different cost profiles. Identify the model in use before comparing databases or estimating a change.' },
+      { title: 'Compute, storage and backup are separate lines', body: 'Compute is usually the largest component, but allocated storage and backup retention also bill. Long-term retention can accumulate quietly. Group by meter for a single database to see the split before deciding what to change.', steps: ['Identify the purchasing model and tier for each database.', 'Group costs by meter for a complete period.', 'Review allocated storage against actual use.', 'Check backup retention against recovery requirements.'] },
+      { title: 'Look for idle and oversized databases', body: 'Non-production databases often run at provisioned capacity around the clock. Serverless or elastic pools can suit intermittent workloads, while a smaller tier may fit a steady low-usage database. Validate against performance metrics and business requirements; a database that fails at month-end is not optimized.' },
+      { title: 'Reservations apply to some database compute', body: 'Reserved capacity can reduce the rate for eligible vCore-based compute. The commitment considerations are the same as for other reservations: term, scope, eligibility and the risk of committing to a shape that changes. Confirm eligibility for your specific configuration.' },
+      { title: 'Change carefully and verify', body: 'Tier and model changes can affect performance, availability and failover behaviour. Test with a representative workload where possible, agree a maintenance window and keep a rollback path. Then confirm the effect on both performance and the next complete billing period.' },
+    ],
+    sources: [{ label: 'Microsoft: Azure SQL Database purchasing models', url: 'https://learn.microsoft.com/en-us/azure/azure-sql/database/purchasing-models' }, { label: 'Microsoft: Serverless compute tier', url: 'https://learn.microsoft.com/en-us/azure/azure-sql/database/serverless-tier-overview' }, { label: 'Microsoft: Automated backups', url: 'https://learn.microsoft.com/en-us/azure/azure-sql/database/automated-backups-overview' }],
+  },
+  {
+    slug: 'azure-kubernetes-service-cost-guide',
+    title: 'Understand Azure Kubernetes Service costs',
+    description: 'Break down AKS spend across node pools, disks, load balancers, egress, logging and scaling behaviour, and attribute cluster cost to workloads.',
+    topic: 'Service guides',
+    sections: [
+      { title: 'Most AKS cost is the resources the cluster runs', body: 'An AKS bill is largely the node virtual machines, their disks, load balancers, public IP addresses, egress and any monitoring or logging attached to the cluster. Understanding cluster cost therefore means reading the underlying resource meters, not just looking for a single AKS line.' },
+      { title: 'Node pools are the main lever', body: 'Node size, count, scaling rules and the split between system and user pools determine most of the spend. Idle capacity from generous minimum counts or oversized nodes is common. Review requests, limits and actual utilization together: a cluster can look busy because of reservations in the scheduler while nodes remain largely idle.', steps: ['List node pools with VM size, minimum and maximum counts.', 'Compare node utilization with pod requests and limits.', 'Review autoscaler settings and observed scaling behaviour.', 'Check disks, load balancers and IPs attached to the cluster.'] },
+      { title: 'Attributing cost to teams needs labels', body: 'Kubernetes does not bill per namespace by default. Attribution usually requires consistent labels, namespace conventions and a cost allocation approach agreed with the platform team. Without it, cluster cost stays a single shared number that nobody can act on.' },
+      { title: 'Logging and egress add up', body: 'Container insights, control-plane logs and verbose application logging can produce significant ingestion volume, and cross-zone, cross-region or outbound traffic can add networking charges that have nothing to do with node size. Review these meters alongside compute rather than optimising nodes alone, and check which log categories are actually used during incidents before reducing them.' },
+      { title: 'Optimize with the platform owners', body: 'Options include rightsizing nodes, tuning autoscaling, consolidating pools, using appropriate disk types and reviewing log verbosity. Every change affects reliability and deployment behaviour, so involve the team that operates the cluster and validate against the next complete billing period.' },
+    ],
+    sources: [{ label: 'Microsoft: AKS cost analysis', url: 'https://learn.microsoft.com/en-us/azure/aks/cost-analysis' }, { label: 'Microsoft: Cluster autoscaler', url: 'https://learn.microsoft.com/en-us/azure/aks/cluster-autoscaler-overview' }, { label: 'Microsoft: Best practices for AKS', url: 'https://learn.microsoft.com/en-us/azure/aks/best-practices' }],
+  },
+  {
+    slug: 'azure-app-service-cost-guide',
+    title: 'Understand Azure App Service costs',
+    description: 'Review App Service plans, instance counts, scaling rules, slots, certificates and supporting services to explain and reduce web application spend.',
+    topic: 'Service guides',
+    sections: [
+      { title: 'You pay for the plan, not the app', body: 'App Service billing is generally driven by the App Service plan: its pricing tier, instance size and instance count, charged while the plan exists rather than only while the app receives traffic. Several apps can share one plan, and an empty plan can still cost money.' },
+      { title: 'Find plans with little or no traffic', body: 'Review each plan’s apps, instance count and request volume together. Non-production plans left on production-grade tiers are a common finding, as are plans left behind after an app was retired or migrated elsewhere. Because the plan bills whether or not the app receives requests, an empty plan is pure overhead — but check for scheduled jobs, webhooks and background workers before calling one idle.', steps: ['List App Service plans with tier, size and instance count.', 'Map apps and deployment slots to each plan.', 'Compare request volume and CPU/memory usage per plan.', 'Identify plans with no active apps or negligible traffic.'] },
+      { title: 'Slots and scaling change the shape', body: 'Deployment slots generally run on the same plan and consume its capacity. Autoscale rules can raise instance counts during peaks and keep them high if the rules are not tuned. Review scale-in behaviour as carefully as scale-out.' },
+      { title: 'Supporting services belong in the total', body: 'Application Insights ingestion, storage, custom domains, certificates, networking features and databases contribute to the real cost of running a web application. Compare the full picture before concluding a tier change will deliver the expected saving.' },
+      { title: 'Change with a rollback plan', body: 'Lower tiers can remove features such as staging slots, scaling limits or networking options. Confirm the app does not depend on them, test where possible, and verify both performance and the next complete billing period after the change.' },
+    ],
+    sources: [{ label: 'Microsoft: App Service plan overview', url: 'https://learn.microsoft.com/en-us/azure/app-service/overview-hosting-plans' }, { label: 'Microsoft: Scale up an app', url: 'https://learn.microsoft.com/en-us/azure/app-service/manage-scale-up' }, { label: 'Microsoft: Deployment slots', url: 'https://learn.microsoft.com/en-us/azure/app-service/deploy-staging-slots' }],
+  },
+  {
+    slug: 'azure-cost-allocation-with-tags',
+    title: 'Allocate Azure costs to teams with tags and scopes',
+    description: 'Design a tagging and scope strategy that makes Azure cost attributable to teams, products and environments, and keep it accurate over time.',
+    topic: 'Product guides',
+    sections: [
+      { title: 'Attribution is a prerequisite for action', body: 'Cost reporting without ownership produces discussion rather than change. Attribution usually combines management groups, subscriptions, resource groups and tags. Subscriptions and resource groups give structural separation; tags add the dimensions those structures cannot express, such as product, environment, cost centre and owner.' },
+      { title: 'Choose few tags and define them precisely', body: 'A small set of well-defined tags applied consistently is more useful than a large set applied sporadically. Define allowed values, case conventions and who assigns them. Ambiguous values such as three spellings of the same team name make reports look complete while being unusable.', steps: ['Agree the minimum tag set with finance and engineering.', 'Document allowed values and the owner of each tag.', 'Decide which resources are exempt and why.', 'Apply tags to new resources at deployment time.', 'Measure tag coverage and treat gaps as work items.'] },
+      { title: 'Know the limits of tagging', body: 'Not every resource type supports tags, tags do not always inherit as expected, and some shared services cannot be attributed cleanly. Decide in advance how shared platform costs will be allocated, and state the method in the report so figures are reproducible.' },
+      { title: 'Automate consistency where possible', body: 'Azure Policy can require, append or inherit tags depending on how you configure it. Automation reduces drift, but only if exceptions have a defined path. A policy that blocks legitimate deployments is quickly worked around.' },
+      { title: 'Report attribution honestly', body: 'Show untagged or unattributable spend as its own category rather than distributing it silently. That number is itself useful: it measures how much of the estate cannot yet be owned. Cloudledger’s resource group and resource views can support attribution alongside billing data.' },
+    ],
+    sources: [{ label: 'Microsoft: Resource naming and tagging', url: 'https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-tagging' }, { label: 'Microsoft: Use tags to organize resources', url: 'https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/tag-resources' }, { label: 'Microsoft: Azure Policy overview', url: 'https://learn.microsoft.com/en-us/azure/governance/policy/overview' }],
+  },
+  {
+    slug: 'azure-cost-data-freshness-and-accuracy',
+    title: 'Azure cost data freshness, latency and accuracy',
+    description: 'Understand why Azure cost figures change after the fact, how reporting latency works, and how to compare reports and invoices without drawing wrong conclusions.',
+    topic: 'Product guides',
+    sections: [
+      { title: 'Cost data settles over time', body: 'Usage records arrive with latency, and figures for recent days can change as more data is processed. A report run in the morning and again in the evening can differ legitimately. Record the refresh time alongside any figure you circulate, and avoid drawing conclusions from the most recent day alone.' },
+      { title: 'A report is not an invoice', body: 'Cost analysis views and invoices can differ because of taxes, credits, purchases, billing periods and scope. Cost analysis is designed for understanding usage and trends; the invoice is the financial record. Reconcile them deliberately rather than expecting them to match automatically.' },
+      { title: 'Partial responses are not zeros', body: 'When a subscription cannot be queried — because of permissions, throttling or a timeout — the honest reading is “unknown for that scope”, not “no cost”. Reports should say which subscriptions are missing. A total that silently excludes a subscription looks like a saving and is not.', steps: ['Check for partial-data or failed-subscription messages.', 'Confirm the reporting scope and currency.', 'Note the last refresh time with the figure.', 'Re-run after failures rather than accepting the reduced total.'] },
+      { title: 'Compare like with like', body: 'Keep the same date range, subscriptions, cost basis and currency across compared periods. Mixing actual and amortized cost, or comparing a partial month with a complete one, produces differences that have nothing to do with the workload.' },
+      { title: 'How Cloudledger handles this', body: 'Cloudledger reads Azure at the time you ask, shows the refresh time, and reports failed or missing subscriptions instead of substituting zero. Where a figure is genuinely unavailable, the screen says so, so that a gap in data is never mistaken for a fall in spend.' },
+    ],
+    sources: [{ label: 'Microsoft: Understand cost data updates', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/understand-cost-mgt-data' }, { label: 'Microsoft: Review your individual bill', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/understand/review-individual-bill' }, { label: 'Microsoft: Cost analysis quickstart', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/quick-acm-cost-analysis' }],
+  },
+  {
+    slug: 'azure-permissions-for-cost-reporting',
+    title: 'Azure permissions needed for cost and estate reporting',
+    description: 'Understand the Azure roles and directory permissions behind cost, inventory, activity and access reports, and what each report can show without them.',
+    topic: 'Product guides',
+    sections: [
+      { title: 'Reporting inherits your permissions', body: 'Cloudledger reads Azure with the signed-in person’s delegated permissions. If Azure would refuse you a figure, the application cannot show it either. That makes access the first thing to check when a report looks incomplete, before assuming the data is missing or the tool is wrong.' },
+      { title: 'Cost and inventory need different roles', body: 'Reading billed cost generally requires a cost-focused role at the relevant scope, while resource inventory needs read access to the resources themselves. Having one without the other produces a report that is genuinely partial: inventory without cost, or cost without the resources behind it.', steps: ['Confirm read access on the subscriptions you expect to see.', 'Confirm cost access at the appropriate billing or subscription scope.', 'Check whether management-group scope is needed for the estate view.', 'Re-check after subscriptions are added or access is changed.'] },
+      { title: 'Directory data changes what names appear', body: 'Without directory read permission, role assignments can only be shown as object identifiers rather than people’s names. The access reports still work; they are simply harder to read. Adding that permission is a decision about visibility of directory data and belongs with the directory owners.' },
+      { title: 'Deployment is a separate privilege', body: 'Reading costs and creating resources are different acts. Build requires workspace-admin authorization inside Cloudledger, explicit confirmation, and sufficient Azure permissions for the target subscription and resource group. None of the reporting screens acquire that ability implicitly.' },
+      { title: 'When access expires', body: 'Session tokens and delegated access can expire. When that happens the honest outcome is an explicit message, not an empty chart. Renew the tenant session in Settings, then re-run the report and confirm the scope is complete before using the figures.' },
+    ],
+    sources: [{ label: 'Microsoft: Assign access to Cost Management data', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/assign-access-acm-data' }, { label: 'Microsoft: Azure built-in roles', url: 'https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles' }, { label: 'Microsoft: Microsoft Graph permissions reference', url: 'https://learn.microsoft.com/en-us/graph/permissions-reference' }],
+  },
+  {
+    slug: 'set-azure-budgets-and-cost-alerts',
+    title: 'Set Azure budgets and cost alerts that people act on',
+    description: 'Configure Azure budgets at the right scope, choose thresholds with owners, and turn alerts into a response process instead of ignored notifications.',
+    topic: 'Product guides',
+    sections: [
+      { title: 'A budget is an alert, not a spending limit', body: 'Azure budgets notify you when actual or forecast cost crosses a threshold. They do not automatically stop resources or cap spending. Any automated response is a separate workflow that you design, with its own permissions and failure modes. Say this clearly to stakeholders who expect a hard limit.' },
+      { title: 'Choose the scope that matches ownership', body: 'A budget on a scope nobody owns produces alerts nobody acts on. Align budgets with the way work is owned — per subscription, resource group, product or environment — so that each alert has an obvious recipient who can investigate.', steps: ['Pick a scope that maps to a single accountable owner.', 'Set the amount from recent actual cost, not from hope.', 'Choose thresholds that leave time to respond.', 'Name the recipients and agree what they will do.', 'Review the budget after each complete period.'] },
+      { title: 'Thresholds should create useful lead time', body: 'A single alert at 100% arrives when the period is already spent. Earlier thresholds, and forecast-based alerts where appropriate, give time to investigate. Too many thresholds produce noise, and noisy alerts are filtered out — which is worse than having none.' },
+      { title: 'Expect latency in the data', body: 'Cost data arrives with delay, so an alert reflects what has been processed rather than the live position. A workload that started spending heavily this morning may not cross a threshold until tomorrow. Combine budget alerts with a regular review and, where a runaway cost would be serious, with resource-level controls such as quotas and scaling limits rather than relying on notification alone.' },
+      { title: 'Close the loop', body: 'Record what each alert led to: an accepted increase, an investigation, or a change. Budgets that never trigger may be set too high; budgets that always trigger are not being used as thresholds. Fold that review into the monthly cost review so the alerting stays meaningful.' },
+    ],
+    sources: [{ label: 'Microsoft: Create and manage Azure budgets', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-acm-create-budgets' }, { label: 'Microsoft: Use cost alerts', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/cost-mgt-alerts-monitor-usage-spending' }, { label: 'Microsoft: Understand cost data updates', url: 'https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/understand-cost-mgt-data' }],
   },
 ];
 
