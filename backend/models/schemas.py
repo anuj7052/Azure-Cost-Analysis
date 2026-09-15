@@ -795,6 +795,7 @@ class OrphanedResponse(BaseModel):
 
 class CostQueryRequest(BaseModel):
     tenant_id: str
+    include_reservation_context: bool = False
     subscription_ids: List[str]
     months: int = Field(default=6, ge=1, le=24)
     from_date: Optional[str] = None   # ISO date "YYYY-MM-DD" (overrides months)
@@ -813,6 +814,7 @@ class MonthlyCost(BaseModel):
     currency: str = "USD"
     by_service: dict    # { "Virtual Machines": 1234.56, ... }
     by_subscription: dict
+    reservation_context: dict = {}
 
 
 class Coverage(BaseModel):
@@ -952,6 +954,7 @@ class RgCostResponse(BaseModel):
 
 class DailyCostRequest(BaseModel):
     tenant_id: str
+    include_reservation_context: bool = False
     subscription_ids: List[str]
     months: int = Field(default=1, ge=1, le=6)
     from_date: Optional[str] = None
@@ -964,6 +967,7 @@ class DailyCostItem(BaseModel):
     total: float
     currency: str
     by_service: dict
+    reservation_context: dict = {}
 
 
 class DailyCostResponse(BaseModel):

@@ -6,7 +6,7 @@ const store = { selectedTenantId: 'tenant', selectedSubscriptionIds: ['a', 'b'],
 describe('daily query scope', () => {
   it('scopes subscriptions and RG remotely and caps rolling months', () => {
     expect(dailyRequest(store, { subscription: 'b', resource_group: 'prod', service: 'VM' }).payload).toEqual({
-      tenant_id: 'tenant', subscription_ids: ['b'], months: 6, resource_group: 'prod',
+      tenant_id: 'tenant', subscription_ids: ['b'], months: 6, resource_group: 'prod', include_reservation_context: true,
     });
   });
   it('preserves custom dates and all selected subscriptions', () => {

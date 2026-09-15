@@ -17,6 +17,7 @@ import {
 
 import { dayTimeline } from '../../utils/boqTrend';
 import { formatAmount } from '../../utils/currency';
+import ReservationNote from './ReservationNote';
 
 const KIND = {
   spike: { icon: TrendingUp, tone: 'text-rose-400', ring: 'border-rose-500/40' },
@@ -88,7 +89,7 @@ export default function DayTimeline({
               >
                 <button onClick={() => onPick?.(e.date)} aria-pressed={active} className="w-full text-left">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <p className="text-xs font-medium text-slate-200">{e.title}</p>
+                    <p className="text-xs font-medium text-slate-200">{e.title}<ReservationNote period={days.find(day => day.date === e.date)} currency={currency} compact /></p>
                     <span className="text-[10px] tabular-nums text-slate-500">{e.date}</span>
                   </div>
                   <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">

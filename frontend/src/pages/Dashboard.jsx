@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { IndianRupee, TrendingUp, TrendingDown, AlertTriangle, PiggyBank, BarChart2, Flame, Network, ArrowUpFromLine, ArrowDownToLine, CalendarDays } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
+import { ErrorState } from '../components/ui';
 import HeroCard from '../components/Cards/HeroCard';
 import DataQuality from '../components/Common/DataQuality';
 import PricingSection from '../components/Cards/PricingSection';
@@ -19,7 +20,7 @@ import { formatBytes, formatGB, formatTB, pctOf, splitBytes, toGB } from '../uti
 
 export default function Dashboard() {
   const {
-    costData, costLoading: costsPending, loadCosts,
+    costData, costLoading: costsPending, costError, loadCosts,
     selectedSubscriptionIds, selectedTenantId, months, dateKey, dateMode, fromDate, toDate,
     subscriptions,
     bandwidthData: bw, bandwidthLoading: bwLoading, loadBandwidth,
@@ -64,6 +65,7 @@ export default function Dashboard() {
     if (!(imported || (selectedTenantId && selectedSubscriptionIds.length > 0))) return undefined;
 
     let cancelled = false;
+    useAppStore.getState().primeDashboardCache();
 
     // Costs first, on its own, then the rest together.
     //
@@ -79,7 +81,7 @@ export default function Dashboard() {
     // other as well.
     (async () => {
       await loadCosts();
-      if (cancelled) return;
+       if (cancelled || !useAppStore.getState().costData) return;
       await Promise.allSettled([loadBandwidth(), loadPricing()]);
       // The chart requests daily/meter detail when its controls need it.
       // Its first monthly service view is already available in costData.
@@ -359,7 +361,7 @@ export default function Dashboard() {
         panelTitle: 'Effective Rate per GB',
         stats: [
           { label: 'Cost per GB', value: bwFull(bw?.cost_per_gb) },
-          { label: 'Cost per TB', value: bwFull((bw?.cost_per_gb || 0) * 1024) },
+          { label: 'Cost per TB', value: bw?.cost_per_gb == null ? '—' : bwFull(bw.cost_per_gb * 1024) },
           { label: 'Billed volume', value: formatBytes(bwTotal), hint: formatGB(bwTotal) },
           { label: 'Total charged', value: bwFull(bw?.total_cost) },
         ],
@@ -400,6 +402,7 @@ export default function Dashboard() {
       {/* What these figures cover. A partial total looks identical to a
           complete one, so the difference is stated next to them. */}
       <DataQuality coverage={costData?.coverage} />
+      {costError && <ErrorState title="Could not load Dashboard costs" message={costError} onRetry={() => loadCosts({ force: true })} />}
 
       {!selectedTenantId && !imported && (
         <div className="bg-blue-950/40 border border-blue-500/30 rounded-2xl p-6 text-center">
@@ -487,7 +490,7 @@ export default function Dashboard() {
                 value={item.rate ? formatAmountFull(bw?.cost_per_gb, bwCurrency) : value}
                 unit={item.rate ? '/ GB' : unit}
                 amount={item.rate
-                  ? `${formatAmount((bw?.cost_per_gb || 0) * 1024, bwCurrency)} / TB`
+                  ? bw?.cost_per_gb == null ? 'Rate not loaded' : `${formatAmount(bw.cost_per_gb * 1024, bwCurrency)} / TB`
                   : formatAmount(item.cost, bwCurrency)}
                 sharePct={item.rate ? undefined : pctOf(item.bytes || 0, bwTotal)}
                 momChange={item.key === 'bw_total' ? bw?.mom_change_pct : undefined}

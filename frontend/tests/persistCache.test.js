@@ -11,7 +11,7 @@
  * isolation depend on the user having politely used the menu rather than
  * closing the tab or picking a different account at Microsoft's chooser.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readCache, rememberAccount, writeCache, writePrefs } from '../src/utils/persistCache';
 
 // jsdom is not a dependency here, and the module only needs what it actually
@@ -26,7 +26,41 @@ const storage = Object.create({
 globalThis.window = { localStorage: storage };
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   for (const k of Object.keys(storage)) delete storage[k];
+});
+
+describe('cache retention and quota pressure', () => {
+  it('keeps BOQs, imports and identity across the API expiry window', () => {
+    writeCache('boq:list', [{ id: 1 }]);
+    writeCache('import:file', { rows: [1] });
+    rememberAccount('account');
+    writeCache('costs:old', { total: 42 });
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 2 * 86400000);
+    expect(readCache('boq:list').value).toEqual([{ id: 1 }]);
+    expect(readCache('import:file').value.rows).toEqual([1]);
+    expect(readCache('pref:account').value).toBe('account');
+    expect(readCache('costs:old')).toBeNull();
+  });
+
+  it('evicts an older API entry instead of deleting user data and every summary', () => {
+    writeCache('boq:list', [{ name: 'budget' }]);
+    writeCache('rows:old', { rows: 'x'.repeat(500) });
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 1000);
+    writeCache('costs:new', { total: 42 });
+    const original = Object.getPrototypeOf(storage).setItem;
+    vi.spyOn(Object.getPrototypeOf(storage), 'setItem').mockImplementation(function(k, v) {
+      if (k === 'aca:v1:daily:new' && this.getItem('aca:v1:rows:old')) throw new Error('quota');
+      original.call(this, k, v);
+    });
+    writeCache('daily:new', { total: 20 });
+    expect(readCache('rows:old')).toBeNull();
+    expect(readCache('daily:new').value.total).toBe(20);
+    expect(readCache('costs:new').value.total).toBe(42);
+    expect(readCache('boq:list').value).toEqual([{ name: 'budget' }]);
+  });
 });
 
 describe('rememberAccount', () => {

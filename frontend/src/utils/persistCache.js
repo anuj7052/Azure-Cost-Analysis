@@ -10,6 +10,8 @@
 const PREFIX = 'aca:v1:';
 const FRESH_MS = 15 * 60 * 1000;   // served without hitting the network
 const STALE_MS = 24 * 60 * 60 * 1000; // served instantly, then revalidated
+const KEEP = ['pref:', 'import:', 'boq:'];
+const userOwned = key => KEEP.some(prefix => key.startsWith(prefix));
 
 function safeStorage() {
   try {
@@ -28,7 +30,7 @@ export function readCache(key) {
     if (!raw) return null;
     const { t, v } = JSON.parse(raw);
     const age = Date.now() - t;
-    if (age > STALE_MS) {
+    if (age > STALE_MS && !userOwned(key)) {
       store.removeItem(PREFIX + key);
       return null;
     }
@@ -53,12 +55,24 @@ export function writeCache(key, value, { stale = false } = {}) {
   try {
     store.setItem(PREFIX + key, payload);
   } catch {
-    // Quota exceeded — drop our own entries and retry once.
-    evictAll();
-    try {
-      store.setItem(PREFIX + key, payload);
-    } catch {
-      /* give up, caching is best-effort */
+    // Evict oldest API answers one at a time. A large resource response must
+    // not wipe small dashboard summaries, imported files or the user's BOQs.
+    const candidates = Object.keys(store).filter(name => name.startsWith(PREFIX)
+      && name !== PREFIX + key && !userOwned(name.slice(PREFIX.length)))
+      .map(name => {
+        try { return { name, time: JSON.parse(store.getItem(name)).t || 0 }; }
+        catch { return { name, time: 0 }; }
+      }).sort((a, b) => a.time - b.time);
+    // An entry larger than all replaceable data is unlikely to fit. Keep the
+    // existing summaries instead of deleting them for an oversized detail blob.
+    const reclaimable = candidates.reduce((sum, item) => sum + (store.getItem(item.name)?.length || 0), 0);
+    if (!userOwned(key) && payload.length > reclaimable) return;
+    for (const candidate of candidates) {
+      store.removeItem(candidate.name);
+      try {
+        store.setItem(PREFIX + key, payload);
+        return;
+      } catch { /* keep trying until enough space is available */ }
     }
   }
 }
@@ -81,7 +95,6 @@ export function evictAll() {
  * data and re-fetching cannot bring them back, so wiping them would turn a
  * refresh into data loss.
  */
-const KEEP = ['pref:', 'import:', 'boq:'];
 
 export function evictApiCache() {
   const store = safeStorage();

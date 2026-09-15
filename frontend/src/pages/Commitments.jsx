@@ -18,7 +18,7 @@
  * they propose cancelling a reservation, and an estimate would look identical
  * on screen to a measurement.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   PiggyBank, TrendingDown, CalendarClock, Percent, Wallet, Loader2,
   ShoppingCart, Info, ChevronRight, ChevronDown, ExternalLink, Search,
@@ -289,11 +289,15 @@ export default function Commitments() {
   // Opens on the inventory rather than the summary. Somebody arriving here has
   // usually already been told there is a problem and wants the list.
   const [view, setView] = useState('details');
+  const [showGuidance, setShowGuidance] = useState(false);
+  const [showRecommendations, setShowRecommendations] = useState(false);
+  const requestVersion = useRef(0);
 
   const ready = Boolean(tenantId) && (subscriptionIds || []).length > 0;
 
   async function run(nextGrain = grain) {
     if (!ready) return;
+    const version = ++requestVersion.current;
     setLoading(true);
     setError('');
     try {
@@ -302,16 +306,18 @@ export default function Commitments() {
         subscription_ids: subscriptionIds,
         grain: nextGrain,
       });
+      if (version !== requestVersion.current) return;
       setData(result);
       setLastUpdated(new Date().toISOString());
     } catch (err) {
+      if (version !== requestVersion.current) return;
       setError(friendlyError(err));
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }
 
-  useEffect(() => { setData(null); }, [tenantId, subscriptionIds]);
+  useEffect(() => { requestVersion.current += 1; setData(null); setLoading(false); setLastUpdated(null); setError(''); }, [tenantId, subscriptionIds]);
 
   const items = useMemo(() => data?.items || [], [data]);
   const currency = data?.currency || '';
@@ -378,7 +384,7 @@ export default function Commitments() {
 
       {ready && !data && !loading && !error && (
         <Empty title="Nothing read yet">
-          Press Refresh to read your reservations and savings plans. They are
+          Press Load data to read your reservations and savings plans. They are
           held at tenant level, so this reads them once rather than per
           subscription.
         </Empty>
@@ -419,6 +425,17 @@ export default function Commitments() {
               </button>
             ))}
           </div>
+          {view === 'details' && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Kpi icon={PiggyBank} label="Active commitments" value={summary.active ?? items.length} hint={`${summary.reservations || 0} reservations · ${summary.savings_plans || 0} savings plans`} />
+            <Kpi icon={Wallet} label="Amortised cost · 30 days" value={money(summary.monthly_spend, currency)} hint={`${summary.costed || 0} of ${summary.active || 0} active commitments priced`} />
+            <Kpi icon={TrendingDown} label="Unused cost" value={money(summary.wastage, currency)} hint={summary.wastage == null ? `${summary.underused || 0} underused commitments · monetary waste needs billing data` : `${summary.wastage_measured || 0} measured by Azure · other amounts estimated from utilisation`} tone="text-rose-400" />
+            <Kpi icon={Percent} label={`Utilisation · ${grain} days`} value={percent(summary.utilisation)} hint={summary.utilisation_basis} tone={utilisationTone(summary.utilisation)} />
+          </div>}
+          {view === 'details' && (summary.costed || 0) < (summary.active || 0) && <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-slate-300">
+            <p className="font-semibold text-amber-300">{(summary.active || 0) - (summary.costed || 0)} commitments need cost data</p>
+            <p className="mt-1">{(data.partial?.cost_subscriptions || []).length ? 'Azure could not complete the amortised cost read. Open billing diagnostics for the actual error, then retry; inventory and utilisation remain available.' : 'No matching benefit costs were returned. Check billing access and select the subscriptions using these reservations.'} Missing prices are not zero-cost reservations.</p>
+            <details className="mt-2"><summary className="cursor-pointer text-sky-400">Show / hide billing diagnostics</summary><div className="mt-2 space-y-1 break-words">{(data.partial?.cost_subscriptions || []).map((error, i) => <p key={i}>{error}</p>)}</div></details>
+          </div>}
 
           {view === 'overview' && (
           <>
@@ -504,7 +521,7 @@ export default function Commitments() {
               scrolls away, and the usual response to a table that will not
               narrow is to scroll back up hunting for the filter rather than to
               type. */}
-          <div className="sticky top-0 z-20 -mx-6 flex flex-wrap items-center gap-3 border-b border-slate-800 bg-slate-950/90 px-6 py-3 backdrop-blur">
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3">
             <Chips options={typeOptions} value={type} onChange={setType} />
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <span>Window</span>
@@ -566,7 +583,7 @@ export default function Commitments() {
             )}
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[1fr_20rem]">
+          <div className="space-y-4">
             <div className="space-y-4">
               <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
                 <p className="border-b border-slate-800 px-4 py-3 text-sm font-medium text-slate-200">
@@ -606,7 +623,7 @@ export default function Commitments() {
                           column of numbers nobody can read. Offset by the
                           height of the filter bar above it, which is sticky
                           too and would otherwise cover it. */}
-                      <thead className="sticky top-[3.25rem] z-10 bg-slate-900 text-[11px] uppercase tracking-wide text-slate-500">
+                      <thead className="bg-slate-900 text-[11px] uppercase tracking-wide text-slate-500">
                         <tr className="border-b border-slate-800">
                           <SortHead label="Commitment" column="name" sort={sort} onSort={toggleSort} pad="px-4" />
                           <th className="px-3 py-2 font-medium">What it covers</th>
@@ -624,7 +641,7 @@ export default function Commitments() {
                             onSort={toggleSort}
                           />
                           <SortHead
-                            label="Per month"
+                            label="Cost · 30d"
                             column="cost"
                             sort={sort}
                             onSort={toggleSort}
@@ -701,11 +718,13 @@ export default function Commitments() {
                               <td className="px-3 py-2.5"><Bar used={used} /></td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-slate-300">
                                 {money(item.monthly_cost, item.currency || currency)}
+                                {item.monthly_cost == null && <span className="block text-[10px] text-amber-400">Billing unavailable</span>}
                               </td>
                               <td className={`px-3 py-2.5 text-right tabular-nums ${
                                 lost ? 'text-rose-400' : 'text-slate-500'
                               }`}>
                                 {money(lost, item.currency || currency)}
+                                {used != null && <span className="block text-[10px] text-slate-400">{percent(Math.max(0, 100 - used))} unused capacity</span>}
                                 {/* Says whether Azure billed this or we worked it
                                     out, because one is evidence and the other is
                                     an inference and they should not read alike. */}
@@ -797,13 +816,14 @@ export default function Commitments() {
               <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
                 <p className="mb-1 flex items-center gap-2 text-sm font-medium text-slate-200">
                   <ShoppingCart size={14} /> Suggested purchases
+                  <button type="button" className="ml-auto rounded-lg border border-slate-700 px-2 py-1 text-xs text-sky-400" aria-expanded={showRecommendations} onClick={() => setShowRecommendations(v => !v)}>{showRecommendations ? 'Hide' : 'Show'}</button>
                   {(data.recommendations || []).length > 0 && (
                     <span className="text-[11px] font-normal text-slate-500">
                       {data.recommendations.length}
                     </span>
                   )}
                 </p>
-                {(data.recommendations || []).length === 0 ? (
+                {showRecommendations && ((data.recommendations || []).length === 0 ? (
                   <p className="text-[11px] leading-relaxed text-slate-500">
                     Azure returned no purchase recommendations.
                   </p>
@@ -813,10 +833,11 @@ export default function Commitments() {
                       <Recommendation key={rec.id} rec={rec} currency={currency} />
                     ))}
                   </div>
-                )}
+                ))}
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+                <details><summary className="cursor-pointer text-xs text-sky-400">Show / hide data availability details</summary>
                 {(data.errors || []).map(err => (
                   <p key={err} className="mb-2 text-[11px] leading-relaxed text-amber-300/80">
                     {err}
@@ -829,6 +850,7 @@ export default function Commitments() {
                     some commitments show no amount.
                   </p>
                 )}
+                </details>
                 <a
                   href="https://portal.azure.com/#view/Microsoft_Azure_Reservations/ReservationsBrowseBlade"
                   target="_blank"
@@ -863,7 +885,8 @@ export default function Commitments() {
           behind its own tab. */}
       {(!data || view === 'rules') && (
         <div className="border-t border-slate-800 pt-6">
-          <CommitmentRules items={items} currency={currency} />
+          <button type="button" aria-expanded={showGuidance} onClick={() => setShowGuidance(v => !v)} className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-200"><span>Cancellation, exchange & refund guidance</span><span className="text-sky-400">{showGuidance ? 'Hide' : 'Show'}</span></button>
+          {showGuidance && <div className="mt-4"><CommitmentRules items={items} currency={currency} /></div>}
         </div>
       )}
 

@@ -58,14 +58,16 @@ async def get_costs(
 
     # Query each subscription and combine
     async def read_sub(sub_id):
-        return await query_costs(
+        records = await query_costs(
             token=token, subscription_id=sub_id, months=body.months,
-            group_by=body.group_by, from_date=body.from_date, to_date=body.to_date,
+            group_by=["ServiceName", "PricingModel", "ChargeType"] if body.include_reservation_context else body.group_by,
+            from_date=body.from_date, to_date=body.to_date,
             filters={key: value for key, value in {
                 'ServiceName': body.service, 'ResourceGroupName': body.resource_group,
                 'ResourceLocation': body.location,
             }.items() if value},
         )
+        return [{**record, "SubscriptionId": sub_id} for record in records]
 
     # The cost client already enforces global and per-subscription limits.
     # Reading serially here adds every subscription's latency to the first paint.
@@ -470,7 +472,9 @@ async def get_daily_costs(
     token = await _get_token(body.tenant_id, current_user, db)
 
     group_by = ["ServiceName"]
-    if body.resource_group:
+    if body.include_reservation_context:
+        group_by = ["ServiceName", "PricingModel", "ChargeType"]
+    elif body.resource_group:
         # We cannot filter by RG in the query body directly per Azure API constraints,
         # so we group by RG and filter post-query.
         group_by = ["ResourceGroupName", "ServiceName"]
@@ -480,6 +484,7 @@ async def get_daily_costs(
             token=token, subscription_id=sub_id, months=body.months,
             group_by=group_by, granularity="Daily",
             from_date=body.from_date, to_date=body.to_date,
+            filters={"ResourceGroupName": body.resource_group} if body.resource_group and body.include_reservation_context else None,
         )
 
     all_records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
@@ -488,7 +493,7 @@ async def get_daily_costs(
         raise HTTPException(status_code=502, detail=summarise_errors(errors, "daily costs"))
 
     # Filter by resource group if requested
-    if body.resource_group:
+    if body.resource_group and not body.include_reservation_context:
         rg_lower = body.resource_group.lower()
         all_records = [
             r for r in all_records

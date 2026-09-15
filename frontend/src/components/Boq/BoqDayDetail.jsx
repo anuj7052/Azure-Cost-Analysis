@@ -19,6 +19,7 @@ import { clickedPoint } from '../../utils/dailyTimeline';
 // The event rail is shared with the Cost Explorer's daily timeline; it lives in
 // Common so neither page owns the other's copy.
 import { Delta } from '../Common/DayTimeline';
+import ReservationNote from '../Common/ReservationNote';
 
 export { default as DayTimeline } from '../Common/DayTimeline';
 
@@ -96,6 +97,7 @@ export function DayDetail({ days, date, budget, currency, onClose, onPickService
           </ul>
         </div>
       )}
+      <ReservationNote period={days.find(day => day.date === date)} currency={currency} />
 
       <div className="max-h-72 overflow-y-auto">
         <table className="w-full text-left text-xs">
@@ -120,6 +122,7 @@ export function DayDetail({ days, date, budget, currency, onClose, onPickService
                     className="group flex w-full min-w-0 items-center gap-1 text-left text-slate-300 transition hover:text-sky-300"
                   >
                     <span className="truncate">{s.name}</span>
+                    <ReservationNote period={days.find(day => day.date === date)} service={s.name} currency={currency} compact />
                     {s.isNew && <span className="shrink-0 rounded bg-sky-500/15 px-1 py-0.5 text-[9px] text-sky-300">new</span>}
                     {s.stopped && <span className="shrink-0 rounded bg-slate-700/40 px-1 py-0.5 text-[9px] text-slate-400">stopped</span>}
                     <ChevronRight size={11} className="shrink-0 opacity-0 transition group-hover:opacity-100" />
@@ -157,6 +160,13 @@ export function DayDetail({ days, date, budget, currency, onClose, onPickService
 export function ServiceDetail({ days, name, budget, currency, onClose, onPickDay }) {
   const t = useChartTheme();
   const detail = useMemo(() => serviceDetail(days, name, budget), [days, name, budget]);
+  const reservationPeriod = useMemo(() => {
+    const matches = days.map(day => day.reservation_context?.[name]).filter(Boolean);
+    return { reservation_context: matches.length ? { [name]: {
+      purchase_cost: matches.reduce((sum, row) => sum + (row.purchase_cost || 0), 0),
+      refund_cost: matches.reduce((sum, row) => sum + (row.refund_cost || 0), 0),
+    } } : {} };
+  }, [days, name]);
   if (!detail) return null;
 
   const fmt = (v) => formatAmount(v, currency);
@@ -182,6 +192,7 @@ export function ServiceDetail({ days, name, budget, currency, onClose, onPickDay
         </button>
       </div>
 
+      <ReservationNote period={reservationPeriod} currency={currency} />
       {/* The figures somebody needs before deciding whether to act. */}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 px-5 pb-3 sm:grid-cols-4">
         <div>

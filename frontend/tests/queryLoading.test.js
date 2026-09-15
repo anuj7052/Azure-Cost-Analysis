@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dedupeRequest, partialResponse } from '../src/utils/queryRequest';
 import { useAppStore } from '../src/store/useAppStore';
 import { fetchCosts, fetchDailyCosts, fetchCostRows, fetchBandwidth } from '../src/api/client';
-import { writeCache } from '../src/utils/persistCache';
+import { readCache, writeCache } from '../src/utils/persistCache';
 
 vi.mock('../src/api/client', () => ({
   fetchTenants: vi.fn(), fetchSubscriptions: vi.fn(), fetchCosts: vi.fn(), fetchCostRows: vi.fn(),
@@ -12,7 +12,7 @@ vi.mock('../src/api/client', () => ({
   fetchAccessReview: vi.fn(), fetchRoleAssignments: vi.fn(),
 }));
 vi.mock('../src/utils/persistCache', () => ({
-  readCache: () => null, readPrefs: () => null, writeCache: vi.fn(), writePrefs: vi.fn(),
+  readCache: vi.fn(() => null), readPrefs: () => null, writeCache: vi.fn(), writePrefs: vi.fn(),
   evictApiCache: vi.fn(), rememberAccount: vi.fn(),
 }));
 
@@ -24,6 +24,7 @@ const deferred = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  readCache.mockReset().mockReturnValue(null);
   useAppStore.getState().cancelThrottledCostRetry();
   useAppStore.setState({ selectedTenantId: 't', selectedSubscriptionIds: ['s'],
     months: 3, dateMode: 'rolling', dateKey: 'rolling:3', imported: null,
@@ -33,10 +34,23 @@ beforeEach(() => {
 });
 
 describe('request sharing and progressive loading', () => {
+  it('shows matching secondary summaries immediately without issuing requests', () => {
+    readCache.mockImplementation(key => key.startsWith('bandwidth:') ? { value: { total_cost: 30 } } : { value: { total: 90 } });
+    useAppStore.getState().primeDashboardCache();
+    expect(useAppStore.getState().bandwidthData.total_cost).toBe(30);
+    expect(useAppStore.getState().pricingData.total).toBe(90);
+    expect(fetchBandwidth).not.toHaveBeenCalled();
+    expect(fetchCosts).not.toHaveBeenCalled();
+    readCache.mockReturnValue(null);
+    useAppStore.setState({ selectedSubscriptionIds: ['different'] });
+    useAppStore.getState().primeDashboardCache();
+    expect(useAppStore.getState().pricingData).toBeNull();
+    expect(useAppStore.getState().bandwidthData).toBeNull();
+  });
   it('shares daily requests between the store and timeline', async () => {
     const answer = deferred();
     fetchDailyCosts.mockReturnValueOnce(answer.promise);
-    const payload = { tenant_id: 't', subscription_ids: ['s'], months: 3, resource_group: null };
+    const payload = { tenant_id: 't', subscription_ids: ['s'], months: 3, resource_group: null, include_reservation_context: true };
     const storeRead = useAppStore.getState().loadDailyCosts();
     const componentRead = dedupeRequest(`daily:${JSON.stringify(payload)}`, () => fetchDailyCosts(payload));
     await Promise.resolve();

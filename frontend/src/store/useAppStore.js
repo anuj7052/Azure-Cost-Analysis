@@ -443,6 +443,7 @@ export const useAppStore = create((set, get) => ({
         tenant_id: selectedTenantId,
         subscription_ids: selectedSubscriptionIds,
         months,
+        include_reservation_context: true,
         ...(dateMode === 'custom' && fromDate && toDate ? { from_date: fromDate, to_date: toDate } : {}),
       };
       const key = `costs:${JSON.stringify(payload)}`;
@@ -469,6 +470,23 @@ export const useAppStore = create((set, get) => ({
     } catch (err) {
       if (isCurrent()) set({ costLoading: false, costError: err.response?.data?.detail || err.message });
     }
+  },
+
+  // Paint secondary dashboard panels from their own selection-matched cache
+  // before waiting for any Azure request. Network reads remain staged below.
+  primeDashboardCache: () => {
+    const s = get();
+    if (s.imported || !s.selectedTenantId || !s.selectedSubscriptionIds.length) return;
+    const payload = { tenant_id: s.selectedTenantId, subscription_ids: s.selectedSubscriptionIds,
+      months: s.months, ...(s.dateMode === 'custom' && s.fromDate && s.toDate ? { from_date: s.fromDate, to_date: s.toDate } : {}) };
+    const patch = {};
+    for (const name of ['bandwidth', 'pricing']) {
+      const hit = readCache(`${name}:${JSON.stringify(payload)}`);
+      // Clear previous-selection data if there is no matching cached answer.
+      patch[`${name}Data`] = hit?.value || null;
+      patch[`${name}Error`] = null;
+    }
+    set(patch);
   },
 
   /* --------------------------------------------------------------------
@@ -586,6 +604,7 @@ export const useAppStore = create((set, get) => ({
         months: Math.min(Math.max(months || 1, 1), 6),
         ...(dateMode === 'custom' && fromDate && toDate ? { from_date: fromDate, to_date: toDate } : {}),
         resource_group: resourceGroup,
+        include_reservation_context: true,
       };
       await cached(
         `daily:${JSON.stringify(payload)}`,

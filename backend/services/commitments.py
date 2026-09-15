@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from services import azure_retry
+from services.cost_client import _run_paged_query, _columnar_to_records, gather_by_subscription
 
 log = logging.getLogger(__name__)
 
@@ -338,7 +339,16 @@ def attach_costs(items: List[Dict[str, Any]], costs: Dict[str, Any], currency: s
     `measured_wastage` and is preferred later over anything inferred from a
     utilisation percentage.
     """
-    lookup = {str(k).strip().lower(): v for k, v in (costs or {}).items() if str(k).strip()}
+    lookup = {str(k).strip().lower().rstrip('/'): v for k, v in (costs or {}).items() if str(k).strip()}
+    # Azure sometimes returns a different ARM prefix for the same benefit.
+    # Match its immutable final id too, but never choose an ambiguous alias.
+    aliases = {}
+    for key, value in lookup.items():
+        if '/' in key:
+            aliases.setdefault(key.rsplit('/', 1)[-1], []).append(value)
+    for key, values in aliases.items():
+        if len(values) == 1:
+            lookup.setdefault(key, values[0])
 
     def candidates(item: Dict[str, Any]) -> List[str]:
         ident = _text(item.get("id")).strip()
@@ -604,61 +614,52 @@ async def fetch_amortised_costs(
     ])
     # Kept as a fallback because the Benefit dimensions are not offered on every
     # agreement type. Losing the savings plans is better than losing the page.
-    legacy_body = query_body([{"type": "Dimension", "name": "ReservationName"}])
+    legacy_body = query_body([{"type": "Dimension", "name": name} for name in ('ReservationId', 'ReservationName', 'ChargeType')])
 
     totals: Dict[str, Dict[str, float]] = {}
     currency = ""
     errors: List[str] = []
 
-    def add(key: str, amount: float, unused: bool) -> None:
+    def add(key: str, amount: float, unused: bool, measured: bool) -> None:
         key = str(key).strip().lower()
         if not key:
             return
-        entry = totals.setdefault(key, {"cost": 0.0, "unused": 0.0})
+        entry = totals.setdefault(key, {"cost": 0.0, "unused": 0.0 if measured else None})
         entry["cost"] += amount
-        if unused:
+        if not measured:
+            entry['unused'] = None
+        if unused and entry['unused'] is not None:
             entry["unused"] += amount
 
-    async with httpx.AsyncClient(timeout=90) as client:
-        for sub in subscription_ids:
-            url = (
-                f"{MGMT_BASE}/subscriptions/{sub}/providers/Microsoft.CostManagement"
-                f"/query?api-version={COST_API_VERSION}"
-            )
-
-            payload = None
-            for body in (benefit_body, legacy_body):
-                try:
-                    resp = await azure_retry.send_with_retry(
-                        lambda b=body: client.post(url, headers=headers, json=b)
-                    )
-                    resp.raise_for_status()
-                    payload = resp.json()
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    log.info("amortised cost failed for %s: %s", sub, exc)
-                    last_error = exc
-            if payload is None:
-                errors.append(f"{sub}: {last_error}")
-                continue
-
-            props = payload.get("properties") or {}
-            columns = [c.get("name") for c in (props.get("columns") or [])]
-            for row in props.get("rows") or []:
-                record = dict(zip(columns, row))
-                amount = _number(record.get("PreTaxCost") or record.get("Cost"))
-                if amount is None:
+    async def read_sub(sub):
+        url = f"{MGMT_BASE}/subscriptions/{sub}/providers/Microsoft.CostManagement/query?api-version={COST_API_VERSION}"
+        for index, body in enumerate((benefit_body, legacy_body)):
+            try:
+                # Same paging, cache, cooldown and pacing as all other cost reads.
+                pages = await _run_paged_query(url, headers, body, timeout=60)
+                records = [record for page in pages for record in _columnar_to_records(page)]
+                if index == 0 and not any(_text(row.get('BenefitId') or row.get('BenefitName')).strip() for row in records):
+                    # Some agreements accept BenefitId but return only blanks.
+                    # A successful HTTP response is not proof the join is usable.
                     continue
-                charge = _text(record.get("ChargeType")).lower()
-                unused = charge.startswith("unused")
-                # The same money is filed under the id and the name so either
-                # can resolve it. `add` accumulates, so a commitment matched by
-                # both keys is still only counted once against itself.
-                for field in ("BenefitId", "BenefitName", "ReservationName"):
-                    value = _text(record.get(field)).strip()
-                    if value:
-                        add(value, amount, unused)
-                currency = currency or _text(record.get("Currency"))
+                return records
+            except httpx.HTTPStatusError as exc:
+                if index == 0 and exc.response.status_code == 400:
+                    continue
+                raise
+        return []
+
+    records, failures = await gather_by_subscription(subscription_ids, read_sub)
+    errors = [f"{error['subscription_id']}: {error['error']}" for error in failures]
+    for record in records:
+        amount = _number(next((record[key] for key in ('PreTaxCost', 'Cost', 'totalCost') if record.get(key) is not None), None))
+        if amount is None:
+            continue
+        charge = _text(record.get('ChargeType')).lower()
+        keys = {_text(record.get(field)).strip().lower() for field in ('BenefitId', 'BenefitName', 'ReservationId', 'ReservationName')}
+        for key in keys - {''}:
+            add(key, amount, charge in ('unusedreservation', 'unused savingsplan', 'unusedsavingsplan'), bool(charge))
+        currency = currency or _text(record.get('Currency'))
 
     return totals, currency, errors
 
@@ -716,6 +717,12 @@ async def fetch_commitments(
         + [normalise_savings_plan(p, today) for p in raw_plans]
     )
     items = attach_costs(items, costs, currency)
+    for item in items:
+        item['cost_window'] = {'from': from_date, 'to': to_date}
+        if item.get('monthly_cost') is None:
+            item['cost_status'] = 'query_failed' if cost_errors else 'no_matching_benefit'
+            item['cost_message'] = ('The amortised billing read failed or timed out. Refresh after Azure recovers; reservation inventory and utilisation are independent.'
+                                    if cost_errors else 'No cost row matched this reservation ID or name in the selected subscriptions. Shared reservations may be charged elsewhere.')
     items = sort_commitments(items, grain)
 
     recommendations = sorted(

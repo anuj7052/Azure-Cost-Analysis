@@ -1,6 +1,7 @@
 import { compareServices } from '../../utils/dailyTimeline';
 import { formatAmountFull } from '../../utils/currency';
 import { Badge, Callout, DataTable } from '../ui';
+import ReservationNote from '../Common/ReservationNote';
 
 export default function CostDeltaDetails({ current, prior, label, priorLabel, currency, totalKey = 'total', onPickService }) {
   const comparison = compareServices(current, prior, totalKey);
@@ -10,6 +11,7 @@ export default function CostDeltaDetails({ current, prior, label, priorLabel, cu
   return (
     <section className="mt-4 space-y-3 border-t border-slate-800 pt-4" aria-label={`Billing comparison for ${label}`}>
       <h3 className="font-medium text-slate-200">{label}: {fmt(current[totalKey])}</h3>
+      <ReservationNote period={current} currency={currency} />
       <p className="text-sm text-slate-400">Compared with {priorLabel}: {fmt(prior?.[totalKey])}. Change: {signed(comparison.delta)} {comparison.percent !== null && `(${comparison.percent.toFixed(1)}%)`}</p>
       {!prior && <Callout tone="info" title="Previous calendar period unavailable">No comparison is calculated. The prior period may be outside the selected range or have no returned billing data; it is not assumed to be zero.</Callout>}
       {prior && comparison.delta === null && <Callout tone="medium" title="Comparison unavailable">Totals are missing or currencies differ; no valid change can be calculated.</Callout>}

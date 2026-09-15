@@ -43,6 +43,7 @@ export function monthsFromSummary(months = [], filters = {}) {
     const value = filters.service || filters.subscription;
     const total = split == null ? null : split[value] ?? 0;
     return { ...month, total_cost: total,
+      reservation_context: filters.service ? (month.reservation_context?.[value] ? { [value]: month.reservation_context[value] } : {}) : {},
       by_service: filters.service && total !== null ? { [value]: total } : null,
       by_subscription: filters.subscription && total !== null ? { [value]: total } : {} };
   });

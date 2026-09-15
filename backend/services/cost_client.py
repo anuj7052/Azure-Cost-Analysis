@@ -589,6 +589,24 @@ async def _query_months(
         pages = await _run_paged_query(url, headers, seg_body, timeout=timeout)
         return [rec for page in pages for rec in _columnar_to_records(page)]
 
+    if len(segments) > 1:
+        # A cold three-month view must not spend three queries per subscription.
+        # Reuse month shards only when they are all fresh; otherwise Azure can
+        # return the monthly buckets in one request for the entire range.
+        cached_chunks = []
+        for start, end in segments:
+            shard_body = {**body, 'timePeriod': {'from': start, 'to': end}}
+            shard_key = _cache_key(url, shard_body)
+            pages = _cache_get(shard_key)
+            if pages is None:
+                stored = await cost_cache.load(shard_key)
+                pages = stored[0] if stored and stored[1] else None
+            if pages is None:
+                pages = await _run_paged_query(url, headers, body, timeout=timeout)
+                return [record for page in pages for record in _columnar_to_records(page)]
+            cached_chunks.extend(record for page in pages for record in _columnar_to_records(page))
+        return cached_chunks
+
     chunks = await asyncio.gather(*(run(seg) for seg in segments))
     return [rec for chunk in chunks for rec in chunk]
 
@@ -718,9 +736,9 @@ def friendly_error(exc: Exception, retry_after: int = 0) -> str:
     # subscription name — the least useful message possible.
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError, httpx.ReadTimeout, httpx.ConnectTimeout)):
         return (
-            "Azure did not answer in time for this subscription. The other "
-            "subscriptions below are complete. Narrow the date range or select "
-            "fewer subscriptions, then refresh."
+            "Azure did not answer in time for this subscription. "
+            "Any returned totals exclude failed subscriptions; check coverage. "
+            "Wait for the current requests to finish, then retry."
         )
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status == 429:
@@ -858,14 +876,6 @@ async def query_costs(
     # and throws away months Azure finished with long ago. Split, the closed
     # part is cached for thirty days and only the current month is re-read, so
     # a second visit costs one query instead of the whole history.
-    settled, live = cost_cache.settled_split(api_from, api_to)
-    if settled and live:
-        halves = await asyncio.gather(
-            _query_months(url, headers, _body(*settled), timeout=60, granularity=granularity),
-            _query_months(url, headers, _body(*live), timeout=60, granularity=granularity),
-        )
-        return [record for half in halves for record in half]
-
     return await _query_months(
         url, headers, _body(api_from, api_to), timeout=60, granularity=granularity,
     )

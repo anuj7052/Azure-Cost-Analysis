@@ -5,6 +5,7 @@ import { useAppStore } from '../store/useAppStore';
 import { usePageRefresh } from '../store/usePageRefresh';
 import { useFilteredCosts } from '../hooks/useFilteredCosts';
 import DataQuality from '../components/Common/DataQuality';
+import ReservationNote from '../components/Common/ReservationNote';
 import CostTrendChart from '../components/Charts/CostTrendChart';
 import CostDailyTimeline from '../components/Charts/CostDailyTimeline';
 import CostChangeExplainer from '../components/Charts/CostChangeExplainer';
@@ -153,6 +154,7 @@ export default function CostExplorer() {
     subscription_ids: filters.subscription ? [filters.subscription] : selectedSubscriptionIds,
     months, ...(dateMode === 'custom' ? { from_date: fromDate, to_date: toDate } : {}),
     service: filters.service || null, resource_group: filters.resource_group || null, location: filters.location || null,
+    include_reservation_context: true,
   }, Boolean(needsMonthly && usesServerFilters && selectedTenantId && subsKey));
   const usesMeterRows = trendFiltered && !summaryFilterSupported(filters) && !usesServerFilters;
   const needsRows = (usesMeterRows && (quickCompare || (tab === 'trend' && timeline === 'monthly'))) || filteredGroups;
@@ -599,6 +601,7 @@ export default function CostExplorer() {
                     render: (r) => (
                       <span className="font-medium text-slate-200">
                         {r.month}
+                        <ReservationNote period={monthByKey(trendMonths, r.month)} currency={currency} compact />
                         {r.month === thisMonth && (
                           <Badge tone="info" className="ml-2">in progress</Badge>
                         )}

@@ -114,7 +114,7 @@ export default function CommitmentDetail({
   const ccy = item.currency || currency;
   const lost = wastageOf(item, grain);
   const scopes = (item.scopes || []).filter(Boolean);
-  const noCost = costUnavailableReason(item);
+  const noCost = item.cost_message || costUnavailableReason(item);
   // Amounts is pulled out and drawn first because it is the section carrying
   // the warning; the rest keep the order the util returns them in.
   const amounts = sections.find(s => s.title === 'Amounts');
@@ -203,6 +203,7 @@ export default function CommitmentDetail({
             </Card>
 
             <Card title="Amounts">
+              {item.cost_window && <p className="mb-3 text-xs text-slate-400">Billing window: {item.cost_window.from.slice(0, 10)} → {item.cost_window.to.slice(0, 10)}. Purchase price is distinct from amortised cost.</p>}
               {/* Said once, above the five figures it explains. Every amount
                   collapsing to "Not available" together looks like a broken
                   page, and it is almost always a subscription selection. */}
@@ -245,9 +246,19 @@ export default function CommitmentDetail({
         )}
 
         {tab === 'usage' && (
-          <Card title="Utilisation by window">
+          <div className="space-y-4"><Card title="Utilisation by window">
             <Utilisation item={item} />
           </Card>
+          <Card title="Unused capacity and cost">
+            <div className="grid grid-cols-2 gap-4">
+              <Pair label={`Unused capacity (${grain}d)`} value={usedAt(item, grain) == null ? MISSING : percent(Math.max(0, 100 - usedAt(item, grain)))} note="Capacity percentage, not a currency amount." />
+              <Pair label="Unused cost" value={money(lost, ccy)} note={item.measured_wastage != null ? 'Azure-reported unused-benefit charge over the cost window.' : 'Estimate: amortised cost × unused utilisation share; not an Azure refund quote.'} />
+            </div>
+            {lost == null && <p className="mt-3 text-xs text-amber-400">Monetary waste cannot be calculated until cost and matching utilisation are available. The unused percentage above remains useful even when billing is unreadable.</p>}
+          </Card>
+          <Card title="How to read the price">
+            <p className="text-xs leading-relaxed text-slate-400">Cost is amortised over the last 30 days, spreading an upfront RI purchase over its term. It is different from the purchase payment in Actual Cost. Utilisation windows are Azure’s published 1/7/30-day measurements, not a daily activity history.</p>
+          </Card></div>
         )}
 
         {tab === 'cancel' && (

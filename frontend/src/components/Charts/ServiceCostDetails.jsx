@@ -22,6 +22,7 @@ export default function ServiceCostDetails({ periods = [], currency, daily = fal
   }, [periods]);
   const service = services.some(([name]) => name === selected) ? selected : services[0]?.[0] || '';
   const series = periods.map(period => ({ ...period,
+    reservation_context: period.reservation_context?.[service] ? { [service]: period.reservation_context[service] } : {},
     [totalKey]: period.by_service == null ? null : period.by_service[service] ?? 0,
     by_service: period.by_service == null ? null : { [service]: period.by_service[service] ?? 0 },
   })).sort((a, b) => a[key].localeCompare(b[key]));

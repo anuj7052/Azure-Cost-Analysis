@@ -11,6 +11,7 @@ like a total that is simply wrong.
 from datetime import date
 
 import pytest
+from unittest.mock import AsyncMock
 
 from services import cost_client
 from services.cost_client import month_segments
@@ -76,6 +77,23 @@ class TestMonthSegments:
 
 
 class TestQueryMonths:
+    @pytest.fixture(autouse=True)
+    def empty_cache(self, monkeypatch):
+        monkeypatch.setattr(cost_client, '_cache_get', lambda key: None)
+        monkeypatch.setattr(cost_client.cost_cache, 'load', AsyncMock(return_value=None))
+
+    @pytest.mark.asyncio
+    async def test_fresh_month_shards_are_reused_without_a_network_read(self, monkeypatch):
+        monkeypatch.setattr(cost_client, '_cache_get', lambda key: [{'properties': {'columns': [{'name': 'PreTaxCost'}], 'rows': [[10]]}}])
+        read = AsyncMock()
+        monkeypatch.setattr(cost_client, '_run_paged_query', read)
+        result = await cost_client._query_months('https://example/query', {}, {
+            'timePeriod': {'from': '2026-01-01', 'to': '2026-03-31'},
+            'dataset': {'granularity': 'Monthly'},
+        }, 60, 'Monthly')
+        assert sum(row['PreTaxCost'] for row in result) == 30
+        read.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_every_segment_is_asked_and_the_rows_are_concatenated(self, monkeypatch):
         asked = []
@@ -97,7 +115,8 @@ class TestQueryMonths:
             "https://example/query", {}, body, timeout=60, granularity="Monthly",
         )
 
-        assert len(asked) == len(records) > 1
+        assert len(asked) == len(records) == 1
+        assert asked[0] == body['timePeriod']
         assert len({r["BillingMonth"] for r in records}) == len(records)
 
     @pytest.mark.asyncio
@@ -107,9 +126,7 @@ class TestQueryMonths:
         months that did arrive add up to a total the page presents as complete.
         """
         async def fake_paged(url, headers, body, timeout):
-            if body["timePeriod"]["from"].startswith("2026-05"):
-                raise RuntimeError("throttled")
-            return [{"rows": [], "columns": []}]
+            raise RuntimeError("throttled")
 
         monkeypatch.setattr(cost_client, "_run_paged_query", fake_paged)
 

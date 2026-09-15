@@ -8,6 +8,7 @@ Cost analysis logic:
 """
 from collections import defaultdict
 from typing import List, Dict, Any
+from services.reservation_context import reservation_context
 
 
 def _parse_usage_date(date_val) -> str:
@@ -75,12 +76,16 @@ def aggregate_by_month(records: List[Dict[str, Any]]) -> Dict[str, Dict]:
         monthly[month_key]["by_subscription"][sub_id] += cost
 
     # Convert defaultdicts to regular dicts
+    reservation_rows = defaultdict(list)
+    for record in records:
+        reservation_rows[_parse_usage_date(record.get('BillingMonth') or record.get('UsageDate') or record.get('Date') or '19700101')].append(record)
     return {
         k: {
             "total": round(v["total"], 4),
             "currency": v["currency"],
             "by_service": dict(v["by_service"]),
             "by_subscription": dict(v["by_subscription"]),
+            "reservation_context": reservation_context(reservation_rows[k]),
         }
         for k, v in sorted(monthly.items())
     }
@@ -414,6 +419,7 @@ def aggregate_daily(records: List[Dict[str, Any]]) -> Dict[str, Dict]:
         "total": 0.0,
         "currency": "USD",
         "by_service": defaultdict(float),
+        "records": [],
     })
 
     for r in records:
@@ -433,6 +439,7 @@ def aggregate_daily(records: List[Dict[str, Any]]) -> Dict[str, Dict]:
         daily[day_key]["total"] += cost
         daily[day_key]["currency"] = currency
         daily[day_key]["by_service"][service] += cost
+        daily[day_key]['records'].append(r)
 
     return {
         k: {
@@ -440,6 +447,7 @@ def aggregate_daily(records: List[Dict[str, Any]]) -> Dict[str, Dict]:
             "total": round(v["total"], 4),
             "currency": v["currency"],
             "by_service": dict(v["by_service"]),
+            "reservation_context": reservation_context(v['records']),
         }
         for k, v in sorted(daily.items())
     }
@@ -477,6 +485,7 @@ def build_summary(monthly: Dict[str, Dict]) -> Dict:
             {
                 "month": m,
                 "total_cost": round(monthly[m]["total"], 2),
+                "reservation_context": monthly[m].get("reservation_context", {}),
                 "currency": monthly[m]["currency"],
                 "by_service": monthly[m]["by_service"],
                 "by_subscription": monthly[m]["by_subscription"],

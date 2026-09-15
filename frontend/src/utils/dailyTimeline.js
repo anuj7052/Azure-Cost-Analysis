@@ -32,6 +32,7 @@ export function dailyRequest({ selectedTenantId, selectedSubscriptionIds, months
     months: Math.min(6, Math.max(1, months || 1)),
     ...(dateMode === 'custom' && fromDate && toDate ? { from_date: fromDate, to_date: toDate } : {}),
     resource_group: filters.resource_group || null,
+    include_reservation_context: true,
   } };
 }
 
@@ -40,6 +41,7 @@ export function serviceSlice(days, service) {
     ...day,
     total: day.by_service ? (day.by_service[service] ?? 0) : null,
     by_service: day.by_service ? { [service]: day.by_service[service] ?? 0 } : null,
+    reservation_context: day.reservation_context?.[service] ? { [service]: day.reservation_context[service] } : {},
   });
 }
 
