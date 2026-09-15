@@ -235,7 +235,7 @@ export default function Topbar() {
           }`}
         >
           <Calendar className="w-3.5 h-3.5 shrink-0" />
-          <span>{filterLabel}</span>
+          <span className="whitespace-nowrap">{filterLabel}</span>
           <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
         </button>
         {dateMode === 'custom' && (

@@ -8,7 +8,9 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     proxy: {
-      '/api': {
+      // Anchored: a plain '/api' prefix also captured the app's own /apis
+      // route, so refreshing the API Catalog returned the backend's 404 JSON.
+      '^/api/': {
         target: 'http://localhost:8000',
         changeOrigin: true,
         // The backend deliberately holds a cost request open for up to ~100s
