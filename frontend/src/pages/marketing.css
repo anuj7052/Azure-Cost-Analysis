@@ -1,15 +1,160 @@
-.marketing { --marketing-glow: rgb(37 99 235 / .14); }
-.marketing .marketing-eyebrow { color: var(--color-blue-400); font-size: .75rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
-.marketing-panel { background: radial-gradient(ellipse at top right, var(--marketing-glow), transparent 70%), var(--color-slate-900); }
-.marketing-link { position: relative; overflow: hidden; transition: border-color .2s, transform .25s, box-shadow .25s; }
-.marketing-link:hover, .marketing-link:focus-visible { border-color: var(--color-blue-400); transform: translateY(-4px); box-shadow: 0 16px 40px -24px rgb(37 99 235 / .6); }
-.marketing-link::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(115deg, transparent 30%, rgb(96 165 250 / .08), transparent 65%); transform: translateX(-110%); transition: transform .65s; }
-.marketing-link:hover::after, .marketing-link:focus-visible::after { transform: translateX(110%); }
-.marketing-flow { position: relative; }
-.marketing-flow::before { content: ''; position: absolute; top: 0; left: 0; width: 28%; height: 2px; background: linear-gradient(90deg, transparent, var(--color-blue-400), transparent); animation: marketing-trace 6s ease-in-out 3; }
-@keyframes marketing-trace { from { transform: translateX(-100%); } to { transform: translateX(450%); } }
+/* ============================================================================
+   Public marketing surfaces: landing page, product pages, guides.
+
+   The house style is restraint. The earlier version leaned on gradient blobs,
+   a shimmer sweep across every card, gradient-clipped headlines and a ruled
+   grid behind the hero. Those effects are cheap to add and they all say the
+   same thing — that the page is decorated rather than designed — so they are
+   gone. What is left does the work instead:
+
+     - type scale and whitespace carry the hierarchy
+     - surfaces are solid fills, not outlined boxes stacked on gradients
+     - colour is almost absent, so the one accent still means something
+     - motion is short, small and tied to intent (hover, reveal), never ambient
+
+   Everything below is theme-aware: it resolves through the slate tokens that
+   index.css remaps for light mode, so neither theme needs its own rules.
+   ========================================================================== */
+
+.marketing {
+  /* Two tones only. Sections alternate between them, which is what creates
+     rhythm on a long page without a single border being drawn.
+
+     These are set here rather than reused from the slate ramp because the app
+     ramp is tuned for panels sitting inside a dense UI, where the step between
+     page and surface is deliberately small. On a marketing page that step *is*
+     the structure, so it needs to be visible across a full-width band. */
+  --surface-base: #03050d;
+  --surface-raised: #131926;
+  --hairline: color-mix(in srgb, var(--color-slate-500) 26%, transparent);
+  --ink-muted: var(--color-slate-400);
+}
+
+/* Light mode uses the pairing this layout was designed around: a soft grey
+   page with pure white raised bands, rather than white-on-white with a border
+   doing the work. */
+html[data-theme="light"] .marketing {
+  --surface-base: #f5f5f7;
+  --surface-raised: #ffffff;
+}
+
+/* index.css paints a radial tint behind `.bg-slate-950` for the signed-in app,
+   where a flat field of near-black reads as unfinished. On a marketing page
+   the same tint is the giveaway of a generated template, and it fights the
+   alternating-surface rhythm that carries this layout. Flat here. */
+.marketing.bg-slate-950 {
+  background-image: none;
+  background-color: var(--surface-base);
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────
+   Fluid, so the headline is confident on a laptop without wrapping badly on
+   a phone. Tight tracking and sub-1 leading are what make large display type
+   read as deliberate rather than merely big. */
+.marketing-display {
+  font-size: clamp(2.5rem, 7.2vw, 5rem);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+  font-weight: 600;
+}
+
+.marketing-headline {
+  font-size: clamp(1.875rem, 4vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.028em;
+  font-weight: 600;
+}
+
+.marketing-lead {
+  font-size: clamp(1.0625rem, 1.6vw, 1.375rem);
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+  color: var(--ink-muted);
+}
+
+/* An eyebrow is a label, not a banner. Sentence case in the accent colour
+   reads as a category; uppercase with wide tracking reads as a template. */
+.marketing-eyebrow {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--color-blue-400);
+}
+
+/* ── Surfaces ────────────────────────────────────────────────────────────
+   A panel is a fill, not an outline. Borders appear only where two surfaces
+   of the same tone meet and the edge would otherwise be invisible. */
+.marketing-panel {
+  background: var(--surface-raised);
+  border-radius: 1.25rem;
+}
+
+.marketing-rule {
+  border: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+/* ── Interaction ─────────────────────────────────────────────────────────
+   One behaviour for every clickable card: it lifts slightly and its label
+   moves. No sweep, no glow. The chevron travelling is the affordance. */
+.marketing-link {
+  display: block;
+  background: var(--surface-raised);
+  border-radius: 1.25rem;
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 260ms ease;
+}
+
+.marketing-link:hover,
+.marketing-link:focus-visible {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-raised);
+}
+
+.marketing-link .marketing-chevron {
+  display: inline-block;
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.marketing-link:hover .marketing-chevron,
+.marketing-link:focus-visible .marketing-chevron {
+  transform: translateX(3px);
+}
+
+/* Apple's text CTA: colour plus a chevron that moves. Cheaper than a button
+   and correct when the action is "read more", not "do the thing". */
+.marketing-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--color-blue-400);
+  font-weight: 500;
+}
+
+.marketing-cta:hover .marketing-chevron,
+.marketing-cta:focus-visible .marketing-chevron {
+  transform: translateX(3px);
+}
+
+/* ── Segmented control ───────────────────────────────────────────────────
+   The product tabs. A single rounded track with a filled selected pill, which
+   is the platform convention for "pick one of a few", rather than four
+   separately bordered buttons. */
+.marketing-segment {
+  background: color-mix(in srgb, var(--color-slate-500) 16%, transparent);
+  border-radius: 999px;
+}
+
+.marketing-segment-item {
+  border-radius: 999px;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .marketing-link:hover, .marketing-link:focus-visible { transform: none; }
-  .marketing-link::after { display: none; }
-  .marketing-flow::before { animation: none; }
+  .marketing-link,
+  .marketing-link:hover,
+  .marketing-link:focus-visible,
+  .marketing-chevron {
+    transform: none !important;
+    transition: none !important;
+  }
 }
