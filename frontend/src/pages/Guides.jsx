@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { ChevronRight, Moon, Sun } from 'lucide-react';
 import { GUIDES, guidePath } from '../content/guides';
 import { useTheme } from '../store/useTheme';
+import MarketingBrand from '../components/Common/MarketingBrand';
 
 /** Guides grouped by topic, so a growing library stays navigable. */
 const TOPICS = [...new Set(GUIDES.map((guide) => guide.topic))];
@@ -27,7 +28,7 @@ export default function Guides() {
     <div className="marketing min-h-screen bg-slate-950 text-white">
       <header style={{ borderBottom: '1px solid var(--hairline)' }}>
         <nav aria-label="Main navigation" className="mx-auto flex h-12 max-w-[1024px] items-center justify-between px-5">
-          <a href="/" className="text-[15px] font-semibold tracking-tight">Cloudledger</a>
+          <MarketingBrand />
           <div className="flex items-center gap-6">
             <a href="/#product" className="text-[13px] text-slate-400 hover:text-white">Product</a>
             <a href="/guides/" className="text-[13px] text-slate-400 hover:text-white">Guides</a>

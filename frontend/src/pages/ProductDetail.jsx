@@ -4,6 +4,7 @@ import { ChevronRight, Moon, Sun } from 'lucide-react';
 import { PRODUCTS, productPath } from '../content/products';
 import { SECTIONS } from '../nav';
 import { useTheme } from '../store/useTheme';
+import MarketingBrand from '../components/Common/MarketingBrand';
 
 /** Shared chrome so every public page reads as one site. */
 function Chrome({ children }) {
@@ -14,7 +15,7 @@ function Chrome({ children }) {
     <div className="marketing min-h-screen bg-slate-950 text-white">
       <header style={{ borderBottom: '1px solid var(--hairline)' }}>
         <nav aria-label="Main navigation" className="mx-auto flex h-12 max-w-[1024px] items-center justify-between px-5">
-          <a href="/" className="text-[15px] font-semibold tracking-tight">Cloudledger</a>
+          <MarketingBrand />
           <div className="flex items-center gap-6">
             <a href="/#product" className="text-[13px] text-slate-400 hover:text-white">Product</a>
             <a href="/guides/" className="text-[13px] text-slate-400 hover:text-white">Guides</a>

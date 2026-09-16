@@ -9,11 +9,11 @@
 
      - type scale and whitespace carry the hierarchy
      - surfaces are solid fills, not outlined boxes stacked on gradients
-     - colour is almost absent, so the one accent still means something
+     - warm orange identifies the brand; blue anchors product data
      - motion is short, small and tied to intent (hover, reveal), never ambient
 
-   Everything below is theme-aware: it resolves through the slate tokens that
-   index.css remaps for light mode, so neither theme needs its own rules.
+    Theme-specific brand colours keep text readable on both light and dark
+    surfaces. Animations are finite and respect reduced-motion preferences.
    ========================================================================== */
 
 .marketing {
@@ -28,6 +28,9 @@
   --surface-raised: #131926;
   --hairline: color-mix(in srgb, var(--color-slate-500) 26%, transparent);
   --ink-muted: var(--color-slate-400);
+  --brand-accent: #ff9a62;
+  --brand-fill: #f47a38;
+  --brand-soft: #f47a3814;
 }
 
 /* Light mode uses the pairing this layout was designed around: a soft grey
@@ -36,6 +39,72 @@
 html[data-theme="light"] .marketing {
   --surface-base: #f5f5f7;
   --surface-raised: #ffffff;
+  --brand-accent: #a84414;
+  --brand-soft: #f47a3810;
+}
+
+.marketing-brand { display: inline-flex; align-items: center; gap: 9px; flex-shrink: 0; font-size: 18px; font-weight: 700; letter-spacing: -.035em; }
+.marketing-brand img { flex-shrink: 0; transition: transform .25s ease; }
+.marketing-brand:hover img { transform: rotate(-6deg); }
+.marketing-brand-dot, .brand-text { color: var(--brand-accent); }
+.brand-button { background: var(--brand-fill); color: #24130b; transition: background .2s, transform .2s, box-shadow .2s; }
+.brand-button:hover { background: #ff9a62; box-shadow: 0 6px 22px -10px #f47a3870; }
+.warm-hero { position: relative; isolation: isolate; overflow: hidden; background: var(--surface-base); }
+.warm-hero::before, .warm-hero::after { content: ''; position: absolute; pointer-events: none; z-index: -1; }
+.warm-hero::before { width: min(85vw, 1100px); height: 520px; left: 50%; bottom: -160px; transform: translateX(-50%) rotate(-12deg); border: 1px solid color-mix(in srgb, var(--brand-accent) 25%, transparent); border-radius: 50%; box-shadow: 0 0 0 55px var(--brand-soft), 0 0 0 110px color-mix(in srgb, var(--brand-accent) 3%, transparent); }
+.warm-hero::after { inset: 64px 0 0; background-image: radial-gradient(var(--hairline) .7px, transparent .7px); background-size: 22px 22px; mask-image: linear-gradient(90deg, #0007, transparent 28%, transparent 72%, #0007); }
+.product-showcase { scroll-margin-top: 80px; background: color-mix(in srgb, var(--surface-base) 96%, var(--brand-fill)); }
+.showcase-heading { display: flex; justify-content: space-between; align-items: end; gap: 32px; }
+.showcase-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 32px 0 20px; }
+.showcase-tabs button { padding: 10px 18px; border: 1px solid var(--hairline); border-radius: 999px; font-size: 14px; color: var(--ink-muted); }
+.showcase-tabs button[aria-selected="true"] { background: var(--brand-fill); border-color: var(--brand-fill); color: #24130b; font-weight: 600; }
+.showcase-panel { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: center; border: 1px solid var(--hairline); border-radius: 24px; overflow: hidden; background: var(--surface-raised); }
+.showcase-visual { position: relative; padding: 24px; background: #111827; }
+.showcase-image { display: block; width: 100%; height: auto; border-radius: 12px; animation: warm-enter .4s ease-out; }
+.showcase-expand { display: flex; align-items: center; gap: 6px; margin: 12px 0 0 auto; border: 1px solid #475569; border-radius: 8px; padding: 7px 10px; background: #1e293b; color: #f8fafc; font-size: 12px; }
+.showcase-copy { padding: 28px; }
+.showcase-expanded { grid-template-columns: minmax(0, 1fr); }
+.showcase-expanded .showcase-copy { max-width: 720px; }
+.showcase-bottom { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 16px; font-size: 12px; color: var(--ink-muted); }
+.showcase-bottom button { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--hairline); border-radius: 50%; }
+.showcase-bottom button:hover { background: var(--brand-soft); color: var(--brand-accent); }
+@media (max-width: 760px) { .showcase-heading { display: block; } .showcase-heading > p { margin-top: 20px; } .showcase-panel { grid-template-columns: minmax(0, 1fr); } .showcase-visual { padding: 8px; } .showcase-tabs button { padding: 9px 12px; font-size: 12px; } }
+@media (prefers-reduced-motion: reduce) { .showcase-image { animation: none; } }
+.warm-hero .marketing-display { font-size: clamp(2.4rem, 6vw, 4.25rem); }
+.warm-hero .marketing-lead { margin-top: 20px; }
+.hero-kicker { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: 13px; font-weight: 600; color: var(--brand-accent); }
+.hero-kicker > span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: warm-dot 1.5s ease-in-out 3; }
+.hero-proof { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px 24px; margin-top: 23px; font-size: 12px; color: var(--ink-muted); }
+.hero-proof > span { display: inline-flex; align-items: center; gap: 6px; }
+.hero-proof svg { color: var(--brand-accent); }
+.marketing-preview { border: 1px solid var(--hairline); box-shadow: 0 20px 60px -30px #0008; }
+.preview-label { color: var(--brand-accent); font-size: 10px; font-weight: 600; }
+.preview-service { display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--hairline); border-radius: 10px; padding: 12px 8px; color: var(--ink-muted); font-size: 12px; }
+.preview-service[aria-pressed="true"] { background: var(--brand-soft); border-color: var(--brand-accent); color: var(--brand-accent); }
+.preview-chart { padding-top: 14px; border-bottom: 1px solid var(--hairline); }
+.preview-bar { transform-origin: bottom; animation: warm-bar .65s cubic-bezier(.22,1,.36,1) both; }
+.preview-insight { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 10px; background: var(--brand-soft); }
+.preview-insight-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; color: var(--brand-accent); border: 1px solid var(--hairline); }
+.source-strip { border-block: 1px solid var(--hairline); }
+.platform-card { border: 1px solid var(--hairline); }
+.platform-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; color: var(--brand-accent); background: var(--brand-soft); }
+.platform-outcome { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--hairline); color: var(--brand-accent); font-size: 13px; font-weight: 600; }
+.landing-warm > section:not(#top):not(.source-strip) { padding-block: clamp(48px, 6vw, 80px); }
+.landing-warm #product .marketing-link { background: var(--surface-base); border: 1px solid var(--hairline); }
+.landing-warm .marketing-eyebrow, .landing-warm .marketing-cta { color: var(--brand-accent); }
+.marketing-enter { animation: warm-enter .55s ease-out backwards; }
+@keyframes warm-enter { from { transform: translateY(10px); } to { transform: none; } }
+@keyframes warm-bar { from { transform: scaleY(.12); } to { transform: scaleY(1); } }
+@keyframes warm-dot { 50% { box-shadow: 0 0 0 5px var(--brand-soft); } }
+@media (max-width: 480px) {
+  .marketing header nav { height: auto; min-height: 64px; flex-wrap: wrap; gap: 8px; padding-block: 10px; }
+  .marketing header nav > div { gap: 16px; }
+  .preview-service { flex-direction: column; gap: 5px; padding: 8px 4px; font-size: 11px; }
+  .preview-label { max-width: 80px; text-align: right; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marketing-enter, .preview-bar, .hero-kicker > span { animation: none; }
+  .marketing-brand:hover img { transform: none; }
 }
 
 /* index.css paints a radial tint behind `.bg-slate-950` for the signed-in app,

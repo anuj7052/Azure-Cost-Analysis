@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 440" fill="none">
+ <rect width="800" height="440" rx="20" fill="#111827"/>
+ <g stroke="#334155"><path d="M0 56h800M176 56v384"/></g>
+ <circle cx="28" cy="28" r="6" fill="#F47A38"/>
+ <g font-family="Arial,sans-serif" fill="#CBD5E1" font-size="13"><text x="48" y="33">Cloudledger / Cost Explorer</text><text x="24" y="97">Reporting scope</text><text x="24" y="136">Subscriptions</text><text x="24" y="174">Date range</text><text x="24" y="212">Cost basis</text></g>
+ <rect x="192" y="76" width="588" height="270" rx="12" fill="#1E293B"/>
+ <g font-family="Arial,sans-serif" fill="#F8FAFC"><text x="212" y="108" font-size="18">Follow the daily cost</text><text x="212" y="132" font-size="12" fill="#94A3B8">Illustrated trend · no customer data</text></g>
+ <g stroke="#334155"><path d="M212 178h546M212 232h546M212 286h546"/></g>
+ <g fill="#60A5FA"><rect x="218" y="257" width="27" height="63" rx="3"/><rect x="260" y="234" width="27" height="86" rx="3"/><rect x="302" y="246" width="27" height="74" rx="3"/><rect x="344" y="218" width="27" height="102" rx="3"/><rect x="386" y="227" width="27" height="93" rx="3"/><rect x="554" y="218" width="27" height="102" rx="3"/><rect x="596" y="232" width="27" height="88" rx="3"/><rect x="638" y="212" width="27" height="108" rx="3"/><rect x="680" y="228" width="27" height="92" rx="3"/></g>
+ <g fill="#F47A38"><rect x="428" y="163" width="27" height="157" rx="3"/><rect x="470" y="180" width="27" height="140" rx="3"/><rect x="512" y="200" width="27" height="120" rx="3"/></g>
+ <path d="M441 163V145h123" stroke="#FDBA74" stroke-dasharray="4 4"/>
+ <g font-family="Arial,sans-serif" font-size="12" fill="#FDBA74"><text x="574" y="149">Inspect the change</text></g>
+ <rect x="192" y="360" width="588" height="60" rx="12" fill="#27221F"/>
+ <g font-family="Arial,sans-serif" font-size="13" fill="#FED7AA"><text x="212" y="386">Service → resource group → resource → meter</text><text x="212" y="407" fill="#CBD5E1">Connect a billing change to its underlying contributors.</text></g>
+</svg>

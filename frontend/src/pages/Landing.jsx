@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Menu, Moon, Sun, X } from 'lucide-react';
+import { ChevronRight, Menu, Moon, Sun, X, Check, Cpu, Database, Network } from 'lucide-react';
 import { SECTIONS } from '../nav';
 import { GUIDES, guidePath } from '../content/guides';
 import { PRODUCTS, productPath } from '../content/products';
 import { FAQ as PUBLIC_FAQ } from '../content/faq';
 import { useTheme } from '../store/useTheme';
+import MarketingBrand from '../components/Common/MarketingBrand';
+import ProductShowcase from '../components/Common/ProductShowcase';
 
 /**
  * The public front door.
@@ -79,39 +81,9 @@ function prefersLessMotion() {
     && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 }
 
-/** Reveals children once they scroll into view, unless motion is unwanted. */
+/** Keep content visible before and after React mounts, including deep links. */
 function Reveal({ children, delay = 0, className = '' }) {
-  const ref = useRef(null);
-  const [shown, setShown] = useState(
-    () => prefersLessMotion() || typeof IntersectionObserver === 'undefined',
-  );
-
-  useEffect(() => {
-    const node = ref.current;
-    if (!node || shown) return undefined;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) {
-        setShown(true);
-        observer.disconnect();
-      }
-    }, { rootMargin: '0px 0px -12% 0px' });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [shown]);
-
-  return (
-    <div
-      ref={ref}
-      className={className}
-      style={{
-        opacity: shown ? 1 : 0,
-        transform: shown ? 'none' : 'translateY(14px)',
-        transition: `opacity .7s cubic-bezier(.22,1,.36,1) ${delay}ms, transform .7s cubic-bezier(.22,1,.36,1) ${delay}ms`,
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div className={`marketing-enter ${className}`} style={{ animationDelay: `${delay}ms` }}>{children}</div>;
 }
 
 /**
@@ -120,14 +92,21 @@ function Reveal({ children, delay = 0, className = '' }) {
  */
 function ProductMock() {
   const bars = [34, 58, 41, 72, 50, 84, 64, 92, 59, 78, 53, 88, 70, 81];
+  const [selected, setSelected] = useState(0);
+  const services = [
+    { label: 'Compute', icon: Cpu, text: 'Trace a VM cost change to its resource, running hours and billing meter.', href: '/features/azure-resource-optimization/#compute' },
+    { label: 'Storage', icon: Database, text: 'Review capacity, disk tiers and retained resources behind storage charges.', href: '/guides/azure-storage-cost-growth/' },
+    { label: 'Network', icon: Network, text: 'Separate data-transfer charges from network processing and hourly costs.', href: '/guides/understand-azure-bandwidth-data-transfer-costs/' },
+  ];
 
   return (
-    <div className="marketing-panel overflow-hidden text-left shadow-2xl">
+    <div className="marketing-panel marketing-preview overflow-hidden text-left">
       <div className="flex items-center gap-2 px-5 py-3.5" style={{ borderBottom: '1px solid var(--hairline)' }}>
         <span className="h-2.5 w-2.5 rounded-full" style={{ background: 'var(--hairline)' }} />
         <span className="h-2.5 w-2.5 rounded-full" style={{ background: 'var(--hairline)' }} />
         <span className="h-2.5 w-2.5 rounded-full" style={{ background: 'var(--hairline)' }} />
-        <span className="ml-2 text-[11px] text-slate-500">Cloudledger — Dashboard</span>
+        <span className="ml-2 text-[11px] text-slate-400">Cloudledger / Cost Explorer</span>
+        <span className="preview-label ml-auto">Interactive illustration</span>
       </div>
 
       <div className="grid grid-cols-[3rem_1fr] sm:grid-cols-[10rem_1fr]">
@@ -146,35 +125,37 @@ function ProductMock() {
         </aside>
 
         <div className="space-y-3 p-4 sm:p-6">
-          <div className="grid grid-cols-3 gap-3">
-            {['Actual cost', 'Latest month', 'Daily burn'].map((label) => (
-              <div key={label}>
-                <p className="truncate text-[11px] text-slate-500">{label}</p>
-                <div className="mt-2 h-5 w-full rounded" style={{ background: 'var(--hairline)' }} />
-              </div>
+          <div className="grid grid-cols-3 gap-2" aria-label="Explore cost categories">
+            {services.map((service, index) => (
+              <button key={service.label} aria-pressed={selected === index} onClick={() => setSelected(index)} className="preview-service">
+                <service.icon size={18} aria-hidden="true" />
+                <span>{service.label}</span>
+              </button>
             ))}
           </div>
 
-          <div className="flex h-28 items-end gap-[3px] sm:h-40">
+          <div key={selected} className="preview-chart flex h-28 items-end gap-[3px] sm:h-40" aria-hidden="true">
             {bars.map((height, i) => (
               <div
                 key={i}
-                className="flex-1 rounded-t-[2px]"
+                className="preview-bar flex-1 rounded-t-[3px]"
                 style={{
-                  height: `${height}%`,
+                  height: `${bars[(i + selected * 3) % bars.length]}%`,
                   // One hue, varied only by weight. A full-saturation bar chart
                   // in a hero is decoration; this reads as data at a glance and
                   // stops competing with the headline above it.
-                  background: 'var(--color-blue-400)',
+                  background: i % 4 === selected ? 'var(--brand-accent)' : 'var(--color-blue-400)',
                   opacity: 0.3 + (height / 100) * 0.45,
+                  animationDelay: `${i * 35}ms`,
                 }}
               />
             ))}
           </div>
 
-          <p className="text-[11px] leading-relaxed text-slate-500">
-            Cost change explained: reservation purchase, new resources and rate changes — each named from billing data.
-          </p>
+          <div className="preview-insight" aria-live="polite">
+            <span className="preview-insight-mark" aria-hidden="true"><Check size={16} /></span>
+            <div><p className="text-sm font-semibold">Follow the {services[selected].label.toLowerCase()} cost</p><p className="mt-1 text-xs leading-6 text-slate-400">{services[selected].text}</p><a href={services[selected].href} className="marketing-cta mt-2 text-xs">Explore the workflow <ChevronRight size={14} /></a></div>
+          </div>
         </div>
       </div>
     </div>
@@ -319,7 +300,7 @@ export default function Landing() {
   const signIn = () => navigate('/login');
 
   return (
-    <div className="marketing aca-motion min-h-screen scroll-smooth bg-slate-950 text-white">
+    <div className="marketing landing-warm aca-motion min-h-screen scroll-smooth bg-slate-950 text-white">
       <style>{`@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }`}</style>
 
       <a href="#top" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-blue-600 focus:px-3 focus:py-2 focus:text-sm focus:text-white">
@@ -342,8 +323,8 @@ export default function Landing() {
           }
           : undefined}
       >
-        <div className="mx-auto flex h-12 max-w-[1024px] items-center justify-between px-5">
-          <a href="#top" className="text-[15px] font-semibold tracking-tight">Cloudledger</a>
+        <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between px-5">
+          <MarketingBrand href="#top" />
 
           <nav className="hidden items-center gap-8 lg:flex">
             {NAV_LINKS.map((l) => (
@@ -367,7 +348,7 @@ export default function Landing() {
             >
               {theme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
             </button>
-            <button onClick={signIn} className="hidden rounded-full bg-blue-600 px-4 py-1.5 text-[13px] font-medium text-white transition hover:bg-blue-500 sm:block">
+            <button onClick={signIn} className="brand-button hidden rounded-full px-4 py-2 text-[13px] font-semibold sm:block">
               Sign in
             </button>
             <button
@@ -388,7 +369,7 @@ export default function Landing() {
                 {l.label}
               </a>
             ))}
-            <button onClick={signIn} className="mt-5 w-full rounded-full bg-blue-600 py-2.5 text-[15px] font-medium text-white">
+            <button onClick={signIn} className="brand-button mt-5 w-full rounded-full py-2.5 text-[15px] font-semibold">
               Sign in with Microsoft
             </button>
           </div>
@@ -396,12 +377,13 @@ export default function Landing() {
       </header>
 
       {/* ── hero ───────────────────────────────────────────────────── */}
-      <section id="top" className="px-5 pb-20 pt-28 text-center sm:pt-36">
+      <section id="top" className="warm-hero px-5 pb-12 pt-28 text-center sm:pt-28">
         <Reveal>
+          <p className="hero-kicker"><span aria-hidden="true" /> Your Azure estate. In perspective.</p>
           <h1 className="marketing-display mx-auto max-w-4xl">
             Know what Azure costs.
             <br className="hidden sm:block" />
-            <span className="text-slate-400"> And why it changed.</span>
+            <span className="brand-text"> And why it changed.</span>
           </h1>
 
           <p className="marketing-lead mx-auto mt-7 max-w-2xl">
@@ -409,29 +391,30 @@ export default function Landing() {
             read with your own permissions.
           </p>
 
-          <div className="mt-10 flex flex-col items-center justify-center gap-5 sm:flex-row sm:gap-8">
-            <button onClick={signIn} className="rounded-full bg-blue-600 px-7 py-3 text-[17px] font-medium text-white transition hover:bg-blue-500">
+          <div className="mt-7 flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-8">
+            <button onClick={signIn} className="brand-button rounded-full px-7 py-3 text-[17px] font-semibold">
               Sign in with Microsoft
             </button>
-            <a href="#product" className="marketing-cta text-[17px]">
-              Explore the product
+            <a href="#showcase" className="marketing-cta text-[17px]">
+              See how it works
               <ChevronRight className="marketing-chevron h-4 w-4" />
             </a>
           </div>
+          <div className="hero-proof" aria-label="Product highlights">{['Microsoft Entra sign-in', 'Read-only reporting', 'Resource-level detail'].map(label => <span key={label}><Check size={14} aria-hidden="true" />{label}</span>)}</div>
         </Reveal>
 
-        <Reveal delay={120} className="mx-auto mt-20 max-w-[980px]">
+        <Reveal delay={120} className="mx-auto mt-9 max-w-[980px]">
           <div ref={heroRef} className="will-change-transform">
             <ProductMock />
           </div>
-          <p className="mt-6 text-[13px] text-slate-500">
+          <p className="mt-4 text-[12px] text-slate-400">
             Illustration only. The app shows figures read from your own Azure account, never sample data.
           </p>
         </Reveal>
       </section>
 
       {/* ── sources ────────────────────────────────────────────────── */}
-      <section className="px-5 py-20" style={{ background: 'var(--surface-raised)' }}>
+      <section className="source-strip px-5 py-9" style={{ background: 'var(--surface-raised)' }}>
         <Reveal className="mx-auto max-w-[1024px] text-center">
           <p className="text-[13px] text-slate-500">Reads directly from Microsoft services</p>
           <ul className="mt-7 flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
@@ -442,8 +425,10 @@ export default function Landing() {
         </Reveal>
       </section>
 
+      <ProductShowcase />
+
       {/* ── platform ───────────────────────────────────────────────── */}
-      <section className="px-5 py-24 sm:py-32">
+      <section className="px-5 py-16 sm:py-20">
         <div className="mx-auto max-w-[1024px]">
           <Reveal className="mx-auto max-w-2xl text-center">
             <p className="marketing-eyebrow">One connected platform</p>
@@ -455,10 +440,11 @@ export default function Landing() {
               const Icon = SECTIONS.find((s) => s.key === product.key).icon;
               return (
                 <Reveal key={product.key} delay={index * 60}>
-                  <a href={productPath(product)} className="marketing-link flex h-full flex-col p-9 sm:p-11">
-                    <Icon className="h-7 w-7 text-blue-400" />
+                  <a href={productPath(product)} className="marketing-link platform-card flex h-full flex-col p-7 sm:p-9">
+                    <div className="flex items-center justify-between"><span className="platform-icon"><Icon size={24} /></span><span className="text-xs text-slate-400">0{index + 1}</span></div>
                     <h3 className="mt-8 text-2xl font-semibold tracking-tight">{product.label}</h3>
                     <p className="mt-3 flex-1 text-[15px] leading-7 text-slate-400">{product.description}</p>
+                    <p className="platform-outcome">{product.outcome}</p>
                     <span className="marketing-cta mt-7 text-[15px]">
                       Learn more
                       <ChevronRight className="marketing-chevron h-4 w-4" />
@@ -666,7 +652,7 @@ export default function Landing() {
             Sign in with your work account, connect a tenant, and start with a read-only cost review.
           </p>
           <div className="mt-10 flex flex-col items-center justify-center gap-5 sm:flex-row sm:gap-8">
-            <button onClick={signIn} className="rounded-full bg-blue-600 px-7 py-3 text-[17px] font-medium text-white transition hover:bg-blue-500">
+            <button onClick={signIn} className="brand-button rounded-full px-7 py-3 text-[17px] font-semibold">
               Sign in with Microsoft
             </button>
             <a href="#security" className="marketing-cta text-[17px]">

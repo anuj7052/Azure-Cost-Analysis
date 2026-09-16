@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 440" fill="none">
+ <rect width="800" height="440" rx="20" fill="#111827"/><path d="M0 56h800" stroke="#334155"/><circle cx="28" cy="28" r="6" fill="#F47A38"/>
+ <g font-family="Arial,sans-serif" fill="#CBD5E1" font-size="13"><text x="48" y="33">Cloudledger / Resource intelligence</text><text x="28" y="98" fill="#F8FAFC" font-size="20">Give every resource a review</text><text x="28" y="123" fill="#94A3B8">Illustrated workflow · no customer data</text></g>
+ <g fill="#1E293B"><rect x="24" y="148" width="240" height="190" rx="14"/><rect x="280" y="148" width="240" height="190" rx="14"/><rect x="536" y="148" width="240" height="190" rx="14"/></g>
+ <g stroke="#60A5FA" stroke-width="3"><rect x="48" y="176" width="40" height="30" rx="4"/><path d="M56 214h24m-12-8v8"/></g>
+ <g stroke="#FDBA74" stroke-width="3"><ellipse cx="324" cy="180" rx="20" ry="7"/><path d="M304 180v27c0 10 40 10 40 0v-27m-40 14c0 10 40 10 40 0"/></g>
+ <g stroke="#6EE7B7" stroke-width="3"><path d="M560 216l12-24 12 12 14-30 14 18"/></g>
+ <g font-family="Arial,sans-serif" font-size="17" fill="#F8FAFC"><text x="48" y="250">Compute</text><text x="304" y="250">Unattached resources</text><text x="560" y="250">Change history</text></g>
+ <g font-family="Arial,sans-serif" font-size="13" fill="#CBD5E1"><text x="48" y="279">Review utilization peaks</text><text x="48" y="302">before changing size.</text><text x="304" y="279">Check cost and ownership</text><text x="304" y="302">before retiring resources.</text><text x="560" y="279">Match inventory changes</text><text x="560" y="302">with the billing timeline.</text></g>
+ <path d="M144 340v32h512v-32m-256 0v32" stroke="#475569" stroke-width="2"/>
+ <rect x="208" y="380" width="384" height="40" rx="20" fill="#F47A38"/><text x="400" y="405" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" fill="#24130B">Prioritize → validate → review with the owner</text>
+</svg>
