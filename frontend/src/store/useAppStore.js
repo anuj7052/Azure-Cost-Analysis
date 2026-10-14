@@ -917,7 +917,7 @@ export const useAppStore = create((set, get) => ({
     const { selectedTenantId, selectedSubscriptionIds, months, dateMode, fromDate, toDate, imported } = get();
     if (imported) return;
     if (!selectedTenantId || selectedSubscriptionIds.length === 0) return;
-    set({ pricingLoading: true, pricingError: null });
+    const isCurrent = beginRead(get, set, 'pricing');
     try {
       const payload = {
         tenant_id: selectedTenantId,
@@ -928,12 +928,12 @@ export const useAppStore = create((set, get) => ({
       await cached(
         `pricing:${JSON.stringify(payload)}`,
         () => fetchPricing(payload),
-        (data) => set({ pricingData: data, pricingLoading: false, pricingError: null }),
+        (data) => { if (isCurrent()) set({ pricingData: data, pricingLoading: false, pricingError: null }); },
         opts,
       );
-      set({ pricingLoading: false });
+      if (isCurrent()) set({ pricingLoading: false });
     } catch (err) {
-      set({ pricingLoading: false, pricingError: err.response?.data?.detail || err.message });
+      if (isCurrent()) set({ pricingLoading: false, pricingError: err.response?.data?.detail || err.message });
     }
   },
 

@@ -836,6 +836,9 @@ export const fetchBandwidth = (body) =>
 export const fetchPricing = (body) =>
   api.post('/costs/pricing', body).then(r => r.data);
 
+export const fetchBillingCategory = (body) =>
+  api.post('/costs/billing-category', body).then(r => r.data);
+
 /** Which resources a reservation actually paid for: VM, resource group, SKU. */
 export const fetchReservedDetail = (body) =>
   api.post('/costs/pricing/reserved', body).then(r => r.data);

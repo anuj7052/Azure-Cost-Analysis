@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { billingCategoryUrl } from '../../utils/billingCategories';
 import { BadgeCheck, Tag, ShieldQuestion, Loader2, Server, AlertTriangle } from 'lucide-react';
 import HeroCard from '../Cards/HeroCard';
 import DetailPanel, { DetailStat } from '../Common/DetailPanel';
@@ -158,6 +160,7 @@ function ReservedDetail({ request, currency }) {
  * VM meter looks identical whether or not a reservation covered it.
  */
 export default function PricingSection({ data, loading, error, request }) {
+  const navigate = useNavigate();
   const currency = data?.currency || 'INR';
   const full = (v) => formatAmountFull(v, currency);
   const exact = (v) => exactAmount(v, currency);
@@ -233,13 +236,14 @@ export default function PricingSection({ data, loading, error, request }) {
 
           <HeroCard
             title="Pay-as-you-go"
-            subtitle="Charged at list price"
+            subtitle="Azure OnDemand pricing"
             icon={Tag}
             accent="amber"
             value={full(data?.on_demand)}
             exact={exact(data?.on_demand)}
-            footnote="Where a reservation would pay for itself"
+            footnote="View all resource and meter charges in Cost Explorer"
             loading={loading}
+            onClick={() => navigate(billingCategoryUrl())}
           />
 
           <HeroCard

@@ -44,6 +44,7 @@ const VIEWS_KEY = 'aca:views:explorer';
 const MonthVariance = lazy(() => import('./Compare'));
 const ResourceGroupsReport = lazy(() => import('./ResourceGroups'));
 const BandwidthTab = lazy(() => import('../components/Common/BandwidthTab'));
+const BillingCategoryDetails = lazy(() => import('../components/Charts/BillingCategoryDetails'));
 
 function TabLoading({ what }) {
   return <div role="status" className="p-6 text-sm text-slate-400">Loading {what}…</div>;
@@ -283,13 +284,18 @@ export default function CostExplorer() {
     if (!name?.trim()) return;
     persistViews([
       ...views.filter((v) => v.name !== name.trim()),
-      { name: name.trim(), tab, timeline, compareMode, groupMode, filters },
+      { name: name.trim(), tab, timeline, compareMode, groupMode, filters, category: searchParams.get('category') || 'payg' },
     ]);
   };
 
   const applyView = (v) => {
     const migrated = migrateExplorerView(v);
-    setTab(migrated.tab);
+    setSearchParams(previous => {
+      const params = new URLSearchParams(previous);
+      params.set('tab', migrated.tab);
+      if (migrated.tab === 'billing') params.set('category', v.category || 'payg');
+      return params;
+    });
     setTimeline(migrated.timeline);
     setCompareMode(v.compareMode === 'quick' ? 'quick' : 'full');
     setGroupMode(v.groupMode === 'filtered' ? 'filtered' : 'report');
@@ -313,6 +319,7 @@ export default function CostExplorer() {
     { key: 'groups', label: 'Resource groups', icon: Boxes, count: groups.length || null },
     { key: 'compare', label: 'Month compare', icon: GitCompareArrows },
     { key: 'bandwidth', label: 'Bandwidth', icon: Network },
+    { key: 'billing', label: 'Billing categories', icon: Layers },
   ];
 
   // The two moved-in tabs answer the header selection, not the filter bar, so
@@ -364,6 +371,8 @@ export default function CostExplorer() {
       )}
 
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
+
+      {tab === 'billing' && <Suspense fallback={<TabLoading what="billing categories" />}><BillingCategoryDetails /></Suspense>}
 
       {/* Filters drive every tab, the trend included. The trend is re-summed
           from meter rows when a filter is set, so the narrowing is real rather

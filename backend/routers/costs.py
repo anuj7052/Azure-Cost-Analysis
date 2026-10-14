@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
+from typing import Literal
 from auth.dependencies import get_current_user
 from services.token_resolver import resolve_tenant_token, subscription_names
 from services.cost_client import (
@@ -41,6 +42,45 @@ from core.db import get_db
 router = APIRouter(prefix="/api/costs", tags=["costs"])
 
 log = logging.getLogger(__name__)
+
+
+class BillingCategoryRequest(CostQueryRequest):
+    category: Literal["payg", "ri", "asr"] = "payg"
+
+
+@router.post("/billing-category")
+async def get_billing_category(
+    body: BillingCategoryRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    from services.billing_categories import PRICING_FILTERS, category_detail
+
+    if not body.subscription_ids:
+        raise HTTPException(status_code=400, detail="Select at least one subscription.")
+    token = await resolve_tenant_token(body.tenant_id, current_user, db)
+    model = PRICING_FILTERS.get(body.category)
+
+    async def read_sub(sub_id):
+        records = await query_costs(
+            token=token, subscription_id=sub_id, months=body.months,
+            from_date=body.from_date, to_date=body.to_date,
+            group_by=["ResourceId", "ServiceName", "Meter"],
+            granularity="Monthly",
+            filters={"PricingModel": model} if model else {},
+        )
+        return [{**record, "SubscriptionId": sub_id} for record in records]
+
+    # Never retry an unsupported PricingModel query without its filter: that
+    # would label the entire bill as PAYG or RI.
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+    if not records and errors:
+        raise HTTPException(status_code=502, detail=summarise_errors(errors, "billing category detail"))
+    try:
+        result = category_detail(records, body.category)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {**result, "coverage": build_coverage(body.subscription_ids, errors), "errors": errors}
 
 
 @router.post("", response_model=CostQueryResponse)

@@ -15,6 +15,7 @@ import ServicePieChart from '../components/Charts/ServicePieChart';
 import { formatAmount, formatAmountFull } from '../utils/currency';
 import { exactAmount } from '../utils/exact';
 import { Amount } from '../components/Common/Amount';
+import { billingCategoryUrl } from '../utils/billingCategories';
 import { compareBoqToUsage } from '../utils/boqCompare';
 import { formatBytes, formatGB, formatTB, pctOf, splitBytes, toGB } from '../utils/bytes';
 
@@ -414,6 +415,16 @@ export default function Dashboard() {
       {boqReport && <BoqVarianceBanner report={boqReport} onOpen={() => navigate('/boq')} />}
 
       <div className="stagger-children grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <HeroCard
+          title="Pay-as-you-go"
+          subtitle="Azure OnDemand · selected period"
+          icon={IndianRupee}
+          accent="amber"
+          value={!imported && pricingData?.has_pricing_data ? formatAmountFull(pricingData.on_demand, pricingData.currency) : '—'}
+          footnote={imported ? 'Requires live Azure pricing-model data' : pricingError ? 'Could not load pricing · open details to retry' : pricingData && !pricingData.has_pricing_data ? 'Pricing model unavailable for this scope' : pricingData?.errors?.length ? 'Partial amount · some subscriptions unavailable' : 'Open resource and meter details in Cost Explorer'}
+          loading={pricingLoading || (costLoading && !pricingData)}
+          onClick={() => navigate(billingCategoryUrl())}
+        />
         {Object.entries(HEROES).map(([key, h]) => (
           <HeroCard
             key={key}
