@@ -54,5 +54,11 @@ export const graphRequest = {
   scopes: ['https://graph.microsoft.com/Directory.Read.All'],
 };
 
+// Requested only from Azure Billing's explicit Connect Microsoft action.
+// Graph and ARM tokens have different audiences and are never interchanged.
+export const billingFilesRequest = {
+  scopes: ['https://graph.microsoft.com/User.Read', 'https://graph.microsoft.com/Files.ReadWrite.All', 'https://graph.microsoft.com/Sites.Read.All'],
+};
+
 // @azure/msal-react v5: pass uninitialized instance — MsalProvider calls initialize() internally
 export const msalInstance = new PublicClientApplication(msalConfig);

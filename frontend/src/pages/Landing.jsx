@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Menu, Moon, Sun, X, Check, Cpu, Database, Network } from 'lucide-react';
-import { SECTIONS } from '../nav';
+import { PRODUCT_SECTIONS as SECTIONS } from '../nav';
 import { GUIDES, guidePath } from '../content/guides';
 import { PRODUCTS, productPath } from '../content/products';
 import { FAQ as PUBLIC_FAQ } from '../content/faq';

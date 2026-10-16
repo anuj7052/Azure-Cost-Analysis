@@ -2,6 +2,7 @@ import { useEffect, useReducer, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, RequireAuth, LoginScreen } from './auth/AuthProvider';
+import { BillingTopbar } from './components/billing-ui/workspace';
 import Sidebar from './components/Layout/Sidebar';
 import Topbar from './components/Layout/Topbar';
 import GlobalProgress from './components/Common/GlobalProgress';
@@ -25,6 +26,8 @@ const GlobalSearch   = lazy(() => import('./pages/GlobalSearch'));
 const Changes        = lazy(() => import('./pages/Changes'));
 const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
 const Boq            = lazy(() => import('./pages/Boq'));
+const AzureBilling = lazy(() => import('./pages/AzureBilling'));
+const BillingDashboard = lazy(() => import('./pages/BillingDashboard'));
 const Commitments    = lazy(() => import('./pages/Commitments'));
 const Deploy         = lazy(() => import('./pages/Deploy'));
 const Admin          = lazy(() => import('./pages/Admin'));
@@ -268,7 +271,7 @@ function AppShell() {
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
-        <Topbar />
+        {location.pathname.startsWith('/azure-billing') ? <BillingTopbar /> : <Topbar />}
         <main className="flex-1 overflow-y-auto">
           <div key={location.pathname} className="animate-fade-up">
           <Suspense fallback={<PageLoader />}>
@@ -292,6 +295,9 @@ function AppShell() {
             <Route path="/activity" element={<ActivityLog />} />
             <Route path="/bandwidth" element={<Navigate to="/explorer?tab=bandwidth" replace />} />
             <Route path="/boq" element={<Boq />} />
+            <Route path="/azure-billing" element={<AzureBilling />} />
+            <Route path="/azure-billing/settings" element={<AzureBilling />} />
+            <Route path="/azure-billing/dashboard" element={<BillingDashboard />} />
             <Route path="/commitments" element={<Commitments />} />
             <Route path="/deploy" element={<Deploy />} />
               <Route path="/estate" element={<Estate />} />
@@ -322,7 +328,7 @@ function AppShell() {
         </main>
       </div>
       {/* Outside <main> so it stays put while the page behind it scrolls. */}
-      <AssistantWidget />
+      {!location.pathname.startsWith('/azure-billing') && <AssistantWidget />}
       {/* Also outside <main>, and mounted once for the whole app: it reports
           on requests, which do not stop when the route changes. */}
       <GlobalProgress />

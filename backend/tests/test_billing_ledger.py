@@ -1,0 +1,106 @@
+import csv
+import io
+
+import aiosqlite
+import pytest
+import pytest_asyncio
+from fastapi import HTTPException
+
+from core import db as db_module
+from services import billing_ledger as ledger
+from routers import billing_ledger as routes
+
+
+def source(rows):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Company Name', 'Details'] + [''] * 8 + ['April', '', '', '', 'May', '', '', ''])
+    writer.writerow(['', 'Workload', 'PO ID', 'PO Date', 'Period Start', 'Period End', 'Frequency', 'Plan Name', 'Requirement ID', 'Distributor'] + ['Invoice ID', 'Amount', 'Redingtone Bill', 'Payment Status'] * 2)
+    writer.writerows(rows)
+    return output.getvalue().encode('utf-8-sig')
+
+
+def test_inherits_company_preserves_notes_and_does_not_guess_shifted_amounts():
+    content = source([
+        ['Example Ltd', 'VM', '', '', '', '', 'Monthly', 'Plan', '', 'Supplier', 'INV-1', '₹1,23,456.78', '100.00', 'Done - TDS', '', '', '', ''],
+        ['', 'DR VM', '', '', '', '', '', '', '', '', '', 'RI', '2,345.67', '', '', '', '', ''],
+        ['Other Ltd', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+    ])
+    data = ledger.parse_csv(content, 2026)
+    assert data['company_count'] == 2 and data['workload_count'] == 3
+    assert len(data['companies'][0]['workloads']) == 2
+    entry = data['companies'][0]['workloads'][0]['entries'][0]
+    assert entry['customer_amount'] == '123456.78'
+    assert entry['payment_status'] == 'Done - TDS'
+    assert entry['amount_basis'] == 'unspecified'
+    ambiguous = data['companies'][0]['workloads'][1]['entries'][0]
+    assert ambiguous['status'] == 'needs_review'
+    assert ambiguous['customer_amount'] is None and ambiguous['distributor_amount'] is None
+    assert ambiguous['raw_cells']['distributor'] == '2,345.67'
+    assert data['companies'][1]['workloads'][0]['entries'][0]['customer_amount'] is None
+
+
+@pytest.mark.parametrize('value,expected', [('₹1,23,456.78', '123456.78'), ('1,234,567.00', '1234567.00'), ('0', '0'), ('', None), ('-10.20', '-10.20')])
+def test_money(value, expected):
+    assert ledger.money(value) == expected
+
+
+def test_no_inferred_profit_for_gross_unknown_missing_or_review_costs():
+    row = {'period': '2026-04', 'currency': 'INR', 'customer_amount': '100', 'distributor_amount': '80', 'usage_amount': None, 'amount_basis': 'unspecified', 'status': 'recorded'}
+    assert ledger.month_totals([row])[0]['profit'] is None
+    row['amount_basis'] = 'net'
+    assert ledger.month_totals([row])[0]['profit'] == '20'
+    assert ledger.month_totals([row, {**row, 'distributor_amount': None}])[0]['profit'] is None
+    assert ledger.month_totals([{**row, 'status': 'needs_review'}])[0]['customer_amount'] is None
+
+
+@pytest_asyncio.fixture
+async def db(tmp_path, monkeypatch):
+    path = str(tmp_path / 'ledger.db')
+    monkeypatch.setattr(db_module, 'DB_PATH', path)
+    await db_module.init_db()
+    async with aiosqlite.connect(path) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("INSERT INTO users(id,azure_oid) VALUES(1,'one'),(2,'two')")
+        await db.commit()
+        yield db
+
+
+@pytest.mark.asyncio
+async def test_import_crud_idempotency_isolation_and_new_year(db):
+    content = source([['Example', 'VM'] + [''] * 8 + ['INV', '100.00', '80.00', 'Done']])
+    preview = ledger.parse_csv(content, 2026)
+    result = await ledger.commit_import(db, 1, 'one', preview, 'test.csv', 'blob/path')
+    duplicate = await ledger.commit_import(db, 1, 'one', preview, 'test.csv', 'blob/path')
+    assert duplicate['duplicate']
+    customer = result['customer_ids'][0]
+    profile = await ledger.customer_ledger(db, 1, customer)
+    entry = profile['entries'][0]
+    user = {'account_id': 1, 'user_id': 'one'}
+    body = routes.EntryInput(period=entry['period'], currency='INR', customer_amount='120', distributor_amount='80', amount_basis='net')
+    await routes.update_entry(entry['id'], body, user, db)
+    assert (await ledger.customer_ledger(db, 1, customer))['months'][0]['profit'] == '40'
+    with pytest.raises(HTTPException) as exc:
+        await routes.update_entry(entry['id'], body, user, db)
+    assert exc.value.status_code == 409
+    with pytest.raises(HTTPException) as exc:
+        await routes.profile_ledger(customer, {'account_id': 2}, db)
+    assert exc.value.status_code == 404
+    await routes.archive('entry', entry['id'], user, db)
+    assert (await ledger.customer_ledger(db, 1, customer))['months'][0]['period'] == '2026-05'
+    await routes.restore('entry', entry['id'], user, db)
+    assert (await ledger.customer_ledger(db, 1, customer))['months'][0]['profit'] == '40'
+    history = await routes.history('entry', entry['id'], user, db)
+    assert len(history['items']) == 3
+    await ledger.commit_import(db, 1, 'one', ledger.parse_csv(content, 2027), 'test.csv', 'blob/path')
+    assert len((await ledger.customer_ledger(db, 1, customer))['entries']) == 4
+
+
+@pytest.mark.asyncio
+async def test_revised_import_conflict_rolls_back_all_new_customers(db):
+    initial = source([['Existing', 'VM'] + [''] * 8])
+    await ledger.commit_import(db, 1, 'one', ledger.parse_csv(initial, 2026), 'a.csv', 'blob/a')
+    changed = source([['New company', 'App'] + [''] * 8, ['Existing', 'VM'] + [''] * 8])
+    with pytest.raises(HTTPException):
+        await ledger.commit_import(db, 1, 'one', ledger.parse_csv(changed, 2026), 'b.csv', 'blob/b')
+    assert await ledger.one(db, "SELECT id FROM billing_customers WHERE name='New company'", ()) is None

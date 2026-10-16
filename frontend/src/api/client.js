@@ -1,6 +1,6 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import { msalInstance, managementRequest, loginRequest, graphRequest } from '../auth/msalConfig';
+import { msalInstance, managementRequest, loginRequest, graphRequest, billingFilesRequest } from '../auth/msalConfig';
 import { errorDetail, errorMessage } from '../utils/apiError';
 import * as inflight from './inflight';
 
@@ -197,7 +197,7 @@ async function getSignInToken() {
 // price list and our own stored history, never the caller's Azure tenant. Given
 // an ARM token it would fail after a reload, when silent renewal is blocked,
 // for a route that never needed one.
-const LOCAL_ROUTES = ['/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search', '/changes', '/prices', '/team'];
+const LOCAL_ROUTES = ['/billing', '/upload', '/boq', '/me', '/admin', '/guide', '/integrations', '/tenants', '/search', '/changes', '/prices', '/team'];
 
 /**
  * Routes that live under a local prefix but do call Azure.
@@ -835,6 +835,44 @@ export const fetchBandwidth = (body) =>
 /** Spend split by pricing model: reserved, on-demand, spot, savings plan. */
 export const fetchPricing = (body) =>
   api.post('/costs/pricing', body).then(r => r.data);
+
+export async function connectBillingMicrosoft() {
+  const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+  if (!account) throw new Error('Sign in with Microsoft first.');
+  await msalInstance.acquireTokenPopup({ ...billingFilesRequest, account });
+}
+
+async function billingFileHeaders() {
+  const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+  if (!account) throw new Error('Sign in with Microsoft first.');
+  try {
+    const result = await msalInstance.acquireTokenSilent({ ...billingFilesRequest, account });
+    return { 'X-Billing-Graph-Token': result.accessToken };
+  } catch {
+    throw new Error('Click Connect Microsoft file access in Azure Billing, then retry.');
+  }
+}
+
+export const getBillingConnection = () => api.get('/billing/connection').then(r => r.data);
+export const fetchBillingDashboard = params => api.get('/billing/dashboard', { params }).then(r => r.data);
+export const saveBillingConnection = async body => api.put('/billing/connection', body, { headers: await billingFileHeaders() }).then(r => r.data);
+export const listBillingCustomers = () => api.get('/billing/customers').then(r => r.data);
+export const createBillingCustomer = body => api.post('/billing/customers', body).then(r => r.data);
+export const updateBillingCustomer = (id, body) => api.put(`/billing/customers/${encodeURIComponent(id)}`, body).then(r => r.data);
+export const getBillingCustomer = id => api.get(`/billing/customers/${encodeURIComponent(id)}`).then(r => r.data);
+export const importBillingLedger = form => api.post('/billing/ledger/import', form, { timeout: 180000 }).then(r => r.data);
+export const getBillingLedger = id => api.get(`/billing/customers/${encodeURIComponent(id)}/ledger`).then(r => r.data);
+export const saveBillingWorkload = (customer, id, body) => (id ? api.put(`/billing/workloads/${encodeURIComponent(id)}`, body) : api.post(`/billing/customers/${encodeURIComponent(customer)}/workloads`, body)).then(r => r.data);
+export const saveBillingEntry = (workload, id, body) => (id ? api.put(`/billing/ledger/entries/${encodeURIComponent(id)}`, body) : api.post(`/billing/workloads/${encodeURIComponent(workload)}/entries`, body)).then(r => r.data);
+export const archiveBillingItem = (kind, id, restore = false) => api.post(`/billing/ledger/${kind}/${encodeURIComponent(id)}/${restore ? 'restore' : 'archive'}`).then(r => r.data);
+export const billingItemHistory = (kind, id) => api.get(`/billing/ledger/${kind}/${encodeURIComponent(id)}/history`).then(r => r.data);
+export const uploadBillingDocument = async (id, form, provider) => api.post(`/billing/customers/${encodeURIComponent(id)}/documents`, form, { headers: provider === 'azure_blob' ? {} : await billingFileHeaders(), timeout: 180000 }).then(r => r.data);
+export const reviewBillingDocument = (id, body) => api.put(`/billing/documents/${encodeURIComponent(id)}/review`, body).then(r => r.data);
+export const excludeBillingDocument = id => api.post(`/billing/documents/${encodeURIComponent(id)}/exclude`).then(r => r.data);
+export const exportBillingWorkbook = id => api.get(`/billing/customers/${encodeURIComponent(id)}/export`, { responseType: 'blob' }).then(r => r.data);
+export const exportBillingCloud = async (id, provider) => api.post(`/billing/customers/${encodeURIComponent(id)}/export-cloud`, {}, { headers: provider === 'azure_blob' ? {} : await billingFileHeaders(), timeout: 120000 }).then(r => r.data);
+export const checkBillingStorage = () => api.post('/billing/storage/check').then(r => r.data);
+export const downloadBillingDocument = id => api.get(`/billing/documents/${encodeURIComponent(id)}/download`, { responseType: 'blob' }).then(r => r.data);
 
 export const fetchBillingCategory = (body) =>
   api.post('/costs/billing-category', body).then(r => r.data);

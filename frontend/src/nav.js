@@ -49,6 +49,30 @@ export const SECTIONS = [
     ],
   },
   {
+    key: 'billing',
+    title: 'Azure Billing',
+    icon: FileCode,
+    hub: '/azure-billing/dashboard',
+    tagline: 'Customer profiles, invoices, cloud documents and profit/loss reconciliation.',
+    // This CRM workspace is separate from the Azure infrastructure product
+    // areas featured on the public landing page.
+    publicProduct: false,
+    items: [
+      {
+        to: '/azure-billing/dashboard', label: 'Dashboard', icon: LayoutDashboard, overview: true,
+        blurb: 'Customer, distributor and usage totals with exact-date allocations and workspace-scoped access.',
+      },
+      {
+        to: '/azure-billing', label: 'Customers', icon: Users, end: true,
+        blurb: 'Manage customers, upload customer/distributor/usage bills and compare reviewed invoice totals.',
+      },
+      {
+        to: '/azure-billing/settings', label: 'Billing settings', icon: Settings,
+        blurb: 'Cloud document storage, invoice extraction and billing preferences.',
+      },
+    ],
+  },
+  {
     key: 'estate',
     title: 'Estate',
     icon: Gauge,
@@ -144,6 +168,8 @@ export const SECTIONS = [
     ],
   },
 ];
+
+export const PRODUCT_SECTIONS = SECTIONS.filter(section => section.publicProduct !== false);
 
 /** The Admin Center only exists for administrators, so it is added on demand. */
 export const ADMIN_ITEM = {

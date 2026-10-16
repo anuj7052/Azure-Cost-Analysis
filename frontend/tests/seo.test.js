@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { FAQ } from '../src/content/faq';
 import { GUIDES, SITE, guidePath } from '../src/content/guides';
 import { PRODUCTS, productPath } from '../src/content/products';
-import { SECTIONS } from '../src/nav';
+import { PRODUCT_SECTIONS as SECTIONS } from '../src/nav';
 
 const root = resolve(import.meta.dirname, '..');
 const read = (p) => readFileSync(resolve(root, p), 'utf8');

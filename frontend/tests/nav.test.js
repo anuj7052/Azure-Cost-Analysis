@@ -69,6 +69,14 @@ describe('sectionForPath', () => {
     expect(sectionForPath('/').key).toBe('cost');
   });
 
+  it('keeps the Azure Billing CRM in its own top-level section', () => {
+    expect(sectionForPath('/azure-billing').key).toBe('billing');
+    expect(sectionForPath('/azure-billing/customers/example').key).toBe('billing');
+    expect(SECTIONS.find(s => s.key === 'cost').items.some(i => i.to === '/azure-billing')).toBe(false);
+    expect(SECTIONS.find(s => s.key === 'billing').hub).toBe('/azure-billing/dashboard');
+    expect(sectionForPath('/azure-billing/dashboard').key).toBe('billing');
+  });
+
   it('does not sweep every page into Cost because "/" is a prefix', () => {
     // The bug this guards against: a naive startsWith test matches "/" against
     // every path, so the Cost section would open on every page in the app.

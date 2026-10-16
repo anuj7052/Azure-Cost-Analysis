@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     # there and the assistant loses its only route to those deployments.
     OPENAI_API_VERSION: str = "2025-04-01-preview"
 
+    # Optional invoice OCR. Set in deployment settings; never sent to browsers.
+    BILLING_OCR_ENDPOINT: str = ""
+    BILLING_OCR_KEY: str = ""
+    BILLING_BLOB_ACCOUNT: str = ""
+    BILLING_BLOB_CONTAINER: str = "billing-documents"
+    # Explicit development-only access to application-owned document storage.
+    # Never used as a credential for customer Azure resource APIs.
+    BILLING_BLOB_LOCAL_CLI: bool = False
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]
