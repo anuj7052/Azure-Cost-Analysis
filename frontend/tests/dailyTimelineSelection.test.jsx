@@ -14,6 +14,7 @@ vi.mock('react', async original => ({
     : [initial, vi.fn()],
 }));
 vi.mock('../src/api/client', () => ({ fetchDailyCosts: vi.fn() }));
+vi.mock('../src/components/Charts/CostDashboardCharts', () => ({ SpendOverTime: () => null }));
 vi.mock('../src/store/useAppStore', () => ({ useAppStore: () => ({ selectedTenantId: 't', selectedSubscriptionIds: ['s'], months: 3 }) }));
 vi.mock('../src/store/useTheme', () => ({ useChartTheme: () => ({ series: ['blue', 'green'] }) }));
 vi.mock('recharts', () => ({ ResponsiveContainer: () => null, AreaChart: () => null, Area: () => null, CartesianGrid: () => null, ReferenceLine: () => null, Tooltip: () => null, XAxis: () => null, YAxis: () => null }));
@@ -29,12 +30,13 @@ it('opens with the BOQ compact chart and collapsed timeline, without duplicate d
   expect(nodes(root).some(n => n.type === DayTimeline)).toBe(false);
   expect(nodes(root).some(n => n.type === DayDetail)).toBe(false);
   const html = renderToStaticMarkup(root);
-  expect(html).toContain('Running total');
+  expect(html).toContain('Day and service detail');
+  expect(html).not.toContain('Running total');
   expect(html).toContain('Timeline');
   expect(html).not.toContain('All returned dates');
 });
 it('date selection opens the same BOQ day detail component', () => {
-  const input = nodes(tree()).find(n => n.type === 'input');
+  const input = nodes(tree()).find(n => n.props?.['aria-label'] === 'Billing date');
   input.props.onInput({ currentTarget: { value: '2026-08-02', validity: { valid: true } } });
   expect(state.setSelected).toHaveBeenCalledWith('2026-08-02');
   state.selected = '2026-08-02';

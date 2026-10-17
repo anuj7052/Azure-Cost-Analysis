@@ -17,8 +17,6 @@ Disallow: /activity
 Disallow: /bandwidth
 Disallow: /boq
 Disallow: /azure-billing
-Disallow: /commitments
-Disallow: /deploy
 Disallow: /estate
 Disallow: /security
 Disallow: /settings

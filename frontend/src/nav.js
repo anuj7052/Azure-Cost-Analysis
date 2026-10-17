@@ -1,8 +1,8 @@
 import {
   Activity, AlertTriangle, Boxes, ClipboardList, Cpu, FileCode, Gauge,
   GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, Network,
-  PiggyBank, Plug, Scale,
-  Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
+  Plug, Scale,
+  Search, Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
   TrendingUp, UserCog, Users, Wallet,
 } from 'lucide-react';
 
@@ -22,6 +22,7 @@ export const SECTIONS = [
   {
     key: 'cost',
     title: 'Cost',
+    flat: true,
     icon: Wallet,
     hub: '/',
     tagline: 'What you are spending, and why it moved.',
@@ -35,16 +36,8 @@ export const SECTIONS = [
         blurb: 'Spend over time with a forecast, a daily timeline, month-on-month variance and data transfer — split by service, region, resource group or meter, down to the resource.',
       },
       {
-        to: '/commitments', label: 'Commitments', icon: PiggyBank,
-        blurb: 'Reservations and savings plans: how much of what you bought is being used, what lapses soon, and what Azure suggests buying.',
-      },
-      {
         to: '/boq', label: 'BOQ vs Actual', icon: ClipboardList,
         blurb: 'Your Pricing Calculator estimate against the real bill, line by line.',
-      },
-      {
-        to: '/deploy', label: 'Deployment Assistant', icon: FileCode,
-        blurb: 'Upload a BOQ or describe what you need; it drafts and prices, and you press Create.',
       },
     ],
   },
@@ -75,6 +68,7 @@ export const SECTIONS = [
   {
     key: 'estate',
     title: 'Estate',
+    flat: true,
     icon: Gauge,
     hub: '/estate',
     tagline: 'What is actually running, what changed, and what is being wasted.',
@@ -104,6 +98,10 @@ export const SECTIONS = [
         blurb: 'Disks, IPs and NICs still being billed with nothing attached to them.',
       },
       {
+        to: '/search', label: 'Resource search', icon: Search,
+        blurb: 'Find any resource by name across every scan, including ones since deleted.',
+      },
+      {
         to: '/provision', label: 'Build', icon: Boxes,
         blurb: 'Create a VM, storage account, virtual network or web app from a form, in one deployment.',
       },
@@ -112,6 +110,7 @@ export const SECTIONS = [
   {
     key: 'security',
     title: 'Access & Security',
+    flat: true,
     icon: Shield,
     hub: '/security',
     tagline: 'Who can reach what, and how exposed the estate is.',
@@ -144,26 +143,16 @@ export const SECTIONS = [
   },
   {
     key: 'account',
-    title: 'Account',
+    title: 'Settings',
+    // One sidebar link; its pages are tabs inside the section, like Cost.
+    flat: true,
     icon: Settings,
-    hub: '/account',
+    hub: '/settings',
     tagline: 'Connections, data sources and who can use this app.',
     items: [
       {
-        to: '/account', label: 'Overview', icon: Settings, overview: true,
-        blurb: 'Everything in this section, and what each page is for.',
-      },
-      {
-        to: '/settings', label: 'Settings', icon: Settings,
-        blurb: 'Connect Azure tenants, import usage files and set the reporting period.',
-      },
-      {
-        to: '/team', label: 'Team', icon: Users,
-        blurb: 'Pick up to five colleagues from your directory and choose what each may do.',
-      },
-      {
-        to: '/apis', label: 'API Catalog', icon: Plug,
-        blurb: 'Every Microsoft endpoint behind this app, with the public ones you can open yourself.',
+        to: '/settings', label: 'Settings', icon: Settings, overview: true,
+        blurb: 'Tenants, subscriptions, data sources and your team, on one page.',
       },
     ],
   },
@@ -171,20 +160,9 @@ export const SECTIONS = [
 
 export const PRODUCT_SECTIONS = SECTIONS.filter(section => section.publicProduct !== false);
 
-/** The Admin Center only exists for administrators, so it is added on demand. */
-export const ADMIN_ITEM = {
-  to: '/admin', label: 'Admin Center', icon: ShieldCheck,
-  blurb: 'Accounts, tenant access and who is allowed into this app.',
-};
-
-/** The sections as this user should see them. */
-export function sectionsFor(isAdmin) {
-  if (!isAdmin) return SECTIONS;
-  return SECTIONS.map(section =>
-    section.key === 'account'
-      ? { ...section, items: [...section.items, ADMIN_ITEM] }
-      : section,
-  );
+/** The sections as this user should see them. Admin tools live on the Settings page. */
+export function sectionsFor() {
+  return SECTIONS;
 }
 
 /** The section a path belongs to, so the sidebar can open the right one. */

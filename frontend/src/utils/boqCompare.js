@@ -142,6 +142,8 @@ function meterIdentity(row) {
   const spec = diskSpec(row.meter);
   return {
     label: usageLabel(row),
+    meter: row.meter || '',
+    service: row.service || '',
     resource_group: row.resource_group || '',
     resource_name: row.resource_name || '',
     sku: spec?.sku || '',
@@ -659,4 +661,11 @@ export function compareBoqToUsage(boqs, rows, months = 1, currency = 'INR', opts
       categories.filter(c => c.key !== 'reconciliation' && c.variance < 0).reduce((sum, c) => sum - c.variance, 0),
     ),
   };
+}
+
+/** Calendar months touched by an inclusive YYYY-MM-DD range (Aug 1–31 → 1, Aug 16–Sep 15 → 2). */
+export function calendarMonths(from, to) {
+  const [fy, fm] = String(from).split('-').map(Number);
+  const [ty, tm] = String(to).split('-').map(Number);
+  return Math.max(1, (ty - fy) * 12 + (tm - fm) + 1);
 }

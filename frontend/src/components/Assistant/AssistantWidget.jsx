@@ -143,11 +143,11 @@ export default function AssistantWidget() {
             <ShieldCheck size={11} className="shrink-0" />
             Read-only. To build, use{' '}
             <Link
-              to="/deploy"
+              to="/provision"
               onClick={() => setOpen(false)}
               className="text-sky-400 underline underline-offset-2"
             >
-              Deployment
+              Build
             </Link>.
           </p>
         </div>

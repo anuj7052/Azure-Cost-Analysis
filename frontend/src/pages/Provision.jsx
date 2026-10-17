@@ -9,13 +9,14 @@ import {
   fetchProvisionDeployments, fetchProvisionDeployment,
 } from '../api/client';
 import { friendlyError } from '../utils/apiError';
+import { AdminOnlyNote } from '../components/Common/AdminOnly';
+import { useCanAdminister } from '../hooks/useCanAdminister';
 
 /**
  * Building things in Azure, from a form rather than a conversation.
  *
- * The chat assistant on the Deployment Assistant page could already do this,
- * and for someone who knows what they want to say it is faster. It is a poor
- * fit for the opposite case: a person who does not yet know what a resource
+ * A chat assistant suits someone who knows what they want to say. It is a
+ * poor fit for the opposite case: a person who does not yet know what a resource
  * needs cannot ask for it, and a chat window does not show them the shape of
  * the answer. This page renders the same catalogue the assistant is given, as
  * fields, so the required decisions are visible before anything is typed.
@@ -192,6 +193,8 @@ function DeploymentRow({ deployment }) {
 }
 
 export default function Provision() {
+  const canAdmin = useCanAdminister();
+  const [historyError, setHistoryError] = useState('');
   const selectedTenantId = useAppStore(s => s.selectedTenantId);
   const selectedSubscriptionIds = useAppStore(s => s.selectedSubscriptionIds);
   const subscriptions = useAppStore(s => s.subscriptions);
@@ -330,7 +333,7 @@ export default function Provision() {
               <option value="">Select…</option>
               {subOptions.map(s => (
                 <option key={s.subscription_id} value={s.subscription_id}>
-                  {s.display_name || s.subscription_id}
+                  {s.display_name || 'Unnamed subscription'}
                 </option>
               ))}
             </select>
@@ -445,7 +448,8 @@ export default function Provision() {
         <button
           type="button"
           onClick={deploy}
-          disabled={blockers.length > 0 || deploying}
+          disabled={!canAdmin || blockers.length > 0 || deploying}
+          title={canAdmin ? undefined : 'Workspace admins only'}
           className="mt-4 w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5
                      rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40
                      disabled:cursor-not-allowed text-white text-sm font-medium transition"
@@ -478,10 +482,11 @@ export default function Provision() {
       <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-100">Recent deployments</h2>
+          {historyError && <span role="alert" className="text-xs text-red-400">{historyError}</span>}
           <button
             type="button"
             aria-label="Refresh deployments"
-            onClick={() => fetchProvisionDeployments().then(setHistory).catch(() => {})}
+            onClick={() => fetchProvisionDeployments().then(list => { setHistory(list); setHistoryError(''); }).catch(err => setHistoryError(err?.response?.data?.detail || err.message || 'Could not refresh deployments'))}
             className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 transition"
           >
             <RefreshCw className="w-4 h-4" />

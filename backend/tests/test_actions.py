@@ -79,21 +79,35 @@ def test_a_disabled_action_cannot_be_run(users):
     assert exc.value.status_code == 403
 
 
-def test_an_irreversible_action_is_refused_even_if_enabled(users):
+def test_an_irreversible_action_is_refused_unless_it_opts_in(users):
     """Switching `enabled` on must not be enough to ship a delete.
 
     This is the second lock on the same door, and it is deliberate: a delete
     that cannot be undone should take more than one dictionary edit to reach a
-    customer's estate.
+    customer's estate. `allow_irreversible` is that second edit.
     """
     owner, _ = users
     delete = actions.get_spec("disk.delete")
-    forced = type(delete)(**{**delete.__dict__, "enabled": True})
+    # The shipped delete opted in explicitly; strip that and it must refuse
+    # again even though it is still enabled.
+    forced = type(delete)(**{**delete.__dict__, "allow_irreversible": False})
 
     with pytest.raises(actions.ActionError) as exc:
         actions.authorize(forced, identity(owner), confirmed=True)
     assert exc.value.status_code == 403
     assert "cannot be undone" in exc.value.message
+
+
+def test_an_irreversible_action_must_ask_before_it_runs(users):
+    """An unconfirmable delete is a configuration mistake, not a preference."""
+    owner, _ = users
+    delete = actions.get_spec("disk.delete")
+    silent = type(delete)(**{**delete.__dict__, "requires_confirmation": False})
+
+    with pytest.raises(actions.ActionError) as exc:
+        actions.authorize(silent, identity(owner), confirmed=True)
+    assert exc.value.status_code == 403
+    assert "must ask" in exc.value.message
 
 
 def test_a_viewer_cannot_change_azure(users):
@@ -294,7 +308,7 @@ async def test_history_does_not_cross_workspaces_or_tenants(api_db, users):
 
 def test_the_catalogue_lists_disabled_actions_rather_than_hiding_them():
     keys = {item["key"]: item for item in actions.catalogue()}
-    assert keys["disk.delete"]["enabled"] is False
+    assert keys["vm.deallocate"]["enabled"] is False
     assert keys["disk.delete"]["reversible"] is False
     assert keys["resource.tag"]["enabled"] is True
 
@@ -305,16 +319,62 @@ def test_every_catalogue_entry_names_the_azure_permission_it_needs():
         assert item["azure_permission"], f"{item['key']} does not say what it needs"
 
 
-def test_no_irreversible_action_is_shipped_enabled():
+def test_an_irreversible_action_ships_only_with_a_deliberate_opt_in():
     """The guard in `authorize` is the enforcement; this is the alarm.
 
-    If someone enables a delete, this fails and says so before it reaches a
-    customer's estate.
+    Deletes ship, because the orphaned-resources page needs them. What must not
+    happen is one arriving by accident -- an entry copied from the one above it,
+    with `enabled` flipped and nobody having decided that "no undo" was
+    acceptable. Every irreversible action therefore has to say so twice and
+    must ask the user before it runs.
     """
     for spec in actions.REGISTRY.values():
-        assert not (spec.enabled and not spec.reversible), (
-            f"{spec.key} is enabled but cannot be undone"
+        if spec.reversible or not spec.enabled:
+            continue
+        assert spec.allow_irreversible, (
+            f"{spec.key} is enabled and cannot be undone, but never opted in"
         )
+        assert spec.requires_confirmation, (
+            f"{spec.key} cannot be undone and does not ask before running"
+        )
+        assert spec.destructive, f"{spec.key} removes something but is not marked destructive"
+
+
+def test_every_deletable_resource_type_has_an_action_and_vice_versa():
+    """The catalogue and the delete path must describe the same capability.
+
+    Generated from one list precisely so they cannot disagree; this fails if
+    somebody adds a type to one and not the other.
+    """
+    from services import resource_delete
+
+    expected = set()
+    for item in resource_delete.DELETABLE.values():
+        noun = item.resource_type.rstrip("s").lower() if item.resource_type.endswith("s") else item.resource_type.lower()
+        expected.add(f"{noun}.delete")
+
+    shipped = {key for key, spec in actions.REGISTRY.items() if key.endswith(".delete")}
+    assert shipped == expected
+
+
+def test_a_stopped_vm_cannot_be_deleted_from_here():
+    """The scan flags stopped VMs; removing one is not cleanup.
+
+    A stopped machine is one somebody may intend to start again, and deleting
+    it destroys its configuration rather than reclaiming waste. Deallocated
+    compute already bills nothing, so there is no saving to weigh against it.
+    """
+    from services import resource_delete
+
+    assert "stopped_vms" not in resource_delete.DELETABLE
+    assert "virtualmachine.delete" not in actions.REGISTRY
+
+    spec, _parts, problem = resource_delete.classify(
+        "/subscriptions/00000000-0000-0000-0000-000000000000"
+        "/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-1"
+    )
+    assert spec is None
+    assert "not a resource type this page can remove" in problem
 
 
 # ── Tag validation ─────────────────────────────────────────────────────────

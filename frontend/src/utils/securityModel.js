@@ -16,6 +16,7 @@
  * the same finding differently.
  */
 import { NOT_AVAILABLE, SEVERITY_RANK, isNum } from './estate';
+import { resourceText } from './identity';
 
 export const INSUFFICIENT = 'Not enough data';
 
@@ -420,7 +421,7 @@ export function attentionList(sources, data, limit = 12) {
     severity: severityOf(a.severity),
     category: 'Defender alert',
     title: a.title || 'Unnamed alert',
-    resource: a.resource_name || a.resource_id || '',
+    resource: resourceText(a.resource_name, a.resource_id),
     subscriptionId: a.subscription_id || '',
     reason: a.description || '',
     action: a.solution || 'Investigate in Microsoft Defender for Cloud.',
@@ -434,7 +435,7 @@ export function attentionList(sources, data, limit = 12) {
     severity: severityOf(a.severity),
     category: 'Defender recommendation',
     title: a.title || 'Unnamed assessment',
-    resource: a.resource_name || a.resource_id || '',
+    resource: resourceText(a.resource_name, a.resource_id),
     subscriptionId: a.subscription_id || '',
     reason: a.description || a.cause || '',
     action: a.solution || '',
@@ -460,7 +461,7 @@ export function attentionList(sources, data, limit = 12) {
     severity: severityOf(f.severity),
     category: `Advisor · ${f.category || 'General'}`,
     title: f.title || 'Advisor recommendation',
-    resource: f.resource_name || f.resource_id || '',
+    resource: resourceText(f.resource_name, f.resource_id),
     subscriptionId: f.subscription_id || '',
     reason: '',
     action: f.solution || '',
@@ -473,7 +474,7 @@ export function attentionList(sources, data, limit = 12) {
     severity: severityOf(p.severity),
     category: 'Policy violation',
     title: p.title || p.assignment_name || 'Non-compliant resource',
-    resource: p.resource_name || p.resource_id || '',
+    resource: resourceText(p.resource_name, p.resource_id),
     subscriptionId: p.subscription_id || '',
     reason: `Compliance state: ${p.compliance_state || 'unknown'}.`,
     action: 'Review the policy assignment or remediate the resource.',
@@ -628,7 +629,7 @@ export function searchSecurity(sources, data, query, limit = 25) {
     if (matches(p.principal_name, p.principal_upn, p.principal_id)) {
       push('rbac', {
         id: `rbac:${p.principal_id}`,
-        name: p.principal_name || p.principal_id,
+        name: p.principal_name || 'Name unavailable',
         type: p.principal_type || 'Principal',
         detail: `${p.assignment_count || 0} assignment(s) · ${p.top_privilege || 'unknown privilege'}`,
       });
@@ -651,7 +652,7 @@ export function searchSecurity(sources, data, query, limit = 25) {
     if (matches(p.resource_name, p.title, p.assignment_name, p.resource_id)) {
       push('policy', {
         id: `policy:${p.key || p.resource_id}`,
-        name: p.resource_name || p.resource_id,
+        name: resourceText(p.resource_name, p.resource_id),
         type: 'Non-compliant resource',
         detail: p.title || p.assignment_name || '',
         severity: severityOf(p.severity),
@@ -718,7 +719,7 @@ export function actionCentre(sources, data) {
       count: alerts.length,
       title: `Investigate ${alerts.length} active security alert${alerts.length === 1 ? '' : 's'}`,
       impact: 'Azure is reporting suspicious activity that may already be in progress.',
-      resource: describeTargets(alerts.map(a => a.resource_name || a.resource_id)),
+      resource: describeTargets(alerts.map(a => resourceText(a.resource_name, a.resource_id))),
       action: 'Open the alerts and confirm whether each one is genuine.',
       cta: 'Review alerts',
       route: `${MODULE_ROUTE.defender}?tab=alerts`,
@@ -733,7 +734,7 @@ export function actionCentre(sources, data) {
       count: critical.length,
       title: `Fix ${critical.length} important security recommendation${critical.length === 1 ? '' : 's'}`,
       impact: 'These are settings Microsoft considers likely to leave resources exposed.',
-      resource: describeTargets(critical.map(a => a.resource_name || a.resource_id)),
+      resource: describeTargets(critical.map(a => resourceText(a.resource_name, a.resource_id))),
       action: 'Work through the high-severity findings, starting with anything reachable from the internet.',
       cta: 'Review recommendations',
       route: `${MODULE_ROUTE.defender}?severity=high`,
@@ -769,7 +770,7 @@ export function actionCentre(sources, data) {
       resource: 'Across the selected subscriptions',
       action: 'Check each finding against what the account actually does before changing anything.',
       cta: 'Review findings',
-      route: `${MODULE_ROUTE.access}?severity=high`,
+      route: MODULE_ROUTE.access,
     });
   }
 
@@ -862,7 +863,7 @@ function describeTargets(names) {
 export function subscriptionSecurity(sources, data, subscriptions = []) {
   const rows = subscriptions.map(sub => {
     const id = typeof sub === 'string' ? sub : sub?.subscription_id;
-    const name = typeof sub === 'string' ? sub : (sub?.display_name || sub?.subscription_id || id);
+    const name = typeof sub === 'string' ? sub : (sub?.display_name || 'Unnamed subscription');
 
     const cell = (key, bucketOwner) => {
       const source = sources[key];

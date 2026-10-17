@@ -386,7 +386,7 @@ def aggregate_by_rg(records: List[Dict[str, Any]]) -> Dict[str, Dict]:
     for r in records:
         cost_val = r.get("PreTaxCost") or r.get("Cost") or r.get("totalCost") or 0.0
         cost = float(cost_val)
-        rg = r.get("ResourceGroupName") or r.get("ResourceGroup") or "Unknown"
+        rg = r.get("ResourceGroupName") or r.get("ResourceGroup") or "No resource group (subscription-level charges)"
         service = r.get("ServiceName") or r.get("MeterCategory") or "Unknown"
         currency = r.get("Currency") or "USD"
         month_key = _parse_usage_date(

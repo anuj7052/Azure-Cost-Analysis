@@ -8,6 +8,7 @@ import { addTenant, downloadSetupGuide } from '../api/client';
 import { useLogin } from '../auth/hooks';
 import { useAppStore } from '../store/useAppStore';
 import PermissionsPanel from '../components/Common/PermissionsPanel';
+import { tenantText } from '../utils/identity';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -136,7 +137,7 @@ export default function Onboarding() {
         client_secret: form.client_secret,
       });
       addTenantToList(tenant);
-      toast.success(`Connected "${tenant.tenant_name}"`);
+      toast.success(`Connected "${tenantText(tenant.tenant_name)}"`);
       await Promise.all([loadMe(), loadTenants()]);
     } catch (err) {
       toast.error(err.response?.data?.detail || err.message || 'Could not add that tenant.');

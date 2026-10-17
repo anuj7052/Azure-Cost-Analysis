@@ -196,7 +196,7 @@ export default function SubscriptionPicker() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className={`block text-xs truncate ${active ? 'text-blue-300' : 'text-slate-300'}`}>
-                      {sub.display_name || sub.subscription_id}
+                      {sub.display_name || 'Unnamed subscription'}
                     </span>
                     <span className="block text-[10px] text-slate-500 truncate">
                       {sub.subscription_id}

@@ -168,7 +168,7 @@ export function mergeImports(existingRaw, incoming) {
     subscriptions: [...subTotals.entries()]
       .map(([subscription_id, total]) => ({
         subscription_id,
-        display_name: subNames.get(subscription_id) || subscription_id,
+        display_name: subNames.get(subscription_id) || 'Unnamed subscription',
         state: 'Imported',
         total_cost: round(total),
       }))

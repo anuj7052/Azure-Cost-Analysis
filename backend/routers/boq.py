@@ -1,8 +1,8 @@
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List
 
 import aiosqlite
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse, Response
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 import logging
@@ -12,10 +12,8 @@ from auth.dependencies import get_current_user
 from services.azure_errors import azure_error
 from core.db import get_db
 from models.schemas import CostQueryRequest, GeneratedBoqResponse
-from services import iac_service, integration_service
 from services.analysis import latest_billing_month, resource_cost_index
 from services.boq_builder import build_boq
-from services.boq_chat_service import BoqChatService
 from services.boq_parser import BOQ_EXTENSIONS, parse_boq_file
 from services.cost_client import query_active_resources, query_costs
 from services.estimate_export import build_estimate_workbook
@@ -64,131 +62,6 @@ async def upload_boq(
     estimates can be held side by side and compared against imported usage.
     """
     return await _read_estimate(file)
-
-
-@router.post("/plan")
-async def plan_boq(
-    file: UploadFile = File(...),
-    resource_group: str = Form("rg-boq"),
-    current_user: dict = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """Recover the Azure resources an estimate describes, without deploying them."""
-    boq = await _read_estimate(file)
-    return iac_service.build_plan(boq, resource_group=resource_group)
-
-
-@router.post("/generate")
-async def generate_iac(
-    file: UploadFile = File(...),
-    format: str = Form("bicep"),
-    resource_group: str = Form("rg-boq"),
-    current_user: dict = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """Generate a Bicep or Terraform template for the estimate.
-
-    Generation only: the template is handed back for the customer to review and
-    run. Nothing here holds write access to an Azure subscription.
-    """
-    if format not in {"bicep", "terraform"}:
-        raise HTTPException(status_code=400, detail="Unsupported format. Use 'bicep' or 'terraform'.")
-
-    boq = await _read_estimate(file)
-    plan = iac_service.build_plan(boq, resource_group=resource_group)
-    return {
-        **plan,
-        "format": format,
-        "filename": "main.bicep" if format == "bicep" else "main.tf",
-        "content": iac_service.render(plan, format),
-    }
-
-
-@router.post("/generate/download", response_class=PlainTextResponse)
-async def download_iac(
-    file: UploadFile = File(...),
-    format: str = Form("bicep"),
-    resource_group: str = Form("rg-boq"),
-    current_user: dict = Depends(get_current_user),
-):
-    result = await generate_iac(
-        file=file,
-        format=format,
-        resource_group=resource_group,
-        current_user=current_user,
-    )
-    return PlainTextResponse(
-        result["content"],
-        media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{result["filename"]}"'},
-    )
-
-
-class ChatTurn(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str = Field(max_length=4000)
-
-
-class BoqChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=2000)
-    # The parsed estimate from /parse, echoed back by the client. Nothing is
-    # stored server-side, so the BOQ never leaves the caller's session.
-    boq: Optional[Dict[str, Any]] = None
-    history: List[ChatTurn] = Field(default_factory=list, max_length=20)
-    resource_group: str = Field(default="rg-boq", max_length=90)
-
-
-@router.post("/chat")
-async def chat_about_boq(
-    payload: BoqChatRequest,
-    current_user: dict = Depends(get_current_user),
-    db: aiosqlite.Connection = Depends(get_db),
-) -> Dict[str, Any]:
-    """Converse about an estimate and generate templates on request."""
-    try:
-        llm = await integration_service.llm_config(db, current_user["account_id"])
-    except integration_service.NoEndpointConfigured as exc:
-        # 409 rather than 500: nothing is broken, something is unconfigured,
-        # and the message says exactly what to configure.
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    try:
-        # The same endpoint and the same invoice as the build assistant, so it
-        # draws on the same daily allowance. Two chats sharing a key must not
-        # mean two separate budgets.
-        await integration_service.consume(
-            db, llm.get("integration_id"), llm.get("source", "your endpoint")
-        )
-    except integration_service.RateLimitExceeded as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from None
-    service = BoqChatService(payload.boq, resource_group=payload.resource_group, llm=llm)
-    return await service.chat(
-        payload.message, [t.model_dump() for t in payload.history]
-    )
-
-
-@router.post("/chat/upload")
-async def chat_with_upload(
-    file: UploadFile = File(...),
-    message: str = Form("Generate the infrastructure-as-code for this estimate."),
-    resource_group: str = Form("rg-boq"),
-    current_user: dict = Depends(get_current_user),
-    db: aiosqlite.Connection = Depends(get_db),
-) -> Dict[str, Any]:
-    """Upload an estimate and act on it in a single call."""
-    boq = await _read_estimate(file)
-    try:
-        llm = await integration_service.llm_config(db, current_user["account_id"])
-    except integration_service.NoEndpointConfigured as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    try:
-        # The same endpoint and the same invoice as the build assistant, so it
-        # draws on the same daily allowance. Two chats sharing a key must not
-        # mean two separate budgets.
-        await integration_service.consume(
-            db, llm.get("integration_id"), llm.get("source", "your endpoint")
-        )
-    except integration_service.RateLimitExceeded as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from None
-    service = BoqChatService(boq, resource_group=resource_group, llm=llm)
-    return await service.chat(message, [])
 
 
 @router.post("/from-subscription", response_model=GeneratedBoqResponse)

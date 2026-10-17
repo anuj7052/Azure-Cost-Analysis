@@ -12,6 +12,14 @@ from services.pricing import _cost_of, _month_of, _service_of, parse_resource_id
 PRICING_FILTERS = {"payg": "OnDemand", "ri": "Reservation"}
 
 
+def _date_of(record: dict) -> str:
+    """YYYY-MM-DD for a Daily-granularity record; empty for Monthly ones."""
+    raw = str(record.get("UsageDate") or record.get("Date") or "")
+    if len(raw) == 8 and raw.isdigit():
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+    return raw[:10] if len(raw) >= 10 and raw[4] == "-" else ""
+
+
 def is_site_recovery(record: dict) -> bool:
     for key in ("ServiceName", "MeterCategory", "Meter", "MeterName", "MeterSubcategory", "MeterSubCategory"):
         text = re.sub(r"[^a-z0-9]+", " ", str(record.get(key) or "").lower()).strip()
@@ -33,7 +41,7 @@ def category_detail(records: list[dict], category: str) -> dict:
         resource_id = str(record.get("ResourceId") or "")
         identity = parse_resource_id(resource_id)
         rows.append({
-            "month": _month_of(record), "cost": _cost_of(record),
+            "month": _month_of(record), "date": _date_of(record), "cost": _cost_of(record),
             "service": _service_of(record), "meter": str(record.get("Meter") or record.get("MeterName") or ""),
             "resource_id": resource_id, "resource_name": identity["name"],
             "resource_group": identity["resource_group"],

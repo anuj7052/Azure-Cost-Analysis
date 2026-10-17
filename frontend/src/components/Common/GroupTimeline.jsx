@@ -44,6 +44,7 @@ import { shortType, summariseChange } from '../../utils/changeSummary';
 import { toEntries } from '../../utils/changeTree';
 import { formatAmount } from '../../utils/currency';
 import { dayTimeline } from '../../utils/boqTrend';
+import { resourceText } from '../../utils/identity';
 
 // Azure keeps ninety days of operations and no more. Everything is read once at
 // that full depth and narrowed in the browser, so changing the date range costs
@@ -148,7 +149,7 @@ function DiffRow({ entry, onOpen }) {
             className="block w-full text-left"
           >
             <span className="flex items-center gap-1.5">
-              <span className="truncate text-[11px] text-slate-200">{entry.name || entry.resource_id}</span>
+              <span className="truncate text-[11px] text-slate-200">{resourceText(entry.name, entry.resource_id)}</span>
               <span className={`shrink-0 text-[10px] ${meta.tone}`}>{meta.label}</span>
               <ChevronRight className="h-3 w-3 shrink-0 text-slate-600" />
             </span>

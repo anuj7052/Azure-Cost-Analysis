@@ -35,8 +35,9 @@ describe('which Access & Identity view a URL asks for', () => {
 });
 
 describe('the view list', () => {
-  it('names both of the pages that were merged', () => {
-    expect(VIEW_KEYS).toEqual(['optimization', 'assignments']);
+  it('names the merged pages and the change history', () => {
+    expect(VIEW_KEYS).toEqual(['optimization', 'assignments', 'history']);
+    expect(VIEW_LABEL.history).toBe('Change history');
     expect(VIEW_LABEL.optimization).toBe('Access Optimization');
     expect(VIEW_LABEL.assignments).toBe('Role Assignments');
   });

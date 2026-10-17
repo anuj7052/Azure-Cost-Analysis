@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { inspectToken, timeLeft } from '../../utils/accessToken';
 import Modal from '../Common/Modal';
 import toast from 'react-hot-toast';
+import { tenantText } from '../../utils/identity';
 
 const CLI_COMMAND = 'az account get-access-token --resource https://management.azure.com';
 
@@ -57,7 +58,7 @@ export default function AddSessionTokenModal({ onClose }) {
       // that tenant's data, not to add it to a list and then hunt for it.
       await setSelectedTenant(tenant.tenant_id);
       toast.success(
-        `Connected "${tenant.tenant_name}"` +
+        `Connected "${tenantText(tenant.tenant_name)}"` +
         (tenant.subscription_count != null ? ` — ${tenant.subscription_count} subscription(s)` : '')
       );
       onClose();

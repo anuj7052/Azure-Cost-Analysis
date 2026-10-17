@@ -71,6 +71,44 @@ export function isSnapshotable(item) {
   return /\/providers\/microsoft\.compute\/disks\/[^/]+$/i.test(item?.id || '');
 }
 
+/**
+ * The resource types the platform will delete, mirrored from the server.
+ *
+ * The server's allowlist is the one that decides -- this exists so the page
+ * can avoid asking about a finding that is certain to be refused, such as a
+ * stopped VM. Kept as a shape check rather than a rule check because a finding
+ * carries its resource id whatever rule flagged it.
+ */
+const DELETABLE_TYPES = [
+  'microsoft.compute/disks',
+  'microsoft.compute/snapshots',
+  'microsoft.network/publicipaddresses',
+  'microsoft.network/networkinterfaces',
+  'microsoft.network/networksecuritygroups',
+  'microsoft.network/loadbalancers',
+  'microsoft.web/serverfarms',
+];
+
+export function isDeletable(item) {
+  const id = (item?.id || '').toLowerCase();
+  const match = id.match(/\/providers\/([^/]+\/[^/]+)\/[^/]+$/);
+  return Boolean(match && DELETABLE_TYPES.includes(match[1]));
+}
+
+/**
+ * The finding the detail panel is showing.
+ *
+ * Extracted because two things have to agree on it and once did not: the panel
+ * falls back to the first row when nothing has been clicked, so the page opens
+ * with a resource selected that `picked` does not name. Anything keyed off
+ * `picked` alone -- the Azure permission lookup behind the delete button was --
+ * then runs for a resource the user is not looking at, or for none at all, and
+ * the button sits disabled with nothing to explain it.
+ */
+export function selectedItem(shown, picked) {
+  return (shown || []).find((i) => i.id === picked) || (shown || [])[0] || null;
+}
+
 /** Flatten the API's rule-grouped response back into one list of findings. */
 export function flatten(data) {  return (data?.categories || []).flatMap(c =>
     (c.items || []).map(item => ({
@@ -117,7 +155,7 @@ export function groupTree(items, subscriptions = []) {
     if (!subs.has(subId)) {
       subs.set(subId, {
         key: subId,
-        name: names.get(subId.toLowerCase()) || subId || MISSING,
+        name: names.get(subId.toLowerCase()) || (subId ? 'Unnamed subscription' : MISSING),
         cost: 0,
         count: 0,
         groups: new Map(),

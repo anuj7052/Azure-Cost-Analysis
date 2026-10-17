@@ -123,8 +123,7 @@ Around it: `cost_periods.py` (period + comparison maths, including
 | Services breakdown | `services` | `analysis`, `azure_names` | folded into `/explorer` |
 | CSV / Excel import | `upload` | `csv_parser` | `/explorer` (upload tab) |
 | Bandwidth & egress | `bandwidth` | `bandwidth`, `bandwidth_traffic`, `azure_metrics` | `/bandwidth` |
-| BoQ / estimates | `boq` | `boq_builder`, `boq_parser`, `boq_chat_service`, `estimate_export`, `retail_prices` | `/boq` |
-| Commitments | `commitments` | `commitments`, `reservations` | `/commitments` |
+| BoQ / estimates | `boq` | `boq_builder`, `boq_parser`, `estimate_export`, `retail_prices` | `/boq` |
 | Orphaned resources | `orphaned` | `orphaned`, `lifecycle`, `resource_cost` | `/orphaned` |
 | Compute right-sizing | `compute` | `compute_intel`, `vm_resize`, `azure_metrics` | `/compute` |
 | Prices | `prices` | `pricing`, `price_history`, `retail_prices` | `/boq`, drill-downs |
@@ -135,7 +134,7 @@ Around it: `cost_periods.py` (period + comparison maths, including
 | Security posture | `security` | `security_fetch`, `security_posture` | `/security`, `/defender`, `/advisor`, `/policy` |
 | Access & identity | `security`, `team` | `graph_identity`, `graph_directory`, `access_review`, `access_change`, `access_accept` | `/access-identity`, `/access-history` |
 | Network | `network` | `network_topology`, `network_insights` | `/network` |
-| Provisioning (IaC) | `provision` | `provision_service`, `provision_chat_service`, `iac_service` | `/provision`, `/deploy` |
+| Provisioning | `provision` | `provision_service`, `provision_chat_service` | `/provision` |
 | Remediation actions | `actions` | `actions`, `azure_cli` | action buttons across pages |
 | Team & workspace | `team` | `team_service`, `user_service`, `user_sessions` | `/team`, `/account` |
 | Admin | `admin` | `backup`, `user_service` | `/admin` (admins only) |
@@ -164,9 +163,8 @@ src/
   components/
     Common/            DetailPanel, ResourceTimeline, GroupTimeline, …
     Security/          SecurityShell: PageHeader, NeedsSelection, Failure, Empty, Chips
-    Commitments/       CommitmentRules, CommitmentDetail
     Boq/ Provision/ …
-  utils/               commitments.js, commitmentRules.js, friendlyError, formatters
+  utils/               friendlyError, formatters
 tests/                 42 files, 1144 tests (vitest)
 ```
 
@@ -286,14 +284,6 @@ resize, and `POST /api/compute/resize` can perform it (workspace admin only).
 a fleet list with "not enough data" per VM, not an error page — and `sources`
 reports which reads succeeded so the UI can say **why** a column is empty.*
 
-**Commitments** (`/commitments` → `commitments` → `commitments`, `reservations`)
-Every reservation and savings plan: utilisation over a 7/30/90-day window, spend,
-wastage, days to expiry, what it covers, Azure's purchase recommendations, and
-what happens if you cancel each one (`CommitmentRules` / `cancellationImpact`).
-→ *Aimed at two specific failure modes — a commitment lapses and the rate
-silently reverts, or it sits underused. "Every number here is either measured or
-absent."*
-
 ### 6.3 "What changed, and who did it?"
 
 **Estate scan** (`/estate` → `scans` → `scanner`, `estate_tools`, `tagging`)
@@ -352,13 +342,13 @@ diagram people stop trusting to be a faithful record."*
 ### 6.5 "Build and change things"
 
 **BoQ / estimates** (`/boq` → `boq` → `boq_builder`, `boq_parser`,
-`boq_chat_service`, `estimate_export`, `retail_prices`) — build a Bill of
-Quantities for a planned deployment, priced from the Retail Prices API; import
-an existing BoQ file; refine it conversationally; export it as a workbook.
+`estimate_export`, `retail_prices`) — build a Bill of Quantities for a planned
+deployment, priced from the Retail Prices API; import an existing BoQ file;
+export it as a workbook.
 Also compares a BoQ against what is actually running.
 
-**Provisioning / IaC** (`/provision`, `/deploy` → `provision` →
-`provision_chat_service`, `provision_service`, `iac_service`) — describe what
+**Provisioning** (`/provision` → `provision` →
+`provision_chat_service`, `provision_service`) — describe what
 you want, get a draft specification, review it, then deploy.
 → *The two routes are deliberately different. `/chat` produces a **draft** and
 spends one unit of the customer's own daily model limit. `/deploy` creates

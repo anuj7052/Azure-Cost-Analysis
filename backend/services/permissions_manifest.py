@@ -121,7 +121,7 @@ AZURE_ROLES: List[Dict] = [
         "72fafb9e-0641-4937-9268-a91bfd8191a3",
         CORE, READ, SUBSCRIPTION,
         "Reads the billing and usage data behind every figure the app shows.",
-        ["Cost Trends", "Compare", "Anomalies", "Commitments"],
+        ["Cost Trends", "Compare", "Anomalies"],
     ),
     _role(
         "Monitoring Reader",
@@ -164,15 +164,14 @@ AZURE_ROLES: List[Dict] = [
         "",
         FULL_READ, READ, BILLING,
         "Reads reservation and savings plan orders and their utilisation.",
-        ["Commitments"],
+        ["Reservation detail"],
         assignable=False,
         caveat=(
             "This is not a subscription RBAC role and cannot be granted with "
             "a normal role assignment. A billing administrator grants it from "
             "the Reservations blade's own Access control, or enables "
-            "tenant-wide reservation visibility. Without it the Commitments "
-            "page will look empty, which is not the same as owning no "
-            "reservations - the page says which of the two it is."
+            "tenant-wide reservation visibility. Without it reservation detail "
+            "can look empty, which is not the same as owning no reservations."
         ),
     ),
     _role(

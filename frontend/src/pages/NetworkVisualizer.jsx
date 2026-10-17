@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 /**
  * Network Visualizer — the estate's virtual networks, what connects them, and
  * what is wrong with them.
@@ -410,7 +411,7 @@ export default function NetworkVisualizer() {
 
       {ready && !data && !loading && !error && (
         <Empty title="Nothing read yet">
-          Choose your subscriptions above and press Refresh to read the network
+          Choose your subscriptions above and press Load data to read the network
           topology. It is a single query, but a large one on a big estate.
         </Empty>
       )}
@@ -642,12 +643,12 @@ export default function NetworkVisualizer() {
                       >
                         <ExternalLink size={12} /> Open in Azure Portal
                       </a>
-                      <a
-                        href={`/explorer?q=${encodeURIComponent(node.name)}`}
+                      <Link
+                        to={`/search?q=${encodeURIComponent(node.name)}`}
                         className="flex items-center justify-center gap-2 rounded-lg border border-slate-700 py-2 text-xs font-medium text-slate-300 transition hover:bg-slate-800"
                       >
-                        <Eye size={12} /> View in Explorer
-                      </a>
+                        <Eye size={12} /> Find in resource search
+                      </Link>
                     </div>
                   )}
                 </>

@@ -712,6 +712,7 @@ async def _init_postgres():
     import asyncpg  # noqa: F401  (imported so a missing driver fails here, clearly)
     from core import pg, pg_auth
     from services.billing_schema import SCHEMAS as billing_schemas, INDEXES as billing_indexes
+    from services.cost_notes_schema import SCHEMAS as note_schemas, INDEXES as note_indexes
 
     conn = await pg_auth.connect(settings.DATABASE_URL)
     try:
@@ -721,6 +722,10 @@ async def _init_postgres():
             await conn.execute(pg.translate_schema(ddl))
         for statement in billing_indexes:
             await conn.execute(statement)
+        for ddl in note_schemas.values():
+            await conn.execute(pg.translate_schema(ddl))
+        for statement in note_indexes:
+            await conn.execute(statement)
         for statement in _INDEXES_USER_SESSIONS + _INDEXES:
             await conn.execute(statement)
     finally:
@@ -729,6 +734,7 @@ async def _init_postgres():
 
 async def init_db():
     from services.billing_schema import SCHEMAS as billing_schemas, INDEXES as billing_indexes
+    from services.cost_notes_schema import SCHEMAS as note_schemas, INDEXES as note_indexes
     if settings.DB_BACKEND == "postgres":
         await _init_postgres()
         return
@@ -797,6 +803,10 @@ async def init_db():
         for ddl in billing_schemas.values():
             await db.execute(ddl)
         for statement in billing_indexes:
+            await db.execute(statement)
+        for ddl in note_schemas.values():
+            await db.execute(ddl)
+        for statement in note_indexes:
             await db.execute(statement)
         for statement in _INDEXES:
             await db.execute(statement)

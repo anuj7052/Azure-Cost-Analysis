@@ -5,16 +5,18 @@
  * without a DOM, and so the page file exports nothing but a component.
  */
 
-export const VIEW_KEYS = ['optimization', 'assignments'];
+export const VIEW_KEYS = ['optimization', 'assignments', 'history'];
 
 export const VIEW_LABEL = {
   optimization: 'Access Optimization',
   assignments: 'Role Assignments',
+  history: 'Change history',
 };
 
 export const VIEW_BLURB = {
   optimization: 'Grants that look unused, stale, over-privileged or duplicated.',
   assignments: 'Start from a person and see everything they can reach.',
+  history: 'Every revoke and downgrade made from this app, and its outcome.',
 };
 
 /**

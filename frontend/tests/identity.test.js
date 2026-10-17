@@ -90,7 +90,7 @@ describe('subscriptionLabel', () => {
   });
 
   it('abbreviates and labels an unknown id rather than printing it raw', () => {
-    expect(subscriptionLabel(SUB, {})).toBe('Subscription 7f801a91…8362');
+    expect(subscriptionLabel(SUB, {})).toBe('Unnamed subscription');
   });
 });
 
@@ -130,7 +130,7 @@ describe('scopeLabel', () => {
 
   it('still avoids a bare GUID when the subscription is unknown', () => {
     const out = scopeLabel(`/subscriptions/${SUB}/resourceGroups/rg-web`, {});
-    expect(out.text).toBe('Subscription 7f801a91…8362 / rg-web');
+    expect(out.text).toBe('Unnamed subscription / rg-web');
   });
 });
 

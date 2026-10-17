@@ -19,14 +19,15 @@
  * here without losing where they were pointing.
  */
 import { useSearchParams } from 'react-router-dom';
-import { KeyRound, UserCog } from 'lucide-react';
+import { History, KeyRound, UserCog } from 'lucide-react';
 import AccessOptimization from './AccessOptimization';
 import RoleAssignments from './RoleAssignments';
+import AccessHistory from './AccessHistory';
 import {
   VIEW_KEYS, VIEW_LABEL, VIEW_BLURB, viewFromParams,
 } from '../utils/accessIdentity';
 
-const VIEW_ICON = { optimization: KeyRound, assignments: UserCog };
+const VIEW_ICON = { optimization: KeyRound, assignments: UserCog, history: History };
 
 export default function AccessIdentity() {
   const [params, setParams] = useSearchParams();
@@ -71,7 +72,7 @@ export default function AccessIdentity() {
       {/* Each view keeps its own header, refresh control and freshness stamp.
           They ask Azure different questions, so one shared "last updated" would
           claim a currency that only one of them had. */}
-      {view === 'assignments' ? <RoleAssignments /> : <AccessOptimization />}
+      {view === 'assignments' ? <RoleAssignments /> : view === 'history' ? <AccessHistory /> : <AccessOptimization />}
     </div>
   );
 }

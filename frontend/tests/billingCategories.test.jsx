@@ -19,11 +19,10 @@ describe('billing category navigation', () => {
   it('renders just the three category filters and restores a deep-linked choice', () => {
     expect(BILLING_CATEGORIES.map(item => item.key)).toEqual(['payg', 'ri', 'asr']);
     const html = renderToStaticMarkup(<MemoryRouter initialEntries={['/explorer?tab=billing&category=ri']}><BillingCategoryDetails /></MemoryRouter>);
-    expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain('RI details');
+    expect(html).toMatch(/aria-checked="true"[^>]*>.*?Reserved \(RI\)/);
+    expect(html).toContain('Pay-as-you-go');
     expect(html).toContain('DR / ASR');
-    expect(html).not.toContain('<select');
-    expect(html).not.toContain('Search name');
-    expect(html).toContain('not amortized cost');
+    expect(html).toContain('Group chart by');
+    expect(html).toContain('not added together');
   });
 });

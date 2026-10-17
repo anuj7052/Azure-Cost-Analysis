@@ -123,7 +123,7 @@ export default function ActivityExplorer() {
   const subscriptionNames = useMemo(() => Object.fromEntries(
     (subscriptions || []).map(s => [
       s.subscription_id,
-      s.display_name || s.name || s.subscription_id,
+      s.display_name || s.name || 'Unnamed subscription',
     ]),
   ), [subscriptions]);
 

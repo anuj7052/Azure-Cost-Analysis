@@ -62,8 +62,6 @@ Frontend is organised by **technical type** (`pages/`, `components/`, `utils/`,
 | Bandwidth / data transfer | Working | `services/bandwidth.py` |
 | Orphaned resources (8 rules) | Working | `services/orphaned.py` |
 | BOQ import + compare | Working | `services/boq_parser.py`, `utils/boqCompare.js` |
-| BOQ → Bicep/Terraform | Working | `services/iac_service.py` (446 lines) |
-| BOQ chat assistant | Working | `services/boq_chat_service.py` |
 | CSV/Excel import | Working | `services/csv_parser.py` |
 | Snapshot engine (immutable) | Working | `services/scanner.py`, tables `scans`/`scan_resources` |
 | Change tracking (diff) | Working, **new** | `services/changes.py`, `routers/changes.py` |
@@ -127,7 +125,7 @@ All routes are unversioned (`/api/...`), not `/api/v1/...` as §43 requires.
 | `/api/services` | GET | user |
 | `/api/upload` | POST | user |
 | `/api/bandwidth` | POST | user |
-| `/api/boq` | `/parse`, `/plan`, `/generate`, `/generate/download`, `/chat`, `/chat/upload` | user |
+| `/api/boq` | `/parse`, `/from-subscription`, `/export/estimate.xlsx` | user |
 | `/api/orphaned` | POST | user |
 | `/api/scans` | POST, GET | user |
 | `/api/search` | GET | user |
@@ -267,7 +265,6 @@ of the things this spec cares most about.
 | Change detection | `test_changes.py` (396 lines) | `changeSummary.test.js` |
 | Snapshots / scans | `test_scans.py` | — |
 | Orphaned | `test_orphaned.py` | — |
-| BOQ + IaC | `test_boq_iac.py` | — |
 | Integrations | `test_integrations.py` | — |
 | Admin | `test_admin_accounts.py` | — |
 | Resource inventory | `test_resource_inventory.py` | — |

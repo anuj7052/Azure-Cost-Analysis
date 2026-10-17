@@ -279,7 +279,7 @@ export default function AnomalyDrawer({ open, row, currency, tenantId, siblings,
             <div className="mt-2 space-y-1">
               {elsewhere.slice(0, 6).map((s) => (
                 <div key={s.anomaly_key} className="flex items-center justify-between rounded-lg bg-slate-900/60 px-3 py-2 text-xs">
-                  <span className="truncate text-slate-300">{s.subscription_name || s.subscription_id}</span>
+                  <span className="min-w-0 truncate text-slate-300">{s.subscription_name || 'Unnamed subscription'}<span className="block truncate font-mono text-[10px] font-normal text-slate-500">{s.subscription_id}</span></span>
                   <span className={(s.delta || 0) > 0 ? 'text-red-300' : 'text-emerald-300'}>
                     {(s.delta || 0) > 0 ? '+' : ''}{formatAmount(s.delta, currency)}
                   </span>

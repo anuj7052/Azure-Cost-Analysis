@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { billingCategoryUrl } from '../../utils/billingCategories';
-import { BadgeCheck, Tag, ShieldQuestion, Loader2, Server, AlertTriangle } from 'lucide-react';
+import { BadgeCheck, Tag, ShieldQuestion, Loader2, Server, AlertTriangle, Wallet } from 'lucide-react';
 import HeroCard from '../Cards/HeroCard';
 import DetailPanel, { DetailStat } from '../Common/DetailPanel';
 import { fetchReservedDetail } from '../../api/client';
 import { formatAmountFull } from '../../utils/currency';
 import { exactAmount } from '../../utils/exact';
+import { SubscriptionName } from '../Common/Identity';
 
 /**
  * The resources a reservation actually paid for.
@@ -137,7 +138,7 @@ function ReservedDetail({ request, currency }) {
 
               {r.subscription_id && (
                 <p className="text-[10px] text-slate-600 mt-2 truncate" title={r.resource_id}>
-                  Subscription {r.subscription_id}
+                  <SubscriptionName id={r.subscription_id} /> <span className="font-mono">{r.subscription_id}</span>
                 </p>
               )}
             </div>
@@ -159,7 +160,7 @@ function ReservedDetail({ request, currency }) {
  * The split comes from Azure's PricingModel dimension, not from meter names: a
  * VM meter looks identical whether or not a reservation covered it.
  */
-export default function PricingSection({ data, loading, error, request }) {
+export default function PricingSection({ data, loading, error, request, variant = 'full' }) {
   const navigate = useNavigate();
   const currency = data?.currency || 'INR';
   const full = (v) => formatAmountFull(v, currency);
@@ -171,6 +172,70 @@ export default function PricingSection({ data, loading, error, request }) {
   if (!loading && !error && !data) return null;
 
   const noPricingDimension = data && !data.has_pricing_data;
+
+  // Dashboard mode: just the two headline cards, no wrapper or table.
+  if (variant === 'cards') {
+    return (
+      <div className="space-y-3">
+        {error && (
+          <div className="rounded-xl border border-red-500/30 bg-red-950/30 p-3 text-sm text-red-400">{error}</div>
+        )}
+        {noPricingDimension && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3">
+            <ShieldQuestion className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+            <p className="text-xs leading-relaxed text-slate-400">
+              Azure did not report a pricing model for this scope, so reserved and pay-as-you-go
+              spend cannot be separated here.
+            </p>
+          </div>
+        )}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <HeroCard
+            title="Pay-as-you-go"
+            subtitle="Azure OnDemand pricing"
+            icon={Tag}
+            accent="amber"
+            value={noPricingDimension ? '—' : full(data?.on_demand)}
+            exact={noPricingDimension ? undefined : exact(data?.on_demand)}
+            footnote="Open resource and meter charges in Cost Explorer"
+            loading={loading}
+            onClick={() => navigate(billingCategoryUrl())}
+          />
+          <HeroCard
+            title="Reserved (RI)"
+            subtitle="Covered by reserved instances"
+            icon={BadgeCheck}
+            accent="emerald"
+            value={noPricingDimension ? '—' : full(data?.reserved)}
+            exact={noPricingDimension ? undefined : exact(data?.reserved)}
+            footnote={data?.savings_plan ? `Plus ${full(data.savings_plan)} on savings plans` : data?.reserved ? 'Open to see where reservations applied' : 'No reservation charges in this period'}
+            loading={loading}
+            onClick={data?.reserved && request ? () => setShowReserved(true) : undefined}
+            active={showReserved}
+          />
+          <HeroCard
+            title="Total"
+            subtitle="Everything Azure billed"
+            icon={Wallet}
+            accent="blue"
+            value={full(data?.total)}
+            exact={exact(data?.total)}
+            footnote={data?.savings_plan || data?.spot ? 'Pay-as-you-go + RI + savings plan + spot' : 'Pay-as-you-go + RI'}
+            loading={loading}
+            onClick={() => navigate('/explorer')}
+          />
+        </div>
+        <DetailPanel
+          open={showReserved}
+          title="Reserved instance detail"
+          subtitle="Every resource a reservation was applied to, with its SKU"
+          onClose={() => setShowReserved(false)}
+        >
+          {showReserved && <ReservedDetail request={request} currency={currency} />}
+        </DetailPanel>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-4">

@@ -66,7 +66,7 @@ export default function ProductDetail() {
     );
   }
 
-  const items = section.items.filter((item) => !item.overview);
+  const items = section.items.filter((item) => !item.overview || section.items.length === 1);
 
   return (
     <Chrome>

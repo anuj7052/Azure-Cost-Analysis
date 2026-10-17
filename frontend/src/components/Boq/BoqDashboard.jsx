@@ -11,17 +11,26 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, ReferenceLine,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle, ChevronDown, ChevronRight,
-  Info, Lightbulb, Minus,
+  Info, Lightbulb, Minus, BarChart3, Layers, LineChart as LineIcon, TrendingUp, Columns3,
 } from 'lucide-react';
+import { OTHER_COLOR, SERIES_COLORS, TOP_SERVICES } from '../../utils/costDashboardSeries';
+
+const CHART_TYPES = [
+  { value: 'stacked', label: 'Stacked bars', icon: BarChart3, needsServices: true },
+  { value: 'area', label: 'Stacked area', icon: Layers, needsServices: true },
+  { value: 'line', label: 'Total line', icon: LineIcon },
+  { value: 'bars', label: 'Bars', icon: Columns3 },
+  { value: 'running', label: 'Running total', icon: TrendingUp },
+];
 
 import { useChartTheme } from '../../store/useTheme';
 import { formatAmount } from '../../utils/currency';
-import { dailySeries, clickedDay, finops, monthlySeries, recommend, topSpend } from '../../utils/boqDashboard';
+import { dailySeries, clickedDay, finops, monthlySeries, recommend } from '../../utils/boqDashboard';
 import { DayDetail, DayTimeline, ServiceDetail } from './BoqDayDetail';
 import { ResourceDetail, ServiceResources } from './BoqResourcePanel';
 import Panel from './SpendPanel';
@@ -57,10 +66,11 @@ function Quadrant({ label, value, tone = 'text-white', hint, onClick, actionLabe
 }
 
 export default function BoqDashboard({
-  report, months, days, rows, resourceQuery, tenantId, onFocusCategory, onShowOverruns,
+  report, months, days, rows, resourceQuery, tenantId, onShowOverruns,
 }) {
   const t = useChartTheme();
-  const [cumulative, setCumulative] = useState(false);
+  const [chartType, setChartType] = useState('stacked');
+  const [planLine, setPlanLine] = useState(null);
   // Which day the reader asked about, and whether they want the sequence of
   // events rather than the chart. Both default off: the chart is the summary,
   // and opening every explanation at once is not a summary.
@@ -137,14 +147,10 @@ export default function BoqDashboard({
   const head = useMemo(() => finops(report, months), [report, months]);
   const daily = useMemo(() => dailySeries(days, monthlyBudget), [days, monthlyBudget]);
   const monthly = useMemo(() => monthlySeries(months, monthlyBudget), [months, monthlyBudget]);
-  const spendTop = useMemo(() => topSpend(report, 'actual', 5), [report]);
   // Overruns are ranked by variance, which only exists where something was
   // budgeted; an unbudgeted category has no variance to rank by and shows up in
   // its own recommendation instead.
-  const overTop = useMemo(
-    () => topSpend({ categories: (report?.categories || []).filter(c => c.key !== 'reconciliation' && c.variance > 0) }, 'variance', 5),
-    [report],
-  );
+
   const advice = useMemo(() => recommend(report ? { ...report, categories: report.categories.filter(c => c.key !== 'reconciliation') } : report, { per }), [report, per]);
   // Summed for the collapsed header, so the reader can judge whether opening
   // the panel is worth it without opening it.
@@ -167,13 +173,35 @@ export default function BoqDashboard({
     return withBudget[withBudget.length - 1].budget;
   }, [daily, pickedDay]);
 
+  const split = useMemo(() => {
+    const totals = {};
+    for (const d of days || []) for (const [k, v] of Object.entries(d.by_service || {})) totals[k] = (totals[k] || 0) + (Number(v) || 0);
+    const ranked = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+    const top = ranked.slice(0, TOP_SERVICES).map(([k]) => k);
+    const keys = ranked.length > TOP_SERVICES ? [...top, 'Other'] : top;
+    const colors = Object.fromEntries(keys.map((k, i) => [k, k === 'Other' ? OTHER_COLOR : SERIES_COLORS[i % SERIES_COLORS.length]]));
+    const byDate = Object.fromEntries((days || []).map(d => [String(d.date), d.by_service || {}]));
+    return { keys, colors, byDate, top };
+  }, [days]);
+
   if (!report || !head) return null;
 
   // Daily data is the better read, but an imported usage file has no day grain.
   // Falling back to months is honest; inventing days from a monthly total would
   // draw a flat line that looks like a measurement.
   const usingDaily = daily.length > 0;
-  const series = usingDaily ? daily : monthly;
+  const baseSeries = usingDaily ? daily : monthly;
+  const series = usingDaily ? baseSeries.map(point => {
+    const row = { ...point };
+    let other = 0;
+    for (const [k, v] of Object.entries(split.byDate[point.full] || {})) {
+      if (split.top.includes(k)) row[k] = (row[k] || 0) + (Number(v) || 0); else other += Number(v) || 0;
+    }
+    if (split.keys.includes('Other')) row.Other = other;
+    return row;
+  }) : baseSeries;
+  const types = CHART_TYPES.filter(type => (!type.needsServices || (usingDaily && split.keys.length)) && (type.value !== 'running' || usingDaily));
+  const kind = types.some(type => type.value === chartType) ? chartType : 'line';
   // The axis label for the picked day, so the marker on the chart is placed by
   // the same value the axis is drawn from rather than by a second formatting of
   // the date that could disagree with it.
@@ -183,19 +211,23 @@ export default function BoqDashboard({
   // Whether there is a budget line to draw at all, read off the series rather
   // than off the report, so the chart and the legend agree with the points.
   const hasBudget = series.some(d => d.budget !== null && d.budget !== undefined);
+  const peakActual = Math.max(0, ...series.map(point => Number(point.actual) || 0));
+  const peakBudget = Math.max(0, ...series.map(point => Number(point.budget) || 0));
+  const planFar = hasBudget && peakActual > 0 && peakBudget > peakActual * 3;
+  const showPlan = hasBudget && (planLine ?? !planFar);
 
   const trend = head.trendPct;
   const TrendIcon = trend === null ? Minus : trend > 0 ? ArrowUpRight : ArrowDownRight;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4">
         {/* The chart leads on the left because it is the thing people read
             first and then click into; the four figures on the right are the
             summary they check it against. Ordered rather than reordered in the
             markup so the summary still comes first when the two stack on a
             narrow screen. */}
-        <div className="space-y-4 xl:order-2">
+        <div className="space-y-4 order-2">
         {/* ── FinOps analysis ─────────────────────────────────────────────── */}
         <Panel
           title="FinOps Analysis"
@@ -272,7 +304,7 @@ export default function BoqDashboard({
         )}
         </div>
 
-        <div className="space-y-4 xl:order-1">
+        <div className="space-y-4 order-1">
         {/* ── Spend against budget over time ──────────────────────────────── */}
         <Panel
           title={usingDaily ? 'Daily Spend' : 'Monthly Spend'}
@@ -291,12 +323,6 @@ export default function BoqDashboard({
               >
                 Timeline
               </button>
-              <button
-                onClick={() => setCumulative(v => !v)}
-                className="rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-600 hover:text-white"
-              >
-                {cumulative ? 'Per day' : 'Running total'}
-              </button>
             </div>
           ) : null}
         >
@@ -306,8 +332,20 @@ export default function BoqDashboard({
                 No cost data for the selected period.
               </p>
             ) : (
-              <ResponsiveContainer width="100%" height={250}>
-                <AreaChart
+              <>
+              <div role="radiogroup" aria-label="Chart type" className="mb-3 flex flex-wrap gap-1 px-3">
+                {types.map(type => {
+                  const on = kind === type.value;
+                  return (
+                    <button key={type.value} type="button" role="radio" aria-checked={on} onClick={() => setChartType(type.value)}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c] ${on ? 'bg-[#ffedd5] text-[#9a3412] ring-1 ring-[#fdba74]' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'}`}>
+                      <type.icon className="h-3.5 w-3.5" aria-hidden="true" />{type.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <ResponsiveContainer width="100%" height={360}>
+                <ComposedChart
                   data={series}
                   margin={{ top: 5, right: 16, left: 4, bottom: 0 }}
                   onClick={usingDaily ? (e) => {
@@ -318,64 +356,43 @@ export default function BoqDashboard({
                 >
                   <defs>
                     <linearGradient id="boqActualFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={t.series[0]} stopOpacity={0.35} />
-                      <stop offset="100%" stopColor={t.series[0]} stopOpacity={0.02} />
+                      <stop offset="0%" stopColor="#EA580C" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#EA580C" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={t.grid} vertical={false} />
-                  {/* The day the breakdown below is about, drawn on the chart
-                      that opened it. Without it the two are only linked by a
-                      date printed in a heading, which is exactly how a click
-                      landing on the wrong point went unnoticed. */}
                   {usingDaily && selectedLabel && (
-                    <ReferenceLine
-                      x={selectedLabel}
-                      stroke={t.series[0]}
-                      strokeWidth={1}
-                      strokeDasharray="4 3"
-                      ifOverflow="extendDomain"
-                    />
+                    <ReferenceLine x={selectedLabel} stroke="#EA580C" strokeWidth={1.5} strokeDasharray="4 3" ifOverflow="extendDomain" />
                   )}
-                  <XAxis dataKey="date" tick={{ fill: t.axis, fontSize: 10 }} axisLine={false}
-                    tickLine={false} minTickGap={20} />
-                  <YAxis tick={{ fill: t.axis, fontSize: 10 }} axisLine={false} tickLine={false}
-                    width={58}
+                  <XAxis dataKey="date" tick={{ fill: t.axis, fontSize: 10 }} axisLine={false} tickLine={false} minTickGap={20} />
+                  <YAxis tick={{ fill: t.axis, fontSize: 10 }} axisLine={false} tickLine={false} width={58}
                     tickFormatter={v => (v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v)} />
-                  <Tooltip cursor={t.tooltipCursor} contentStyle={t.tooltip}
-                    labelStyle={t.tooltipLabel}
+                  <Tooltip cursor={{ fill: 'rgba(234,88,12,0.08)', stroke: '#EA580C' }} contentStyle={t.tooltip} labelStyle={t.tooltipLabel}
                     formatter={(val, key) => [val === null ? 'Not available' : fmt(val), key]} />
-                  <Legend iconType="circle" iconSize={8}
-                    wrapperStyle={{ color: t.axis, fontSize: 11 }} />
-                  <Area
-                    type="monotone"
-                    name="Actual"
-                    dataKey={cumulative && usingDaily ? 'cumulativeActual' : 'actual'}
-                    stroke={t.series[0]}
-                    fill="url(#boqActualFill)"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4 }}
-                  />
-                  {/* Only drawn when there is a budget to draw. With no BOQ
-                      enabled every point on this line is null, so the series
-                      rendered as nothing at all while the legend went on
-                      offering "BOQ budget" as though it were on the chart --
-                      which reads as a line that failed to draw rather than as a
-                      budget that was never set. */}
-                  {hasBudget && (
-                    <Line
-                      type="monotone"
-                      name="BOQ budget"
-                      dataKey={cumulative && usingDaily ? 'cumulativeBudget' : 'budget'}
-                      stroke={t.series[4]}
-                      strokeWidth={2}
-                      strokeDasharray="5 4"
-                      dot={false}
-                      connectNulls={false}
-                    />
+                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ color: t.axis, fontSize: 11 }} />
+                  {kind === 'stacked' && split.keys.map((k, i) => <Bar key={k} name={k} dataKey={k} stackId="svc" fill={split.colors[k]} maxBarSize={26} radius={i === split.keys.length - 1 ? [4, 4, 0, 0] : 0} />)}
+                  {kind === 'area' && split.keys.map(k => <Area key={k} type="monotone" name={k} dataKey={k} stackId="svc" stroke={split.colors[k]} fill={split.colors[k]} fillOpacity={0.8} />)}
+                  {kind === 'bars' && <Bar name="Actual" dataKey="actual" fill="#EA580C" maxBarSize={26} radius={[4, 4, 0, 0]}>
+                    {series.map(point => <Cell key={point.date} fill={point.over ? '#e11d48' : '#EA580C'} />)}
+                  </Bar>}
+                  {(kind === 'line' || kind === 'running') && (
+                    <Area type="monotone" name={kind === 'running' ? 'Actual (running total)' : 'Actual'} dataKey={kind === 'running' ? 'cumulativeActual' : 'actual'}
+                      stroke="#EA580C" fill="url(#boqActualFill)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
                   )}
-                </AreaChart>
+                  {showPlan && (
+                    <Line type="monotone" name={kind === 'running' ? 'BOQ budget (running total)' : 'BOQ budget'} dataKey={kind === 'running' ? 'cumulativeBudget' : 'budget'}
+                      stroke="var(--color-slate-400)" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls={false} />
+                  )}
+                </ComposedChart>
               </ResponsiveContainer>
+              {hasBudget && (
+                <div className="flex flex-wrap items-center gap-3 px-3 pt-2 text-[11px] text-slate-500">
+                  <label className="inline-flex items-center gap-1.5 text-slate-300"><input type="checkbox" className="accent-[#ea580c]" checked={showPlan} onChange={e => setPlanLine(e.target.checked)} />Show plan line</label>
+                  {planFar && !showPlan && <span>Hidden by default: the plan ({fmt(peakBudget)}/day) is far above daily spend (up to {fmt(peakActual)}/day), which would flatten the bars.</span>}
+                </div>
+              )}
+              {kind === 'bars' && hasBudget && <p className="px-3 pt-1 text-[11px] text-slate-500">Red bars are days that cost more than the plan allows per day.</p>}
+              </>
             )}
           </div>
 
@@ -432,34 +449,6 @@ export default function BoqDashboard({
             />
           )}
         </Panel>
-        </div>
-      </div>
-
-      {/* ── Where the money went ──────────────────────────────────────────── */}
-      {/* Two charts of the same categories measuring different things, which
-          read as duplicates until somebody says out loud that one is the whole
-          bill and the other is only the part above budget. So it is said, once,
-          above both of them rather than in two subtitles nobody compares. */}
-      <div>
-        <p className="mb-2 text-[11px] leading-relaxed text-slate-500">
-          Two different questions about the same categories.
-          <span className="text-slate-400"> Biggest spend</span> is the whole bill — the
-          categories you pay the most for, whether or not the BOQ allowed for it.
-          <span className="text-slate-400"> Biggest overspend</span> is only the amount
-          <em> above</em> the BOQ line. A category can top the first chart and be absent
-          from the second because it is large but inside its budget, and a small
-          category can top the second because it was barely budgeted at all.
-        </p>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <Panel title="Biggest spend by category"
-            subtitle="Total charged. Red where the category is over its BOQ line.">
-            <TopChart data={spendTop} t={t} fmt={fmt} onPick={onFocusCategory} empty="Nothing charged yet." />
-          </Panel>
-          <Panel title="Biggest overspend by category"
-            subtitle="Only the amount charged above the BOQ — not the total.">
-            <TopChart data={overTop} t={t} fmt={fmt} onPick={onFocusCategory}
-              allOver empty="Nothing is over budget." />
-          </Panel>
         </div>
       </div>
 
@@ -530,35 +519,6 @@ export default function BoqDashboard({
           </ul>
         )}
       </Panel>
-    </div>
-  );
-}
-
-function TopChart({ data, t, fmt, onPick, allOver = false, empty }) {
-  if (!data.length) {
-    return <p className="px-5 py-12 text-center text-xs text-slate-500">{empty}</p>;
-  }
-  return (
-    <div className="px-2 py-4">
-      <ResponsiveContainer width="100%" height={250}>
-        <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, left: 8, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={t.grid} horizontal={false} />
-          <XAxis type="number" tick={{ fill: t.axis, fontSize: 10 }} axisLine={false}
-            tickLine={false}
-            tickFormatter={v => (v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v)} />
-          <YAxis type="category" dataKey="name" width={160} tick={{ fill: t.axis, fontSize: 10 }}
-            axisLine={false} tickLine={false} />
-          <Tooltip cursor={t.tooltipCursor} contentStyle={t.tooltip} labelStyle={t.tooltipLabel}
-            formatter={(val) => [fmt(val), 'Amount']} />
-          <Bar dataKey="value" radius={[0, 3, 3, 0]} barSize={18}
-            onClick={(d) => !d?.payload?.rest && onPick?.(d?.payload?.key)}
-            cursor={onPick ? 'pointer' : 'default'}>
-            {data.map((d, i) => (
-              <Cell key={i} fill={d.rest ? t.grid : (allOver || d.over) ? '#ef4444' : t.series[0]} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
     </div>
   );
 }

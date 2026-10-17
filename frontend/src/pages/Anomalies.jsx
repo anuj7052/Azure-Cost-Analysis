@@ -184,7 +184,7 @@ export default function Anomalies() {
     const seen = new Map();
     for (const r of allRows) {
       if (r.subscription_id && !seen.has(r.subscription_id)) {
-        seen.set(r.subscription_id, r.subscription_name || r.subscription_id);
+        seen.set(r.subscription_id, r.subscription_name || 'Unnamed subscription');
       }
     }
     return [...seen.entries()];
@@ -401,7 +401,7 @@ export default function Anomalies() {
           <ul className="mt-1 space-y-0.5">
             {errors.map((e) => (
               <li key={e.subscription_id} className="text-[11px] text-slate-400">
-                {e.subscription_name || e.subscription_id}: {e.error}
+                {e.subscription_name || 'Unnamed subscription'}: {e.error}
               </li>
             ))}
           </ul>
@@ -549,7 +549,7 @@ export default function Anomalies() {
                       <p className="truncate text-[11px] text-slate-500">{r.resource_name || r.resource_group || ''}</p>
                     </td>
                     <td className="hidden px-3 py-2.5 text-slate-400 lg:table-cell">
-                      {r.subscription_name || r.subscription_id}
+                      {r.subscription_name || 'Unnamed subscription'}<span className="block truncate font-mono text-[10px] font-normal text-slate-500">{r.subscription_id}</span>
                     </td>
                     <td className="px-3 py-2.5">
                       <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${SEVERITY_STYLE[r.severity] || SEVERITY_STYLE.none}`}>

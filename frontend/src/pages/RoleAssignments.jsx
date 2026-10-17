@@ -17,6 +17,7 @@ import AccessChangeDialog from '../components/Security/AccessChangeDialog';
 import DirectoryNotice from '../components/Security/DirectoryNotice';
 import { plainRole, plainScope } from '../utils/securityLanguage';
 import { useAppStore } from '../store/useAppStore';
+import { useCanAdminister } from '../hooks/useCanAdminister';
 
 /**
  * Principal-centric RBAC auditing.
@@ -283,6 +284,7 @@ function Section({ title, children }) {
 }
 
 function PrincipalDetail({ principal, onRevoke }) {
+  const canAdmin = useCanAdminister();
   const assignments = useMemo(
     () => (Array.isArray(principal?.assignments) ? principal.assignments : []),
     [principal],
@@ -354,7 +356,7 @@ function PrincipalDetail({ principal, onRevoke }) {
                   )}
                   {/* Offered only where there is an assignment id to act on.
                       A button that cannot possibly work is worse than none. */}
-                  {(a.assignment_id || a.id) && (
+                  {canAdmin && (a.assignment_id || a.id) && (
                     <button
                       onClick={() => onRevoke({
                         assignmentId: a.assignment_id || a.id,

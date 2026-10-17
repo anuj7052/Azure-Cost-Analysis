@@ -8,6 +8,7 @@ import { Callout, EmptyState, ErrorState, Metric, Panel } from '../ui';
 import { formatAmountFull, formatRate } from '../../utils/currency';
 import { formatBytes, formatGB } from '../../utils/bytes';
 import { subscriptionLabel, subscriptionNameMap } from '../../utils/identity';
+import { SubscriptionName } from './Identity';
 
 /** Mounted only by the bandwidth tab; all queries use the header selection. */
 export default function BandwidthCostPanel() {
@@ -61,7 +62,7 @@ export default function BandwidthCostPanel() {
           <DataQuality coverage={data.coverage} />
           {!!data.errors?.length && <Callout tone="medium" title="Partial bandwidth costs">
             Totals exclude {data.errors.length} subscription(s) that could not be read.
-            {data.errors.map((entry, index) => <p key={index}>{entry.subscription_id}: {entry.error}</p>)}
+            {data.errors.map((entry, index) => <p key={index}><SubscriptionName id={entry.subscription_id} />: {entry.error}</p>)}
           </Callout>}
           {!currency && <Callout tone="medium" title="Currency unavailable">Monetary values cannot be displayed without the report currency.</Callout>}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

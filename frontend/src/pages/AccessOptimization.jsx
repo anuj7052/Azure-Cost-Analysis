@@ -25,6 +25,8 @@ import {
   filterFindings, principalRows, cardsFor, CARD_SCOPES, subscriptionOptions,
   managementGroupOptions, actionability, roleIdFor,
 } from '../utils/accessOptimization';
+import { AdminOnlyNote } from '../components/Common/AdminOnly';
+import { useCanAdminister } from '../hooks/useCanAdminister';
 
 /**
  * Access optimisation — which grants look like they should not exist.
@@ -228,6 +230,7 @@ function Usage({ usage }) {
 }
 
 function FindingCard({ finding, tenantId, onHide, onRestore, busy, onRevoke, onDowngrade, resolving }) {
+  const canAdmin = useCanAdminister();
   const Icon = KIND_ICON[finding.kind] || ShieldAlert;
   const chip = scopeChip(finding);
   const ScopeIcon = SCOPE_ICON[chip] || MapPin;
@@ -256,7 +259,7 @@ function FindingCard({ finding, tenantId, onHide, onRestore, busy, onRevoke, onD
           <Chip tone="border-slate-700 bg-slate-800/60 text-slate-400">Custom role</Chip>
         )}
 
-        <button
+        {canAdmin && <button
           onClick={finding.hidden ? onRestore : onHide}
           disabled={busy}
           className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-400 transition hover:bg-slate-800 disabled:opacity-50"
@@ -264,7 +267,7 @@ function FindingCard({ finding, tenantId, onHide, onRestore, busy, onRevoke, onD
           {busy ? <Loader2 size={11} className="animate-spin" />
             : finding.hidden ? <Eye size={11} /> : <EyeOff size={11} />}
           {finding.hidden ? 'Unhide' : 'Hide'}
-        </button>
+        </button>}
       </div>
 
       <p className="mt-2.5 text-xs font-semibold leading-snug text-white">
@@ -330,7 +333,7 @@ function FindingCard({ finding, tenantId, onHide, onRestore, busy, onRevoke, onD
           <ExternalLink size={11} /> View in Role Assignments
         </Link>
 
-        {act.can && downgradeTo && (
+        {act.can && canAdmin && downgradeTo && (
           <button
             onClick={onDowngrade}
             disabled={resolving}
@@ -341,7 +344,8 @@ function FindingCard({ finding, tenantId, onHide, onRestore, busy, onRevoke, onD
           </button>
         )}
 
-        {act.can && (
+        {act.can && !canAdmin && <AdminOnlyNote />}
+        {act.can && canAdmin && (
           <button
             onClick={onRevoke}
             className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-medium text-rose-200 transition hover:bg-rose-500/20"
@@ -362,6 +366,7 @@ function FindingCard({ finding, tenantId, onHide, onRestore, busy, onRevoke, onD
 }
 
 export default function AccessOptimization() {
+  const canAdminPage = useCanAdminister();
   const tenantId = useAppStore(s => s.selectedTenantId);
   const [searchParams] = useSearchParams();
 
@@ -678,7 +683,7 @@ export default function AccessOptimization() {
 
                 {cardScope === 'principal' && active && (
                   <div className="ml-auto flex items-center gap-2">
-                    <button
+                    {canAdminPage && <button
                       onClick={() => {
                         const anyHidden = cards.some(c => c.hidden);
                         const sample = cards[0];
@@ -692,7 +697,7 @@ export default function AccessOptimization() {
                         ? <Loader2 size={11} className="animate-spin" />
                         : <EyeOff size={11} />}
                       {cards.some(c => c.hidden) ? 'Unhide principal' : 'Hide principal'}
-                    </button>
+                    </button>}
                     <button
                       onClick={() => setSelected('')}
                       aria-label="Clear selection"

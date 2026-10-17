@@ -200,7 +200,11 @@ class TestTheRegistryEntry:
         # skipped is worse than admitting there is no undo.
         spec = actions.get_spec("disk.delete")
         assert not spec.reversible
-        assert not spec.enabled
+        # It ships, because the orphaned-resources page needs it -- but only
+        # having said twice that it cannot be undone, and only asking first.
+        assert spec.enabled
+        assert spec.allow_irreversible
+        assert spec.requires_confirmation
         assert any("snapshot" in c.lower() for c in spec.caveats)
 
     def test_the_catalogue_offers_the_snapshot_before_the_deletion(self):

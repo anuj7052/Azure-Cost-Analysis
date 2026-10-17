@@ -20,7 +20,6 @@ Every screen reads. Calls to Azure are made with the signed-in user's own delega
 - **Activity explorer** and **change tracking** — what changed, by whom, and when
 - **Bandwidth and egress** analysis
 - **CSV upload** — Azure portal cost exports, as a fallback when live data is unavailable
-- **Commitments** — reservations and savings plans
 
 ### Estate
 - **Resource inventory** via Resource Graph

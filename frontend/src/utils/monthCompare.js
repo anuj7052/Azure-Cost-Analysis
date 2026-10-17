@@ -18,7 +18,7 @@ export function migrateExplorerView(view = {}) {
   return {
     ...rest,
     tab: view.tab === 'breakdown' ? 'compare'
-      : ['trend', 'groups', 'compare', 'bandwidth', 'billing'].includes(view.tab) ? view.tab : 'trend',
+      : ['trend', 'groups', 'compare', 'bandwidth', 'billing', 'day'].includes(view.tab) ? view.tab : 'trend',
     timeline: view.timeline === 'monthly' ? 'monthly' : 'daily',
   };
 }

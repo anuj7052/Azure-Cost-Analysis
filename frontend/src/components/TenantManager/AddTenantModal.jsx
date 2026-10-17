@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore';
 import Modal from '../Common/Modal';
 import PermissionsPanel from '../Common/PermissionsPanel';
 import toast from 'react-hot-toast';
+import { tenantText } from '../../utils/identity';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -22,7 +23,7 @@ export default function AddTenantModal({ onClose }) {
     try {
       const tenant = await addTenant(form);
       addTenantToList(tenant);
-      toast.success(`Tenant "${tenant.tenant_name}" added`);
+      toast.success(`Tenant "${tenantText(tenant.tenant_name)}" added`);
       onClose();
     } catch (err) {
       toast.error(err.response?.data?.detail || err.message);

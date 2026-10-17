@@ -41,6 +41,7 @@ import { describeResourceId } from '../utils/azureSku';
 import {
   GROUPINGS, UNASSIGNED, toEntries, groupBy, flattenBag, toPropertyTree, countLeaves,
 } from '../utils/changeTree';
+import { resourceText } from '../utils/identity';
 
 const KIND = {
   added: {
@@ -338,7 +339,7 @@ function KeyInformation({ item, subscriptionNames }) {
     ['Type', item.type],
     ['Location', item.location],
     ['Resource group', item.resource_group],
-    ['Subscription', subscriptionNames[item.subscription_id] || item.subscription_id],
+    ['Subscription', subscriptionNames[item.subscription_id] || 'Unnamed subscription'],
     ['SKU / size', item.sku],
   ];
 
@@ -467,7 +468,7 @@ function EverythingFeed({ entries, subscriptionNames, before, after, onOpen }) {
     const matched = needle
       ? entries.filter(e => [
         e.name, e.type, e.resource_group, e.location,
-        subscriptionNames[e.subscription_id] || e.subscription_id,
+        subscriptionNames[e.subscription_id] || 'Unnamed subscription',
       ].some(v => (v || '').toLowerCase().includes(needle)))
       : entries;
 
@@ -525,7 +526,7 @@ function EverythingFeed({ entries, subscriptionNames, before, after, onOpen }) {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     <span className="truncate text-sm font-medium text-slate-200">
-                      {item.name || item.resource_id}
+                      {resourceText(item.name, item.resource_id)}
                     </span>
                     <span className={`text-[10px] font-semibold uppercase tracking-wide ${meta.tone}`}>
                       {meta.label}
@@ -536,7 +537,7 @@ function EverythingFeed({ entries, subscriptionNames, before, after, onOpen }) {
                     {item.resource_group && ` · ${item.resource_group}`}
                     {item.location && ` · ${item.location}`}
                     {' · '}
-                    {subscriptionNames[item.subscription_id] || item.subscription_id}
+                    {subscriptionNames[item.subscription_id] || 'Unnamed subscription'}
                   </p>
                   <p className="mt-1 text-[11px] text-slate-400">
                     {summariseChange(item, item.kind)}
@@ -799,7 +800,7 @@ export default function Changes() {
   const subscriptionNames = useMemo(() => {
     const map = {};
     for (const sub of subscriptions || []) {
-      map[sub.subscription_id] = sub.display_name || sub.subscription_id;
+      map[sub.subscription_id] = sub.display_name || 'Unnamed subscription';
     }
     return map;
   }, [subscriptions]);

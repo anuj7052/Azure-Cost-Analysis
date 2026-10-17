@@ -56,7 +56,7 @@ function useCountdown(at) {
   return at ? Math.max(0, Math.ceil((at - now) / 1000)) : 0;
 }
 
-export default function DataQuality({ coverage, className = '' }) {
+export default function DataQuality({ coverage, className = '', leading = null }) {
   const [open, setOpen] = useState(false);
   const retryAt = useAppStore(s => s.costRetryAt);
   const costLoading = useAppStore(s => s.costLoading);
@@ -65,7 +65,11 @@ export default function DataQuality({ coverage, className = '' }) {
 
   // No coverage means the caller has not wired it yet. Rendering a confident
   // "complete" badge for an unknown state would be a lie of omission.
-  if (!coverage) return null;
+  if (!coverage) {
+    return leading
+      ? <div className={`rounded-xl border border-slate-800 bg-slate-900/60 px-2 py-1.5 ${className}`}>{leading}</div>
+      : null;
+  }
 
   const {
     source, fetched_at: fetchedAt, requested_subscriptions: requested,
@@ -86,8 +90,10 @@ export default function DataQuality({ coverage, className = '' }) {
           : 'border-slate-800 bg-slate-900/60'
       } ${className}`}
     >
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-3.5 py-2.5">
-        <span className={`flex items-center gap-1.5 font-medium ${
+      <div className={`flex flex-wrap items-center gap-x-5 gap-y-2 ${leading ? 'px-2 py-1.5' : 'px-3.5 py-2.5'}`}>
+        {leading && <div className="min-w-0 max-w-full">{leading}</div>}
+        {leading && <span className="hidden h-5 w-px bg-slate-800 xl:block" aria-hidden="true" />}
+        <span className={`flex items-center gap-1.5 font-medium ${leading ? 'xl:ml-auto' : ''} ${
           partial ? 'text-amber-300' : 'text-emerald-300'
         }`}>
           {partial
@@ -152,7 +158,7 @@ export default function DataQuality({ coverage, className = '' }) {
           {errors.map((e, i) => (
             <div key={e.subscription_id || i}>
               <p className="font-mono text-[11px] text-slate-400">
-                {e.subscription_name || e.subscription_id || 'Unknown subscription'}
+                {e.subscription_name || (e.subscription_id ? 'Unnamed subscription' : 'Unknown subscription')}{e.subscription_id && <span className="block truncate font-mono text-[10px] font-normal text-slate-500">{e.subscription_id}</span>}
               </p>
               {/* The reason verbatim: throttling and a missing role need
                   entirely different responses, and a generic message hides

@@ -72,6 +72,14 @@ class ActionSpec:
     # Actions are off until someone decides otherwise. A registry entry is a
     # description of a capability, not permission to ship it.
     enabled: bool = False
+    # The second lock on an irreversible action.
+    #
+    # `enabled` alone is not enough to ship something that cannot be undone --
+    # `authorize` refuses unless this is also set. Two fields rather than one
+    # is the point: it means a delete cannot reach a customer's estate as a
+    # side effect of flipping a single flag, and a review that sees this set
+    # knows somebody weighed it rather than copied the entry above.
+    allow_irreversible: bool = False
     # Extra guard for the actions where a single mistaken click is unrecoverable.
     requires_confirmation: bool = True
     # Free-form notes surfaced in the catalogue, e.g. what the action will not do.
@@ -260,29 +268,62 @@ REGISTRY: Dict[str, ActionSpec] = {
             "A snapshot is not free. It is cheaper than the disk, not nothing.",
         ),
     ),
-    "disk.delete": ActionSpec(
-        key="disk.delete",
-        title="Delete unattached disk",
-        description=(
-            "Permanently deletes the disk and everything on it. There is no "
-            "undo, and Azure keeps no copy."
-        ),
-        destructive=True,
-        reversible=False,
-        azure_permission="Microsoft.Compute/disks/delete",
-        enabled=False,
-        caveats=(
-            "Snapshot the disk first. `disk.snapshot` exists for this, and a "
-            "snapshot is what turns this from data loss into a restore.",
-            "Still marked irreversible, because the registry describes what "
-            "this action does on its own. Whether a snapshot was taken is a "
-            "fact about a particular run, not about the capability, and an "
-            "action that claims to be reversible on the strength of a step "
-            "somebody might have skipped is worse than one that admits it is "
-            "not.",
-        ),
-    ),
 }
+
+
+def _delete_specs() -> Dict[str, ActionSpec]:
+    """One delete action per resource type the orphan scan can clean up.
+
+    Generated from `resource_delete.DELETABLE` rather than written out, so the
+    catalogue cannot claim a capability the delete path does not have, or miss
+    one it does. The registry's whole purpose is to be the answer to "what can
+    this product change?", and a hand-maintained copy of another module's list
+    stops being that answer the first time the two disagree.
+
+    Every one of these is irreversible, so every one carries `allow_irreversible`
+    -- the deliberate second decision described on the field itself.
+    """
+    from services import resource_delete
+
+    specs: Dict[str, ActionSpec] = {}
+    for item in resource_delete.DELETABLE.values():
+        # `disks` -> `disk.delete`, keeping the key this registry already used.
+        noun = item.resource_type.rstrip("s").lower() if item.resource_type.endswith("s") else item.resource_type.lower()
+        key = f"{noun}.delete"
+        caveats = [
+            "Offered only for resources the orphaned-resources scan flagged as "
+            "attached to nothing. It is not a general delete.",
+            "Azure decides. The call carries your own token, so a role without "
+            f"{item.permission} is refused by Azure whatever this app shows.",
+            "A resource lock on the resource, its group or its subscription "
+            "blocks this, and is checked before you are asked to confirm.",
+        ]
+        if item.rule == "unattached_disks":
+            caveats.insert(0, (
+                "Snapshot the disk first. `disk.snapshot` exists for this, and "
+                "a snapshot is what turns this from data loss into a restore."
+            ))
+        specs[key] = ActionSpec(
+            key=key,
+            title=f"Delete unused {item.label}",
+            description=item.consequence,
+            destructive=True,
+            # Honest rather than convenient. A snapshot may make a particular
+            # disk recoverable, but that is a fact about one run, not about the
+            # capability -- and an action claiming to be reversible on the
+            # strength of a step somebody might have skipped is worse than one
+            # that admits it is not.
+            reversible=False,
+            allow_irreversible=True,
+            azure_permission=item.permission,
+            enabled=True,
+            requires_confirmation=True,
+            caveats=tuple(caveats),
+        )
+    return specs
+
+
+REGISTRY.update(_delete_specs())
 
 
 class ActionError(Exception):
@@ -318,14 +359,23 @@ def authorize(spec: ActionSpec, user: dict, *, confirmed: bool) -> None:
             f"'{spec.title}' is not enabled on this platform.",
         )
 
-    if not spec.reversible:
+    if not spec.reversible and not spec.allow_irreversible:
         # Belt and braces with `enabled`. An irreversible action is one commit
         # away from being switched on by someone who has not thought about what
         # "no undo" means on a customer's estate; this makes that require a
-        # second, visible change.
+        # second, visible change rather than a single flag.
         raise ActionError(
             status.HTTP_403_FORBIDDEN,
             f"'{spec.title}' cannot be undone and is not available.",
+        )
+
+    if not spec.reversible and not spec.requires_confirmation:
+        # An irreversible action that does not ask is a configuration mistake,
+        # not a preference. Refused here rather than trusted, because the cost
+        # of the mistake is somebody else's data.
+        raise ActionError(
+            status.HTTP_403_FORBIDDEN,
+            f"'{spec.title}' cannot be undone and must ask before it runs.",
         )
 
     if not user.get("can_administer"):
@@ -572,6 +622,7 @@ def catalogue() -> list[dict]:
             "description": spec.description,
             "destructive": spec.destructive,
             "reversible": spec.reversible,
+            "allow_irreversible": spec.allow_irreversible,
             "azure_permission": spec.azure_permission,
             "enabled": spec.enabled,
             "requires_confirmation": spec.requires_confirmation,

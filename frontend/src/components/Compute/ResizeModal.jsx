@@ -14,6 +14,8 @@ import {
   downtimeFor, filterOptions, opensOnPicker, optionsSummary, outcomeOf,
   savingSummary, shouldPoll, sortOptions, stepsOf, targetSkuOf,
 } from '../../utils/resize';
+import { AdminOnlyNote } from '../Common/AdminOnly';
+import { useCanAdminister } from '../../hooks/useCanAdminister';
 
 /**
  * Review and perform a VM resize.
@@ -183,6 +185,7 @@ function SizeRow({ option, currency, selected, onChoose }) {
 }
 
 export default function ResizeModal({ vm, tenantId, currency, onClose, onResized }) {
+  const canAdmin = useCanAdminister();
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -689,9 +692,10 @@ export default function ResizeModal({ vm, tenantId, currency, onClose, onResized
             )}
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              {!canAdmin && <AdminOnlyNote className="self-center" />}
               <Button
                 onClick={confirm}
-                disabled={confirmDisabled({
+                disabled={!canAdmin || confirmDisabled({
                   plan, acknowledged: allAcknowledged, starting, operation,
                 })}
               >

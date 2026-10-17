@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { lazy, Suspense, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Upload, CheckCircle, FileSpreadsheet, FileText, FileType, X, GitCompareArrows, KeyRound, Download } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
@@ -12,6 +12,7 @@ import { EXPORT_GUIDE } from '../components/Common/portalGuides';
 import CurrencyApiBar from '../components/Common/CurrencyApiBar';
 import { formatAmount } from '../utils/currency';
 import toast from 'react-hot-toast';
+import { tenantText } from '../utils/identity';
 
 const ACCEPTED = '.csv,.tsv,.txt,.xlsx,.xlsm,.xls,.pdf';
 
@@ -27,7 +28,11 @@ function expiryLabel(expiresAt) {
   return `expires in ${hours} hour${hours === 1 ? '' : 's'}`;
 }
 
+const Team = lazy(() => import('./Team'));
+const Admin = lazy(() => import('./Admin'));
+
 export default function Settings() {
+  const isAdmin = useAppStore(state => state.me?.is_admin);
   const {
     tenants, subscriptions, selectedSubscriptionIds, toggleSubscription,
     removeTenantFromList, loadCosts, imported, addImport, clearImported, setImportCurrency,
@@ -58,7 +63,7 @@ export default function Settings() {
     try {
       await deleteTenant(t.tenant_id);
       removeTenantFromList(t.tenant_id);
-      toast.success(`Tenant "${t.tenant_name}" removed`);
+      toast.success(`Tenant "${tenantText(t.tenant_name)}" removed`);
     } catch (err) {
       toast.error(err.response?.data?.detail || err.message);
     } finally {
@@ -95,11 +100,17 @@ export default function Settings() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-2xl mx-auto">
+    <div className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-slate-400 text-sm mt-1">Manage tenants, subscriptions, and data sources</p>
+        <p className="text-slate-400 text-sm mt-1">Tenants, subscriptions, data sources and your team — everything in one place.</p>
+        <nav aria-label="On this page" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {[['#tenants', 'Tenants & subscriptions'], ['#team', 'Team'], ...(isAdmin ? [['#admin', 'Admin']] : [])].map(([href, text]) => (
+            <a key={href} href={href} className="text-slate-400 hover:text-[#c2410c] hover:underline">{text}</a>
+          ))}
+        </nav>
       </div>
+      <div id="tenants" className="scroll-mt-24 space-y-6">
 
       {/* Tenants */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
@@ -161,8 +172,8 @@ export default function Settings() {
           {tenants.map(t => (
             <div key={t.tenant_id} className="flex items-center gap-3 bg-slate-800 rounded-xl px-4 py-3">
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">{t.tenant_name}</p>
-                <p className="text-xs text-slate-500 font-mono truncate">{t.tenant_id}</p>
+                <p className="text-sm font-medium text-white truncate">{tenantText(t.tenant_name)}</p>
+                <p className="text-[11px] text-slate-500 font-mono truncate">{t.tenant_id}</p>
                 {t.source === 'session_token' && (
                   <p className="text-[11px] text-slate-500 mt-0.5">
                     {t.account ? `${t.account} · ` : ''}{expiryLabel(t.expires_at)}
@@ -216,8 +227,8 @@ export default function Settings() {
                   className="rounded accent-blue-500"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{sub.display_name}</p>
-                  <p className="text-xs text-slate-500 font-mono truncate">{sub.subscription_id}</p>
+                  <p className="text-sm font-medium text-white truncate">{sub.display_name || 'Unnamed subscription'}</p>
+                  <p className="text-[11px] text-slate-500 font-mono truncate">{sub.subscription_id}</p>
                 </div>
                 {sub.total_cost != null && (
                   <span className="text-xs text-slate-300 font-semibold shrink-0">
@@ -422,6 +433,18 @@ export default function Settings() {
       </div>
 
       <PortalGuide {...EXPORT_GUIDE} />
+
+      </div>
+
+      <section id="team" className="scroll-mt-24 border-t border-slate-800 pt-6">
+        <Suspense fallback={<p className="text-sm text-slate-400">Loading team…</p>}><Team /></Suspense>
+      </section>
+
+      {isAdmin && (
+        <section id="admin" className="scroll-mt-24 border-t border-slate-800 pt-6">
+          <Suspense fallback={<p className="text-sm text-slate-400">Loading admin…</p>}><Admin /></Suspense>
+        </section>
+      )}
 
       {showModal && <AddTenantModal onClose={() => setShowModal(false)} />}
       {showTokenModal && <AddSessionTokenModal onClose={() => setShowTokenModal(false)} />}

@@ -5,14 +5,17 @@ import {
   Camera,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import { snapshotDisk } from '../api/client';
+import { snapshotDisk, checkDeletable, deleteResource } from '../api/client';
+import { errorMessage } from '../utils/apiError';
 import { formatAmountFull } from '../utils/currency';
 import { exactAmount } from '../utils/exact';
 import {
   MISSING, flatten, sumCost, groupTree, ruleOptions, severityOptions,
   filterItems, savings, evidenceRows, coverageNote, headline,
-  severityLabel, severityTone, isSnapshotable, CERTAIN,
+  severityLabel, severityTone, isSnapshotable, isDeletable, selectedItem, CERTAIN,
 } from '../utils/orphaned';
+import { AdminOnlyNote } from '../components/Common/AdminOnly';
+import { useCanAdminister } from '../hooks/useCanAdminister';
 
 const PORTAL = 'https://portal.azure.com/#@/resource';
 
@@ -155,7 +158,7 @@ function EvidenceRow({ label, value, hint }) {
  * another's -- the one mistake here that could end with the wrong disk
  * deleted.
  */
-function SnapshotButton({ item, tenantId }) {
+function SnapshotButton({ item, tenantId, onSnapshot }) {
   const [state, setState] = useState('idle');
   const [result, setResult] = useState(null);
 
@@ -169,9 +172,11 @@ function SnapshotButton({ item, tenantId }) {
         resource_name: item.name || '',
       });
       setResult(record);
-      setState(record?.status === 'failed' ? 'failed' : 'done');
+      const failed = record?.status === 'failed';
+      setState(failed ? 'failed' : 'done');
+      if (!failed) onSnapshot?.(record);
     } catch (err) {
-      setResult({ error: err?.response?.data?.detail || err?.message || MISSING });
+      setResult({ error: errorMessage(err) });
       setState('failed');
     }
   };
@@ -227,8 +232,190 @@ function SnapshotButton({ item, tenantId }) {
   );
 }
 
+/**
+ * Remove a finding from Azure.
+ *
+ * The only irreversible thing this page can do, so it is built to be hard to
+ * do by accident and easy to understand before committing:
+ *
+ *   * the button is disabled until the server has confirmed, against Azure,
+ *     that this account holds the delete permission at this resource's scope;
+ *   * a resource lock is reported as a lock rather than as a missing role,
+ *     because the fix is different;
+ *   * the name must be typed to confirm, which is the one guard that survives
+ *     a person clicking through a dialog they have seen twenty times;
+ *   * for a disk, the snapshot offer sits directly above and says plainly
+ *     whether one was taken in this session.
+ *
+ * Remounted per resource id by the caller, so a verdict or a typed name can
+ * never be shown against a different resource than the one it was fetched for.
+ */
+function DeleteButton({ item, tenantId, verdict, checking, snapshotTaken, onDeleted }) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [state, setState] = useState('idle');
+  const [error, setError] = useState('');
+
+  const name = item.name || '';
+  const allowed = Boolean(verdict?.allowed);
+  const nameMatches = typed.trim() === name && name !== '';
+  // No verdict yet is still "deciding", not "refused". Rendering a dead button
+  // with nothing to explain it is what made this look broken: the answer had
+  // simply not arrived, and the control said nothing either way.
+  const pending = checking || !verdict;
+
+  const run = async () => {
+    setState('running');
+    setError('');
+    try {
+      const record = await deleteResource({
+        tenant_id: tenantId,
+        resource_id: item.id,
+        subscription_id: item.subscription_id || '',
+        resource_name: name,
+        confirmation: true,
+      });
+      if (record?.state === 'FAILED') {
+        setError(record.failure_reason || MISSING);
+        setState('failed');
+        return;
+      }
+      setState('done');
+      onDeleted?.(item, record);
+    } catch (err) {
+      setError(errorMessage(err));
+      setState('failed');
+    }
+  };
+
+  if (state === 'done') {
+    return (
+      <p className="flex gap-1.5 rounded-lg bg-emerald-500/10 p-2.5 text-xs leading-relaxed text-emerald-300">
+        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>
+          Azure accepted the deletion. It leaves the next scan and stops billing
+          once Azure finishes removing it.
+        </span>
+      </p>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-rose-200">Delete this resource</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-400">
+            {verdict?.consequence
+              || 'Removes the resource from Azure. There is no undo.'}
+          </p>
+        </div>
+
+        {!open && (
+          <button
+            type="button"
+            onClick={() => { setOpen(true); setTyped(''); }}
+            disabled={pending || !allowed || !tenantId}
+            title={pending ? 'Checking your Azure role…' : (verdict?.reason || '')}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-200 transition hover:border-rose-400 hover:text-rose-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+          >
+            {pending
+              ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Checking access…</>
+              : <><Trash2 className="h-3.5 w-3.5" />Delete</>}
+          </button>
+        )}
+      </div>
+
+      {/* Why the button is off. A disabled control with no reason is the thing
+          people file a bug about; this says whether to fix a role or a lock. */}
+      {!pending && !allowed && verdict?.reason && (
+        <p className="mt-3 flex gap-1.5 rounded-lg bg-slate-800/60 p-2.5 text-xs leading-relaxed text-slate-400">
+          {verdict.locked
+            ? <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+            : <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+          <span>
+            {verdict.reason}
+            {verdict.lock_notes && (
+              <span className="mt-0.5 block text-slate-500">Lock note: {verdict.lock_notes}</span>
+            )}
+          </span>
+        </p>
+      )}
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          {/* Stated for disks whatever the answer. Silence would read as "no
+              snapshot needed", which is not what an absent snapshot means. */}
+          {verdict?.recommend_snapshot && (
+            <p className={`flex gap-1.5 rounded-lg p-2.5 text-xs leading-relaxed ${
+              snapshotTaken
+                ? 'bg-emerald-500/10 text-emerald-300'
+                : 'bg-amber-500/10 text-amber-200'
+            }`}>
+              {snapshotTaken
+                ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+              <span>
+                {snapshotTaken
+                  ? 'A snapshot was taken in this session, so this disk can be restored from it.'
+                  : 'No snapshot was taken here. Without one, the data on this disk cannot be recovered.'}
+              </span>
+            </p>
+          )}
+
+          <label className="block text-xs text-slate-400">
+            Type <span className="font-mono text-slate-200">{name}</span> to confirm
+            <input
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+              spellCheck="false"
+              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100 outline-none focus:border-rose-500/60"
+            />
+          </label>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={run}
+              disabled={!nameMatches || state === 'running'}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+            >
+              {state === 'running'
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Deleting…</>
+                : <><Trash2 className="h-3.5 w-3.5" />Delete permanently</>}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setOpen(false); setTyped(''); setError(''); setState('idle'); }}
+              disabled={state === 'running'}
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:text-white disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {state === 'failed' && (
+        <p className="mt-3 flex gap-1.5 rounded-lg bg-rose-500/10 p-2.5 text-xs leading-relaxed text-rose-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Nothing was deleted.
+            <span className="mt-0.5 block text-rose-200/80">{error}</span>
+          </span>
+        </p>
+      )}
+    </section>
+  );
+}
+
 /** The right-hand panel: why this is a finding, and what removing it saves. */
-function Detail({ item, currency, tenantId }) {
+function Detail({ item, currency, tenantId, verdict, checking, onDeleted }) {
+  const canAdmin = useCanAdminister();
+  // Scoped to this panel, which the caller remounts per resource id, so one
+  // disk's snapshot can never be reported against another's deletion.
+  const [snapshotTaken, setSnapshotTaken] = useState(false);
   const money = savings(item);
   const rows = evidenceRows(item);
   const tone = severityTone(item.severity);
@@ -299,8 +486,27 @@ function Detail({ item, currency, tenantId }) {
         <p className="mt-2.5 text-xs leading-relaxed text-slate-500">{money.basis}</p>
       </section>
 
-      {isSnapshotable(item) && (
-        <SnapshotButton key={item.id} item={item} tenantId={tenantId} />
+      {!canAdmin && (isSnapshotable(item) || isDeletable(item)) && <AdminOnlyNote className="block" />}
+
+      {canAdmin && isSnapshotable(item) && (
+        <SnapshotButton
+          key={`snap-${item.id}`}
+          item={item}
+          tenantId={tenantId}
+          onSnapshot={() => setSnapshotTaken(true)}
+        />
+      )}
+
+      {canAdmin && isDeletable(item) && (
+        <DeleteButton
+          key={`del-${item.id}`}
+          item={item}
+          tenantId={tenantId}
+          verdict={verdict}
+          checking={checking}
+          snapshotTaken={snapshotTaken}
+          onDeleted={onDeleted}
+        />
       )}
 
       <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
@@ -343,15 +549,39 @@ export default function Orphaned() {
     return next;
   });
 
+  // Whether this account may delete each finding, answered by Azure.
+  //
+  // Fetched for the selected resource only, rather than for every row up
+  // front: a permission lookup is a call against the tenant, and a page of
+  // findings nobody clicks would spend one per row for nothing. Keyed by
+  // resource id so switching back to a resource already checked is instant.
+  const [verdicts, setVerdicts] = useState({});
+  const [checkingId, setCheckingId] = useState('');
+  // Findings deleted in this session. Kept locally so the row disappears at
+  // once, rather than waiting for a rescan that costs a round trip to Azure.
+  const [removed, setRemoved] = useState(() => new Set());
+
+  const onDeleted = (deletedItem) => {
+    setRemoved((prev) => new Set(prev).add(deletedItem.id));
+    setPicked('');
+  };
+
   useEffect(() => {
     if (selectedTenantId && selectedSubscriptionIds.length > 0) loadOrphaned();
   }, [selectedTenantId, selectedSubscriptionIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A tenant change invalidates every answer: the same resource id under a
+  // different tenant is a different question, and a stale "allowed" is the one
+  // wrong answer that matters here.
+  useEffect(() => { setVerdicts({}); setRemoved(new Set()); }, [selectedTenantId]);
+
+
   const currency = orphanedData?.currency || 'INR';
   const all = useMemo(() => flatten(orphanedData), [orphanedData]);
   const shown = useMemo(
-    () => filterItems(all, { rule, severity, query, hideUnpriced }),
-    [all, rule, severity, query, hideUnpriced],
+    () => filterItems(all, { rule, severity, query, hideUnpriced })
+      .filter((i) => !removed.has(i.id)),
+    [all, rule, severity, query, hideUnpriced, removed],
   );
   const tree = useMemo(() => groupTree(shown, subscriptions), [shown, subscriptions]);
   const rules = useMemo(() => ruleOptions(all), [all]);
@@ -361,11 +591,43 @@ export default function Orphaned() {
     [shown],
   );
   const totalCost = useMemo(() => sumCost(shown), [shown]);
+  const item = selectedItem(shown, picked);
+
+  useEffect(() => {
+    if (!item || !selectedTenantId) return undefined;
+    const target = item;
+    if (!isDeletable(target) || verdicts[target.id]) return undefined;
+
+    let cancelled = false;
+    setCheckingId(target.id);
+    checkDeletable({ tenant_id: selectedTenantId, resource_ids: [target.id] })
+      .then((data) => {
+        if (cancelled) return;
+        const verdict = (data?.items || [])[0];
+        if (verdict) setVerdicts((prev) => ({ ...prev, [verdict.resource_id]: verdict }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // A failed lookup is not permission. Recorded as a refusal carrying
+        // the reason, so the button stays off and says why.
+        setVerdicts((prev) => ({
+          ...prev,
+          [target.id]: {
+            resource_id: target.id,
+            supported: true,
+            allowed: false,
+            reason: errorMessage(err),
+          },
+        }));
+      })
+      .finally(() => { if (!cancelled) setCheckingId(''); });
+
+    return () => { cancelled = true; };
+  }, [item, selectedTenantId, verdicts]);
 
   // Falling back to the first finding keeps the panel populated as filters
   // change. A selection that no longer exists silently resolving to nothing
   // would leave the reader staring at an empty pane with no clue why.
-  const item = shown.find(i => i.id === picked) || shown[0] || null;
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5 p-6">
@@ -459,7 +721,7 @@ export default function Orphaned() {
                 {orphanedData.cost_errors.map(e => (
                   <li key={e.subscription_id} className="text-xs text-slate-500">
                     <span className="text-slate-400">
-                      {e.subscription_name || e.subscription_id}
+                      {e.subscription_name || 'Unnamed subscription'}
                     </span>
                     {' — '}{e.error || 'no reason given'}
                     {e.retryable && ' This one is worth trying again.'}
@@ -615,7 +877,15 @@ export default function Orphaned() {
                   a long estate, which is when it is actually being read. */}
               <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 xl:sticky xl:top-6">
                 {item ? (
-                  <Detail item={item} currency={currency} tenantId={selectedTenantId} />
+                  <Detail
+                    key={item.id}
+                    item={item}
+                    currency={currency}
+                    tenantId={selectedTenantId}
+                    verdict={verdicts[item.id]}
+                    checking={checkingId === item.id}
+                    onDeleted={onDeleted}
+                  />
                 ) : (
                   <p className="flex items-center gap-2 py-10 text-sm text-slate-500">
                     <Layers className="h-4 w-4" />
@@ -627,9 +897,10 @@ export default function Orphaned() {
           )}
 
           <p className="text-xs leading-relaxed text-slate-600">
-            This report is read-only. Delete resources from the Azure portal or your
-            infrastructure-as-code, so the change is recorded where the rest of your
-            estate is managed.
+            Deleting here uses your own Azure permissions and is recorded in this
+            workspace&rsquo;s change history. Azure refuses anything your role does not
+            allow, and resource locks are checked first. Stopped virtual machines are
+            reported but never deleted from this page.
           </p>
         </>
       )}

@@ -450,7 +450,8 @@ async def list_access_ignores(
 @router.post("/access-ignores", status_code=204)
 async def accept_access_finding(
     body: AcceptRequest,
-    current_user: dict = Depends(get_current_user),
+    # Hiding a finding hides it for the whole workspace, so it is an admin act.
+    current_user: dict = Depends(require_workspace_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """
@@ -476,7 +477,7 @@ async def restore_access_finding(
     tenant_id: str = Query(...),
     principal_id: str = Query(...),
     finding_key: str = Query(""),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_workspace_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """Put an accepted finding back in the list."""

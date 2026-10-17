@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { ADMIN_ITEM, SECTIONS, sectionForPath, sectionsFor } from '../src/nav';
+import { SECTIONS, sectionForPath, sectionsFor } from '../src/nav';
 
 const allItems = (sections) => sections.flatMap(s => s.items);
 
@@ -44,23 +44,13 @@ describe('structure', () => {
   });
 });
 
-describe('admin', () => {
-  it('hides the Admin Center from ordinary users', () => {
-    const routes = allItems(sectionsFor(false)).map(i => i.to);
-    expect(routes).not.toContain('/admin');
-  });
-
-  it('shows it to administrators, under Account', () => {
-    const account = sectionsFor(true).find(s => s.key === 'account');
-    expect(account.items).toContainEqual(ADMIN_ITEM);
-  });
-
-  it('leaves the shared definition untouched when adding it', () => {
-    // sectionsFor runs on every render. Mutating SECTIONS would append the
-    // Admin Center again and again until the sidebar filled with copies.
-    sectionsFor(true);
-    sectionsFor(true);
-    expect(allItems(SECTIONS).filter(i => i.to === '/admin')).toHaveLength(0);
+describe('settings', () => {
+  it('is one page: tenants, team and admin tools live together on /settings', () => {
+    const settings = SECTIONS.find(s => s.key === 'account');
+    expect(settings.title).toBe('Settings');
+    expect(settings.items.map(i => i.to)).toEqual(['/settings']);
+    expect(sectionsFor(true)).toBe(SECTIONS);
+    expect(allItems(SECTIONS).map(i => i.to)).not.toContain('/admin');
   });
 });
 
@@ -105,8 +95,5 @@ describe('sectionForPath', () => {
     expect(sectionForPath('/nowhere')).toBeNull();
   });
 
-  it('finds the admin page only when the user is an administrator', () => {
-    expect(sectionForPath('/admin', false)).toBeNull();
-    expect(sectionForPath('/admin', true).key).toBe('account');
-  });
+
 });

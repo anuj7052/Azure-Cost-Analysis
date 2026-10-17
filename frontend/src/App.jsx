@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider, RequireAuth, LoginScreen } from './auth/AuthProvider';
 import { BillingTopbar } from './components/billing-ui/workspace';
 import Sidebar from './components/Layout/Sidebar';
+import CostNavigation from './components/Layout/CostNavigation';
 import Topbar from './components/Layout/Topbar';
 import GlobalProgress from './components/Common/GlobalProgress';
 import AssistantWidget from './components/Assistant/AssistantWidget';
@@ -28,21 +29,14 @@ const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
 const Boq            = lazy(() => import('./pages/Boq'));
 const AzureBilling = lazy(() => import('./pages/AzureBilling'));
 const BillingDashboard = lazy(() => import('./pages/BillingDashboard'));
-const Commitments    = lazy(() => import('./pages/Commitments'));
-const Deploy         = lazy(() => import('./pages/Deploy'));
-const Admin          = lazy(() => import('./pages/Admin'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const AccessIdentity     = lazy(() => import('./pages/AccessIdentity'));
 const NetworkVisualizer  = lazy(() => import('./pages/NetworkVisualizer'));
-const AccessHistory      = lazy(() => import('./pages/AccessHistory'));
 const Advisor            = lazy(() => import('./pages/Advisor'));
 const Defender           = lazy(() => import('./pages/Defender'));
 const PolicyGovernance   = lazy(() => import('./pages/PolicyGovernance'));
 const Estate             = lazy(() => import('./pages/Estate'));
 const SecurityHome       = lazy(() => import('./pages/SecurityHome'));
-const AccountHome        = lazy(() => import('./pages/AccountHome'));
-const ApiCatalog         = lazy(() => import('./pages/ApiCatalog'));
-const Team               = lazy(() => import('./pages/Team'));
 // Kept out of the authenticated bundle: it is the one page that is only ever
 // seen by people who have not signed in.
 const Landing            = lazy(() => import('./pages/Landing'));
@@ -273,6 +267,7 @@ function AppShell() {
       <div className="flex-1 flex flex-col min-w-0">
         {location.pathname.startsWith('/azure-billing') ? <BillingTopbar /> : <Topbar />}
         <main className="flex-1 overflow-y-auto">
+          <CostNavigation />
           <div key={location.pathname} className="animate-fade-up">
           <Suspense fallback={<PageLoader />}>
           <Routes>
@@ -298,12 +293,15 @@ function AppShell() {
             <Route path="/azure-billing" element={<AzureBilling />} />
             <Route path="/azure-billing/settings" element={<AzureBilling />} />
             <Route path="/azure-billing/dashboard" element={<BillingDashboard />} />
-            <Route path="/commitments" element={<Commitments />} />
-            <Route path="/deploy" element={<Deploy />} />
+            {/* Commitments was removed; old links land on the Cost dashboard. */}
+            <Route path="/commitments" element={<Navigate to="/" replace />} />
+            {/* Deployment Assistant was removed; old links land on Build. */}
+            <Route path="/deploy" element={<Navigate to="/provision" replace />} />
               <Route path="/estate" element={<Estate />} />
               <Route path="/security" element={<SecurityHome />} />
-              <Route path="/account" element={<AccountHome />} />
-              <Route path="/apis" element={<ApiCatalog />} />
+              {/* Overview, Team, API Catalog and Admin now live on one Settings page. */}
+              <Route path="/account" element={<Navigate to="/settings" replace />} />
+              <Route path="/apis" element={<Navigate to="/settings" replace />} />
               <Route path="/access-identity" element={<AccessIdentity />} />
               <Route path="/network" element={<NetworkVisualizer />} />
               {/* The two pages these paths used to serve are now tabs. The
@@ -314,14 +312,14 @@ function AppShell() {
                   right account. */}
               <Route path="/access-optimization" element={<LegacyAccessRedirect view="optimization" />} />
               <Route path="/role-assignments" element={<LegacyAccessRedirect view="assignments" />} />
-              <Route path="/access-history" element={<AccessHistory />} />
+              <Route path="/access-history" element={<LegacyAccessRedirect view="history" />} />
               <Route path="/advisor" element={<Advisor />} />
               <Route path="/defender" element={<Defender />} />
               <Route path="/policy" element={<PolicyGovernance />} />            <Route path="/settings" element={<Settings />} />
-            <Route path="/team" element={<Team />} />
+            <Route path="/team" element={<Navigate to="/settings#team" replace />} />
             {/* Rendered only for admins. The backend enforces this too, so
                 hiding the route is convenience, not the security boundary. */}
-            {me?.is_admin && <Route path="/admin" element={<Admin />} />}
+            <Route path="/admin" element={<Navigate to="/settings#admin" replace />} />
           </Routes>
           </Suspense>
           </div>

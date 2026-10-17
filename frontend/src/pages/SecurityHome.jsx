@@ -646,7 +646,7 @@ export default function SecurityHome() {
                         ? 'reading history…'
                         : snapshot
                           ? `${snapshot.finding_count} findings · ${snapshot.high_count} high · ${when(snapshot.captured_at)}`
-                          : 'no snapshot yet — open the page and press Run scan'}
+                          : 'no snapshot yet — open the page and press Load data'}
                     </span>
                     <ArrowRight className="h-4 w-4 shrink-0 text-slate-700 transition group-hover:translate-x-0.5 group-hover:text-blue-400" />
                   </Link>

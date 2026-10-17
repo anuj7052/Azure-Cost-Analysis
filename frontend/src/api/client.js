@@ -61,7 +61,7 @@ const SLOW_ROUTES = [
   '/services', '/activity', '/subscriptions', '/security', '/anomalies',
   // One Resource Graph query across every selected subscription, projecting
   // full `properties`. On a large estate it is the slowest read in the app.
-  '/network/topology', '/commitments',
+  '/network/topology',
 ];
 const SLOW_TIMEOUT = 120000;
 
@@ -638,6 +638,34 @@ export const fetchCostRows = (body) =>
 export const fetchServiceResources = (body) =>
   api.post('/costs/resources', body).then(r => r.data);
 
+/** Daily totals split by resource group, meter, subscription or pricing model. */
+export const fetchDailySplit = (body) =>
+  api.post('/costs/daily-split', body).then(r => r.data);
+
+/** Resource groups with every resource billed in them and RI / PAYG / ASR tags. */
+export const fetchResourceGroupResources = (body) =>
+  api.post('/costs/resource-groups', body).then(r => r.data);
+
+/** Every resource billed on one day: { date, currency, total, resources[] }. */
+export const fetchDayResources = (body) =>
+  api.post('/costs/day-resources', body).then(r => r.data);
+
+/** Dated sticky notes on cost activity, shared within the workspace. */
+export const listCostNotes = ({ tenant_id, from_date, to_date, subscription_ids = [] }) =>
+  api.get('/cost-notes', {
+    params: { tenant_id, from_date, to_date, subscription_ids },
+    paramsSerializer: { indexes: null },
+  }).then(r => r.data.notes);
+
+export const createCostNote = (body) =>
+  api.post('/cost-notes', body).then(r => r.data);
+
+export const updateCostNote = (id, body) =>
+  api.patch(`/cost-notes/${encodeURIComponent(id)}`, body).then(r => r.data);
+
+export const deleteCostNote = (id) =>
+  api.delete(`/cost-notes/${encodeURIComponent(id)}`);
+
 export const fetchRgCosts = (body) =>
   api.post('/costs/rg', body).then(r => r.data);
 
@@ -667,16 +695,6 @@ export const fetchAnomalyHistory = (tenantId, anomalyKey) =>
  */
 export const fetchPricingModel = (body) =>
   api.post('/costs/pricing-model', body).then(r => r.data);
-
-/**
- * Reservations and savings plans: what is committed, how much of it is being
- * used, what lapses soon, and what Azure suggests buying.
- *
- * One call rather than four because the page is meaningless in pieces -- a
- * utilisation figure without the cost beside it cannot be acted on.
- */
-export const fetchCommitments = (body) =>
-  api.post('/commitments', body).then(r => r.data);
 
 /**
  * Which public IPs and resource groups produced the data-transfer charge.
@@ -1099,6 +1117,29 @@ export const snapshotDisk = (body) =>
   }).then(r => r.data);
 
 /**
+ * Whether the signed-in account could delete each of these findings.
+ *
+ * Asked in one batch rather than per row: the orphaned page shows many
+ * findings at once, and a permission lookup per card would be a burst of
+ * calls against the tenant every time somebody opens it.
+ */
+export const checkDeletable = (body) =>
+  api.post('/actions/resource/deletable', body).then(r => r.data);
+
+/**
+ * Remove one flagged resource.
+ *
+ * Carries an idempotency key for the same reason the snapshot call does, and
+ * here it matters more: without one, a retried request -- a double click, a
+ * proxy retry, a phone losing signal mid-POST -- is a second deletion attempt
+ * against an estate where the first one already succeeded.
+ */
+export const deleteResource = (body) =>
+  api.post('/actions/resource/delete', body, {
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  }).then(r => r.data);
+
+/**
  * Whether the signed-in account currently holds tenant-wide elevated access.
  *
  * Asked of Azure every time rather than cached. An elevation can be removed
@@ -1162,31 +1203,6 @@ export const uploadBoq = (file) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data);
 };
-
-/** Recover the Azure resources an estimate describes, without deploying them. */
-export const planBoq = (file, resourceGroup) => {
-  const form = new FormData();
-  form.append('file', file);
-  form.append('resource_group', resourceGroup);
-  return api.post('/boq/plan', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }).then(r => r.data);
-};
-
-/** Generate a Bicep or Terraform template for the estimate. */
-export const generateIac = (file, format, resourceGroup) => {
-  const form = new FormData();
-  form.append('file', file);
-  form.append('format', format);
-  form.append('resource_group', resourceGroup);
-  return api.post('/boq/generate', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }).then(r => r.data);
-};
-
-/** Chat about the estimate. The parsed BOQ is echoed back so nothing is stored. */
-export const chatAboutBoq = (body) =>
-  api.post('/boq/chat', body).then(r => r.data);
 
 export default api;
 

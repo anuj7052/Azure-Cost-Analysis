@@ -1353,7 +1353,7 @@ export function attentionFindings({
       key: findingKey(['access', finding.principal_id, finding.kind]),
       severity: 'high',
       source: 'Access Optimisation',
-      resource: finding.principal_name || finding.principal_id || NOT_AVAILABLE,
+      resource: finding.principal_name || NOT_AVAILABLE,
       resourceId: finding.scope || null,
       subscriptionId: finding.subscription_id || null,
       region: null,
@@ -1483,7 +1483,7 @@ export function subscriptionHealth({
 
     return {
       subscriptionId: id,
-      name: nameOf.get(id) || id,
+      name: nameOf.get(id) || 'Unnamed subscription',
       resources: haveInventory ? (resourceCount.get(id) || 0) : null,
       running: haveCompute ? (vmRunning.get(id) || 0) : null,
       cost,

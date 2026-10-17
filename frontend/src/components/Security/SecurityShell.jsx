@@ -3,6 +3,7 @@ import { useMsal } from '@azure/msal-react';
 import { useAppStore } from '../../store/useAppStore';
 import { tenantLabel } from '../../utils/tenantName';
 import { FAILURE, when } from './securityData';
+import { SubscriptionName } from '../Common/Identity';
 
 /**
  * Shared pieces for the Access & Security pages.
@@ -197,7 +198,7 @@ export function Coverage({ coverage, errors = [] }) {
             <div key={i} className="flex items-start gap-2.5 border border-slate-800 bg-slate-800/30 rounded-xl p-3">
               <Lock size={14} className="text-amber-400 shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <p className="text-xs font-mono text-slate-400 truncate">{e.subscription_id}</p>
+                <p className="text-xs text-slate-300 truncate"><SubscriptionName id={e.subscription_id} /></p><p className="text-[10px] font-mono text-slate-500 truncate">{e.subscription_id}</p>
                 <p className="text-xs text-slate-300 mt-1 leading-relaxed">{e.message}</p>
                 {e.permission && (
                   <p className="text-[11px] text-amber-300/80 mt-1">Needs: {e.permission}</p>

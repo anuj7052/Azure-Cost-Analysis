@@ -33,7 +33,6 @@ const LABELS = [
   ['/subscriptions', 'Listing subscriptions'],
   ['/bandwidth', 'Reading data transfer costs'],
   ['/anomalies', 'Looking for unusual spend'],
-  ['/commitments', 'Reading reservations and savings plans'],
   ['/orphaned', 'Looking for unattached resources'],
   ['/network/topology', 'Mapping the network'],
   ['/activity', 'Reading the Azure Activity Log'],

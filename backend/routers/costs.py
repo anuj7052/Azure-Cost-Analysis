@@ -46,6 +46,8 @@ log = logging.getLogger(__name__)
 
 class BillingCategoryRequest(CostQueryRequest):
     category: Literal["payg", "ri", "asr"] = "payg"
+    # Daily is used for a single selected month so the chart can show days.
+    granularity: Literal["Monthly", "Daily"] = "Monthly"
 
 
 @router.post("/billing-category")
@@ -66,7 +68,7 @@ async def get_billing_category(
             token=token, subscription_id=sub_id, months=body.months,
             from_date=body.from_date, to_date=body.to_date,
             group_by=["ResourceId", "ServiceName", "Meter"],
-            granularity="Monthly",
+            granularity=body.granularity,
             filters={"PricingModel": model} if model else {},
         )
         return [{**record, "SubscriptionId": sub_id} for record in records]
@@ -74,7 +76,10 @@ async def get_billing_category(
     # Never retry an unsupported PricingModel query without its filter: that
     # would label the entire bill as PAYG or RI.
     records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
-    if not records and errors:
+    # Only fail when no subscription answered. RI and DR / ASR are often empty
+    # for most subscriptions; an empty answer from those is a real zero, and
+    # the failed ones stay named in coverage rather than hiding the rest.
+    if errors and len(errors) >= len(set(body.subscription_ids)):
         raise HTTPException(status_code=502, detail=summarise_errors(errors, "billing category detail"))
     try:
         result = category_detail(records, body.category)
@@ -227,6 +232,236 @@ async def get_service_resources(
     months = sorted({r.month for r in rows})
     currency = next((r.get("Currency") for r in records if r.get("Currency")), "USD")
     return CostRowsResponse(rows=rows, months=months, currency=currency, errors=errors)
+
+
+class DayResourcesRequest(BaseModel):
+    """Every resource billed on one calendar day."""
+    tenant_id: str
+    subscription_ids: list[str] = Field(min_length=1)
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@router.post("/day-resources")
+async def get_day_resources(
+    body: DayResourcesRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    What one day's amount was spent on, resource by resource.
+
+    One Cost Management query per subscription for a single-day window, grouped
+    by ResourceId and service. Charges Azure does not attribute to a resource
+    (support plans, marketplace, some reservations) come back with an empty id
+    and are listed as unattributed rather than dropped, so the list adds up to
+    the day's total.
+    """
+    try:
+        day = datetime.strptime(body.date, "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Use a YYYY-MM-DD date.") from exc
+    token = await _get_token(body.tenant_id, current_user, db)
+
+    async def read_sub(sub_id: str):
+        records = await query_costs(
+            token=token, subscription_id=sub_id, months=1,
+            group_by=["ResourceId", "ServiceName"], granularity="Monthly",
+            from_date=day, to_date=day,
+        )
+        return [{**record, "SubscriptionId": sub_id} for record in records]
+
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+    if not records and errors:
+        raise HTTPException(status_code=502, detail=summarise_errors(errors, "day detail"))
+
+    names = subscription_names(body.tenant_id, token) or {}
+    resources: dict[tuple, dict] = {}
+    for row in to_cost_rows(records):
+        resource_id = row.get("resource_id") or ""
+        key = (row.get("subscription_id") or "", resource_id.lower() or f"unattributed:{row.get('service')}")
+        item = resources.setdefault(key, {
+            "resource_id": resource_id,
+            "resource_name": row.get("resource_name") or ("Unattributed charges" if not resource_id else resource_id.rsplit("/", 1)[-1]),
+            "resource_group": row.get("resource_group") or "",
+            "subscription_id": row.get("subscription_id") or "",
+            "subscription_name": "",
+            "services": [],
+            "cost": 0.0,
+        })
+        item["cost"] += float(row.get("cost") or 0.0)
+        service = row.get("service") or "Unknown"
+        if service not in item["services"]:
+            item["services"].append(service)
+    for item in resources.values():
+        item["cost"] = round(item["cost"], 6)
+        item["subscription_name"] = names.get(item["subscription_id"], "")
+    items = sorted(resources.values(), key=lambda item: -item["cost"])
+    currency = next((r.get("Currency") for r in records if r.get("Currency")), "USD")
+    return {
+        "date": day,
+        "currency": currency,
+        "total": round(sum(item["cost"] for item in items), 6),
+        "resources": items,
+        "coverage": build_coverage(body.subscription_ids, errors),
+        "errors": errors,
+    }
+
+
+DAILY_SPLITS = {
+    "resource_group": "ResourceGroupName",
+    "meter": "Meter",
+    "subscription": None,
+    "pricing_model": "PricingModel",
+}
+PRICING_LABELS = {"ondemand": "Pay-as-you-go", "reservation": "Reserved (RI)", "savingsplan": "Savings plan", "spot": "Spot"}
+
+
+class DailySplitRequest(BaseModel):
+    """Daily cost split by one dimension the plain daily endpoint cannot give."""
+    tenant_id: str
+    subscription_ids: list[str] = Field(min_length=1)
+    months: int = Field(default=1, ge=1, le=6)
+    from_date: str | None = None
+    to_date: str | None = None
+    split_by: Literal["resource_group", "meter", "subscription", "pricing_model"]
+
+
+def _day_key(record: dict) -> str:
+    raw = str(record.get("UsageDate") or record.get("Date") or "")
+    return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}" if len(raw) == 8 and raw.isdigit() else raw[:10]
+
+
+@router.post("/daily-split")
+async def get_daily_split(
+    body: DailySplitRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Daily totals split by resource group, meter, subscription or pricing model."""
+    token = await _get_token(body.tenant_id, current_user, db)
+    dimension = DAILY_SPLITS[body.split_by]
+
+    async def read_sub(sub_id):
+        records = await query_costs(
+            token=token, subscription_id=sub_id, months=body.months,
+            group_by=[dimension] if dimension else ["ServiceName"], granularity="Daily",
+            from_date=body.from_date, to_date=body.to_date,
+        )
+        return [{**record, "SubscriptionId": sub_id} for record in records]
+
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+    if not records and errors:
+        raise HTTPException(status_code=502, detail=summarise_errors(errors, "daily split"))
+    names = subscription_names(body.tenant_id, token) or {}
+    days: dict[str, dict] = {}
+    currency = "USD"
+    for record in records:
+        cost = float(record.get("PreTaxCost") or record.get("Cost") or 0.0)
+        if body.split_by == "subscription":
+            key = names.get(record["SubscriptionId"]) or record["SubscriptionId"]
+        elif body.split_by == "pricing_model":
+            raw = str(record.get("PricingModel") or "")
+            key = PRICING_LABELS.get(raw.lower(), raw or "Not reported")
+        elif body.split_by == "resource_group":
+            key = str(record.get(dimension) or "") or "No resource group"
+        else:
+            key = str(record.get(dimension) or "") or "Not reported"
+        day = days.setdefault(_day_key(record), {"total": 0.0, "split": {}})
+        day["total"] += cost
+        day["split"][key] = day["split"].get(key, 0.0) + cost
+        currency = record.get("Currency") or currency
+    return {
+        "split_by": body.split_by,
+        "currency": currency,
+        "days": [{"date": d, "total": round(v["total"], 4), "split": {k: round(c, 4) for k, c in v["split"].items()}} for d, v in sorted(days.items())],
+        "coverage": build_coverage(body.subscription_ids, errors),
+        "errors": errors,
+    }
+
+
+class GroupResourcesRequest(BaseModel):
+    tenant_id: str
+    subscription_ids: list[str] = Field(min_length=1)
+    months: int = Field(default=1, ge=1, le=24)
+    from_date: str | None = None
+    to_date: str | None = None
+
+
+@router.post("/resource-groups")
+async def get_resource_group_resources(
+    body: GroupResourcesRequest,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Every resource group with every resource billed inside it, and how each was
+    paid for (Azure PricingModel) plus DR / ASR where Azure names Site Recovery.
+    Charges Azure bills at subscription level have no group and are kept,
+    labelled, so the groups add up to the bill.
+    """
+    from services.billing_categories import is_site_recovery
+
+    token = await _get_token(body.tenant_id, current_user, db)
+
+    async def read_sub(sub_id):
+        records = await query_costs(
+            token=token, subscription_id=sub_id, months=body.months,
+            group_by=["ResourceId", "ServiceName", "PricingModel"], granularity="Monthly",
+            from_date=body.from_date, to_date=body.to_date,
+        )
+        return [{**record, "SubscriptionId": sub_id} for record in records]
+
+    records, errors = await gather_by_subscription(body.subscription_ids, read_sub)
+    if not records and errors:
+        raise HTTPException(status_code=502, detail=summarise_errors(errors, "resource groups"))
+    names = subscription_names(body.tenant_id, token) or {}
+    groups: dict[tuple, dict] = {}
+    currency = "USD"
+    for record in records:
+        cost = float(record.get("PreTaxCost") or record.get("Cost") or 0.0)
+        resource_id = str(record.get("ResourceId") or "")
+        parts = resource_id.split("/")
+        rg = next((parts[i + 1] for i, p in enumerate(parts[:-1]) if p.lower() == "resourcegroups"), "")
+        sub = record["SubscriptionId"]
+        group = groups.setdefault((sub, rg.lower()), {
+            "name": rg or "No resource group",
+            "subscription_level": not rg,
+            "subscription_id": sub,
+            "subscription_name": names.get(sub, ""),
+            "cost": 0.0, "types": set(), "resources": {},
+        })
+        model = PRICING_LABELS.get(str(record.get("PricingModel") or "").lower())
+        tags = {"ri" if model == "Reserved (RI)" else "payg" if model == "Pay-as-you-go" else "sp" if model == "Savings plan" else "spot" if model == "Spot" else None}
+        if is_site_recovery(record):
+            tags.add("asr")
+        tags.discard(None)
+        key = resource_id.lower() or f"service:{record.get('ServiceName')}"
+        item = group["resources"].setdefault(key, {
+            "resource_id": resource_id,
+            "name": parts[-1] if resource_id else f"{record.get('ServiceName') or 'Charges'} (no single resource)",
+            "type": "/".join(parts[6:8]) if len(parts) > 7 else "",
+            "services": [], "types": set(), "cost": 0.0,
+        })
+        item["cost"] += cost
+        item["types"] |= tags
+        service = record.get("ServiceName") or "Unknown"
+        if service not in item["services"]:
+            item["services"].append(service)
+        group["cost"] += cost
+        group["types"] |= tags
+        currency = record.get("Currency") or currency
+    order = ["ri", "payg", "sp", "spot", "asr"]
+    result = []
+    for group in groups.values():
+        resources = sorted(group["resources"].values(), key=lambda r: -r["cost"])
+        for r in resources:
+            r["cost"] = round(r["cost"], 4)
+            r["types"] = [t for t in order if t in r["types"]]
+        result.append({**group, "cost": round(group["cost"], 4), "types": [t for t in order if t in group["types"]],
+                       "resource_count": len(resources), "resources": resources})
+    result.sort(key=lambda g: -g["cost"])
+    return {"currency": currency, "total": round(sum(g["cost"] for g in result), 4), "groups": result,
+            "coverage": build_coverage(body.subscription_ids, errors), "errors": errors}
 
 
 class PricingModelRequest(BaseModel):

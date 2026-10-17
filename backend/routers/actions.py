@@ -17,6 +17,7 @@ the catalogue for completeness and were deliberately not rewritten to route
 through here: they are covered by their own tests, and moving three working
 destructive features at once to prove a pattern is a bad trade.
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -30,12 +31,23 @@ from models.schemas import (
     ActionCatalogueResponse,
     ActionRecord,
     ActionHistoryResponse,
+    DeletableQuery,
+    DeletableResponse,
+    DeletableVerdict,
+    DeleteResourceRequest,
     ElevateAccessRequest,
     RemoveElevationRequest,
     SnapshotRequest,
     TagRequest,
 )
-from services import actions, disk_ops, elevate_access, tagging
+from services import (
+    actions,
+    disk_ops,
+    elevate_access,
+    rbac_permissions,
+    resource_delete,
+    tagging,
+)
 from services.token_resolver import authorize_subscriptions, resolve_tenant_token
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
@@ -277,6 +289,195 @@ async def snapshot_disk(
                 resource_kind="Microsoft.Compute/disks",
                 request={"snapshot_name": name},
                 previous_state=previous,
+                idempotency_key=idempotency_key,
+            )
+        except actions.ActionError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    return _record(row)
+
+
+@router.post("/resource/deletable", response_model=DeletableResponse)
+async def check_deletable(
+    body: DeletableQuery,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Whether this caller could delete each of these findings, and why not.
+
+    Read-only, and deliberately not admin-gated: this answers "would that
+    button work", and a viewer being told they lack the role is more useful
+    than a viewer being told nothing. The delete itself is gated.
+
+    Azure is asked per resource rather than per subscription because a role can
+    be assigned at any level, and a person who is Reader on a subscription may
+    still be Contributor on one resource group inside it. Asking at the
+    resource's own scope is what makes that come out right.
+    """
+    token = await resolve_tenant_token(body.tenant_id, current_user, db)
+    admin = bool(current_user.get("can_administer"))
+
+    async def verdict(client: httpx.AsyncClient, resource_id: str) -> DeletableVerdict:
+        spec, _parts, problem = resource_delete.classify(resource_id)
+        if spec is None:
+            return DeletableVerdict(
+                resource_id=resource_id, supported=False, reason=problem
+            )
+
+        base = DeletableVerdict(
+            resource_id=resource_id,
+            supported=True,
+            azure_permission=spec.permission,
+            consequence=spec.consequence,
+            recommend_snapshot=spec.rule == "unattached_disks",
+        )
+
+        if not admin:
+            # Answered before Azure is asked. A viewer's answer does not depend
+            # on their Azure role, and spending a permission lookup to tell
+            # them something already known would be a round trip for nothing.
+            return base.model_copy(update={
+                "allowed": False,
+                "reason": (
+                    "You have view access to this workspace. Ask the workspace "
+                    "owner or an administrator to remove resources."
+                ),
+            })
+
+        locks, lock_error = await resource_delete.read_locks(client, token, resource_id)
+        if lock_error:
+            # An unreadable lock list is not permission to proceed. Azure would
+            # refuse the delete anyway, and saying so now is kinder than saying
+            # it after somebody has typed a confirmation.
+            return base.model_copy(update={"allowed": False, "reason": lock_error})
+
+        lock = resource_delete.blocking_lock(locks)
+        if lock:
+            return base.model_copy(update={
+                "allowed": False,
+                "locked": True,
+                "lock_name": lock["name"],
+                "lock_level": lock["level"],
+                "lock_notes": lock["notes"],
+                "reason": (
+                    f"A {lock['level']} lock named '{lock['name']}' protects this "
+                    "resource. Remove the lock in Azure first."
+                ),
+            })
+
+        allowed, reason = await rbac_permissions.can_perform(
+            client, token, resource_id, spec.permission
+        )
+        return base.model_copy(update={"allowed": allowed, "reason": reason})
+
+    async with httpx.AsyncClient(timeout=rbac_permissions.REQUEST_TIMEOUT) as client:
+        # Bounded concurrency. A page of forty findings is forty permission
+        # lookups, and firing them all at once is how a tenant gets throttled
+        # by the product that is supposed to be reporting on its costs.
+        semaphore = asyncio.Semaphore(6)
+
+        async def bounded(resource_id: str) -> DeletableVerdict:
+            async with semaphore:
+                return await verdict(client, resource_id)
+
+        items = await asyncio.gather(*(bounded(r) for r in body.resource_ids))
+
+    return DeletableResponse(items=list(items))
+
+
+@router.post("/resource/delete", response_model=ActionRecord)
+async def delete_resource(
+    body: DeleteResourceRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    current_user: dict = Depends(require_workspace_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Remove one resource the orphan scan flagged as attached to nothing.
+
+    This is the only irreversible operation the platform performs, and it is
+    guarded four times over: the resource type must be on the allowlist, the
+    workspace role must permit changes, Azure's own permission check must pass
+    at the resource's scope, and no lock may protect it. Azure enforces the
+    third of those independently -- the call carries the caller's delegated
+    token -- so the check here exists to produce a sentence rather than a 403.
+    """
+    spec, parts, problem = resource_delete.classify(body.resource_id)
+    if spec is None:
+        raise HTTPException(status_code=400, detail=problem)
+
+    noun = spec.resource_type.rstrip("s").lower() if spec.resource_type.endswith("s") else spec.resource_type.lower()
+    action_spec = actions.get_spec(f"{noun}.delete")
+
+    # Checked before Azure is touched. `execute` checks again, but by then this
+    # endpoint would already have read the resource's locks -- and a caller who
+    # may not make the change should not learn about them either.
+    try:
+        actions.authorize(action_spec, current_user, confirmed=body.confirmation)
+    except actions.ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    subscription_id = body.subscription_id or parts["sub"]
+    token = await resolve_tenant_token(body.tenant_id, current_user, db)
+
+    allowed_subs = await authorize_subscriptions(token, body.tenant_id, [subscription_id])
+    if not allowed_subs:
+        raise HTTPException(
+            status_code=403, detail="This account cannot read that subscription."
+        )
+
+    # Rebuilt from checked parts rather than forwarding the caller's string, so
+    # the URL that reaches Azure is assembled from values this server validated.
+    resource_id = resource_delete.canonical_id(spec, parts)
+
+    async with httpx.AsyncClient(timeout=resource_delete.REQUEST_TIMEOUT) as client:
+        locks, lock_error = await resource_delete.read_locks(client, token, resource_id)
+        if lock_error:
+            raise HTTPException(status_code=502, detail=lock_error)
+
+        lock = resource_delete.blocking_lock(locks)
+        if lock:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"A {lock['level']} lock named '{lock['name']}' protects this "
+                    "resource. Remove the lock in Azure first."
+                    + (f" Note: {lock['notes']}" if lock["notes"] else "")
+                ),
+            )
+
+        permitted, reason = await rbac_permissions.can_perform(
+            client, token, resource_id, spec.permission
+        )
+        if not permitted:
+            raise HTTPException(status_code=403, detail=reason)
+
+        async def run():
+            ok, message, outcome = await resource_delete.delete_resource(
+                client, token, spec=spec, resource_id=resource_id
+            )
+            if not ok:
+                raise HTTPException(status_code=502, detail=message)
+            return outcome
+
+        try:
+            row = await actions.execute(
+                db,
+                spec=action_spec,
+                user=current_user,
+                tenant_id=body.tenant_id,
+                run=run,
+                confirmed=body.confirmation,
+                subscription_id=subscription_id,
+                resource_id=resource_id,
+                resource_name=body.resource_name or parts["name"],
+                resource_kind=f"{spec.provider}/{spec.resource_type}",
+                request={"rule": spec.rule, "permission": spec.permission},
+                # What was there, so the audit record means something later.
+                previous_state={
+                    "name": parts["name"],
+                    "resource_group": parts["rg"],
+                    "kind": f"{spec.provider}/{spec.resource_type}",
+                },
                 idempotency_key=idempotency_key,
             )
         except actions.ActionError as exc:

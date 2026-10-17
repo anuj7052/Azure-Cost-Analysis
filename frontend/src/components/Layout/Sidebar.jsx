@@ -15,7 +15,8 @@ import { sectionForPath, sectionsFor } from '../../nav';
  *
  * Three decisions hold this together:
  *
- * 1. Sections open on click, and the one containing the current page opens by
+ * 1. Cost links straight to its dashboard; its pages live in the workspace nav.
+ *    Other sections open on click, and the one containing the current page opens by
  *    itself, so navigating never leaves the user staring at a closed list with
  *    no idea where they are. A section the user deliberately closed stays
  *    closed — silently reopening it would fight them.
@@ -43,10 +44,10 @@ function initialCollapsed() {
 }
 
 const itemClass = ({ isActive }) =>
-  `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+  `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] ${
     isActive
-      ? 'bg-gradient-to-r from-blue-600/25 to-transparent text-blue-300 border border-blue-500/30 shadow-sm shadow-blue-950/20'
-      : 'text-slate-400 hover:bg-slate-800/80 hover:text-white'
+      ? 'border border-[#fdba74] bg-[#ffedd5] text-[#9a3412] shadow-sm'
+      : 'text-[#7c4a2d] hover:bg-[#ffedd5] hover:text-[#7c2d12]'
   }`;
 
 export default function Sidebar() {
@@ -102,7 +103,8 @@ export default function Sidebar() {
       )}
 
       <aside
-        className={`z-50 flex h-screen min-h-screen shrink-0 flex-col border-r border-slate-800 bg-slate-900/95 backdrop-blur-xl transition-transform duration-200 lg:sticky lg:inset-auto lg:top-0 lg:translate-x-0 lg:bg-slate-900/90 lg:transition-[width] ${
+        aria-label="Main sidebar"
+        className={`z-50 flex h-screen min-h-screen shrink-0 flex-col border-r border-[#fed7aa] bg-[#fff7ed] text-[#7c2d12] transition-transform duration-200 lg:sticky lg:inset-auto lg:top-0 lg:translate-x-0 lg:transition-[width] ${
           // Off-canvas below lg, an ordinary column from lg upwards.
           navOpen ? 'fixed inset-y-0 left-0 translate-x-0' : 'fixed inset-y-0 left-0 -translate-x-full'
         } ${
@@ -111,23 +113,23 @@ export default function Sidebar() {
           collapsed ? 'w-64 lg:w-[68px]' : 'w-64 lg:w-60'
         }`}
       >
-        <div className={`flex items-center gap-3 border-b border-slate-800 py-5 ${iconOnly ? 'px-5 lg:justify-center lg:px-3' : 'px-5'}`}>
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-950/40">
+        <div className={`flex items-center gap-3 border-b border-[#fed7aa] py-5 ${iconOnly ? 'px-5 lg:justify-center lg:px-3' : 'px-5'}`}>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#f97316] to-[#c2410c] shadow-sm">
           <svg viewBox="0 0 96 96" className="h-5 w-5 fill-[#fff]" aria-hidden="true">
             <path d="M33.4 6.4L10 73.8h19.3l13.6-36.1 14.1 25.2-10.2 10.9H66l17.8 17.7H96L57.3 6.4H33.4z" />
           </svg>
         </div>
         {!iconOnly && (
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold leading-tight tracking-tight text-white">Azure Cost</p>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-blue-400">Intelligence</p>
+            <p className="truncate text-sm font-bold leading-tight tracking-tight text-[#7c2d12]">Azure Cost</p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-[#9a3412]">Intelligence</p>
           </div>
         )}
         <button
           type="button"
           onClick={closeNav}
           aria-label="Close navigation"
-          className="-mr-1 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-800 hover:text-white lg:hidden"
+          className="-mr-1 rounded-lg p-1.5 text-[#9a3412] transition hover:bg-[#ffedd5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] lg:hidden"
         >
           <X className="h-5 w-5" />
         </button>
@@ -136,7 +138,7 @@ export default function Sidebar() {
       {/* min-h-0: without it this flex child refuses to shrink below its
           content, so a nav taller than the viewport overflows instead of
           scrolling and the last sections cannot be reached. */}
-      <nav className={`min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-contain py-4 ${iconOnly ? 'px-2' : 'px-3'}`}>
+      <nav aria-label="Main navigation" className={`min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-contain py-4 ${iconOnly ? 'px-2' : 'px-3'}`}>
         {sections.map((section) => {
           const isActive = activeSection?.key === section.key;
           const open = overrides[section.key] ?? isActive;
@@ -153,14 +155,30 @@ export default function Sidebar() {
                 end={section.hub === '/'}
                 title={section.title}
                 aria-label={section.title}
-                className={`relative flex h-11 w-full items-center justify-center rounded-lg transition-colors ${
-                  isActive ? 'bg-blue-600/20 text-blue-300' : 'text-slate-500 hover:bg-slate-800/80 hover:text-white'
+                onClick={closeNav}
+                aria-current={isActive ? 'page' : undefined}
+                className={`relative flex h-11 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] ${
+                  isActive ? 'bg-[#ffedd5] text-[#9a3412]' : 'text-[#7c4a2d] hover:bg-[#ffedd5] hover:text-[#7c2d12]'
                 }`}
               >
-                {isActive && <span className="absolute left-0 h-6 w-0.5 rounded-r bg-blue-400" />}
+                {isActive && <span className="absolute left-0 h-6 w-0.5 rounded-r bg-[#c2410c]" />}
                 <SectionIcon className="h-5 w-5" />
               </NavLink>
             );
+          }
+
+          if (section.flat) {
+            return <NavLink
+              key={section.key}
+              to={section.hub}
+              end
+              onClick={closeNav}
+              aria-current={isActive ? 'page' : undefined}
+              className={`${itemClass({ isActive })} min-h-10`}
+            >
+              <SectionIcon className="h-4 w-4 shrink-0" />
+              <span className="text-[11px] font-semibold uppercase tracking-wider">{section.title}</span>
+            </NavLink>;
           }
 
           return (
@@ -169,8 +187,8 @@ export default function Sidebar() {
                 type="button"
                 onClick={() => toggle(section.key, open)}
                 aria-expanded={open}
-                className={`group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${
-                  isActive ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
+                className={`group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] ${
+                  isActive ? 'text-[#7c2d12]' : 'text-[#7c4a2d] hover:bg-[#ffedd5] hover:text-[#7c2d12]'
                 }`}
               >
                 <SectionIcon className="h-4 w-4 shrink-0" />
@@ -180,7 +198,7 @@ export default function Sidebar() {
                 {/* A closed section still shows how much is inside, so nothing
                     feels hidden away. */}
                 {!open && (
-                  <span className="text-[10px] text-slate-600 group-hover:text-slate-500">
+                  <span className="text-[10px] text-[#9a3412]">
                     {section.items.length}
                   </span>
                 )}
@@ -190,7 +208,7 @@ export default function Sidebar() {
               </button>
 
               {open && (
-                <div className="mb-2 ml-4 mt-0.5 space-y-0.5 border-l border-slate-800 pl-2 animate-fade-in">
+                <div className="mb-2 ml-4 mt-0.5 space-y-0.5 border-l border-[#fed7aa] pl-2 animate-fade-in">
                   {section.items.map(item => (
                     <NavLink key={item.to} to={item.to} end={item.end || item.to === '/'} className={itemClass}>
                       <item.icon className="h-4 w-4 shrink-0" />
@@ -204,14 +222,14 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className={`border-t border-slate-800 py-3 ${iconOnly ? 'px-2' : 'px-3'}`}>
+      <div className={`border-t border-[#fed7aa] py-3 ${iconOnly ? 'px-2' : 'px-3'}`}>
         <button
           type="button"
           onClick={() => setRail(!collapsed)}
           aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
           title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
           /* Collapsing only means anything where the rail is a column. */
-          className={`hidden w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-800/80 hover:text-slate-300 lg:flex ${
+          className={`hidden w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-[#7c4a2d] transition-colors hover:bg-[#ffedd5] hover:text-[#7c2d12] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] lg:flex ${
             iconOnly ? 'justify-center px-0' : ''
           }`}
         >
@@ -220,7 +238,7 @@ export default function Sidebar() {
             : <><PanelLeftClose className="h-4 w-4 shrink-0" /><span>Collapse</span></>}
         </button>
         {!iconOnly && (
-          <p className="px-3 pt-2 text-[11px] text-slate-600">Cloudledger v1.0</p>
+          <p className="px-3 pt-2 text-[11px] text-[#9a3412]">Cloudledger v1.0</p>
         )}
       </div>
       </aside>

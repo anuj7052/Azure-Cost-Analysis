@@ -19,7 +19,7 @@ export default function AnomalyCard({ anomaly, subMap = {}, currency = 'INR' }) 
   };
 
   // Map subscription IDs to display names
-  const subNames = (subscription_ids || []).map(id => subMap[id] || id);
+  const subNames = (subscription_ids || []).map(id => subMap[id] || 'Unnamed subscription');
 
   return (
     <div className={`border rounded-xl p-4 ${colors[severity]}`}>

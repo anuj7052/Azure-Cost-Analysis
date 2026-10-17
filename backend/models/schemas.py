@@ -1191,3 +1191,80 @@ class SnapshotRequest(BaseModel):
         if ".." in v or "?" in v or "#" in v or "//" in v:
             raise ValueError("resource_id contains characters that are not allowed.")
         return v
+
+
+def _checked_arm_id(value: str) -> str:
+    """One ARM id, checked before it is ever put in a URL.
+
+    Shared by the delete request models for the same reason the validator above
+    exists: these strings are interpolated into management.azure.com paths, and
+    a traversal or a query fragment in one is how a request reaches an endpoint
+    nobody intended.
+    """
+    v = (value or "").strip()
+    if not v.startswith("/subscriptions/"):
+        raise ValueError("resource_id must be a full Azure resource id.")
+    if ".." in v or "?" in v or "#" in v or "//" in v:
+        raise ValueError("resource_id contains characters that are not allowed.")
+    return v
+
+
+class DeletableQuery(BaseModel):
+    """Ask whether a set of findings could be deleted by this caller.
+
+    A list rather than one id because the orphaned-resources page shows many
+    findings at once, and asking Azure once per row would be a burst of
+    permission lookups every time somebody opens the page.
+    """
+
+    tenant_id: str
+    resource_ids: List[str] = Field(default_factory=list, max_length=40)
+
+    @field_validator("resource_ids")
+    @classmethod
+    def _all_arm_ids(cls, value: List[str]) -> List[str]:
+        return [_checked_arm_id(v) for v in value]
+
+
+class DeletableVerdict(BaseModel):
+    """Whether one resource can be deleted, and if not, why not."""
+
+    resource_id: str
+    # Is this a type the platform will delete at all?
+    supported: bool = False
+    # Does Azure say this caller holds the delete permission?
+    allowed: bool = False
+    reason: str = ""
+    azure_permission: str = ""
+    consequence: str = ""
+    # A lock blocks the delete regardless of role, so it is reported separately
+    # from permission rather than folded into one "no".
+    locked: bool = False
+    lock_name: str = ""
+    lock_level: str = ""
+    lock_notes: str = ""
+    # Disks are the one type with a recovery path, and the UI says so.
+    recommend_snapshot: bool = False
+
+
+class DeletableResponse(BaseModel):
+    items: List[DeletableVerdict] = Field(default_factory=list)
+
+
+class DeleteResourceRequest(BaseModel):
+    """Remove one flagged resource.
+
+    `confirmation` is required by the action registry for anything
+    irreversible, and this is the only irreversible thing the platform does.
+    """
+
+    tenant_id: str
+    resource_id: str
+    subscription_id: str = ""
+    resource_name: str = ""
+    confirmation: bool = False
+
+    @field_validator("resource_id")
+    @classmethod
+    def _must_be_an_arm_id(cls, value: str) -> str:
+        return _checked_arm_id(value)

@@ -89,7 +89,22 @@ export function subscriptionLabel(id, names = {}) {
   if (!key) return '';
   const found = names[key.toLowerCase()];
   if (found) return found;
-  return isGuid(key) ? `Subscription ${shortId(key)}` : key;
+  // A raw GUID is never shown as a name: the id belongs under the name, small.
+  return isGuid(key) ? UNNAMED_SUBSCRIPTION : key;
+}
+
+export const UNNAMED_SUBSCRIPTION = 'Unnamed subscription';
+
+/** Name for an id using the store's subscription list directly. */
+export function subscriptionText(id, subscriptions = []) {
+  return subscriptionLabel(id, subscriptionNameMap(subscriptions));
+}
+
+/** Readable fallback for an ARM resource id: its last segment, never the full path. */
+export function resourceText(name, resourceId) {
+  if (name) return name;
+  const parts = String(resourceId || '').split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
 }
 
 /**
@@ -145,4 +160,10 @@ export function subscriptionNameMap(subscriptions = []) {
     if (id && name) map[id] = name;
   }
   return map;
+}
+
+/** A tenant's display name; a GUID stored as the name is never shown as one. */
+export function tenantText(name) {
+  const value = String(name || '').trim();
+  return value && !isGuid(value) ? value : 'Unnamed tenant';
 }

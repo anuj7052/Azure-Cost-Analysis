@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MISSING, CERTAIN, LIKELY, severityLabel, severityTone, FALLBACK_TONE,
-  methodLabel, methodHelp, flatten, sumCost, unpricedCount, groupTree,
-  ruleOptions, severityOptions, filterItems, savings, evidenceRows,
-  coverageNote, headline, isSnapshotable,
+  MISSING, CERTAIN, LIKELY, severityLabel, severityTone, FALLBACK_TONE, methodLabel, methodHelp, flatten, sumCost, unpricedCount, groupTree, ruleOptions, severityOptions, filterItems, savings, evidenceRows, coverageNote, headline, isSnapshotable, isDeletable, selectedItem,
 } from '../src/utils/orphaned';
 
 const item = (over = {}) => ({
@@ -208,9 +205,9 @@ describe('regrouping by who owns the bill', () => {
     expect(tree[0].name).toBe('Production');
   });
 
-  it('keeps the raw id rather than labelling it Unknown', () => {
-    // "Unknown" reads like a bug. The guid at least lets somebody look it up.
-    expect(groupTree(items)[0].name).toBe('s1');
+  it('never uses the raw id as a name, but keeps it for lookup', () => {
+    expect(groupTree(items)[0].name).toBe('Unnamed subscription');
+    expect(groupTree(items)[0].key).toBe('s1');
   });
 
   it('marks a missing resource group honestly', () => {
@@ -437,5 +434,61 @@ describe('the headline', () => {
   it('handles nothing', () => {
     expect(headline([])).toBe('Nothing matched.');
     expect(headline(null)).toBe('Nothing matched.');
+  });
+});
+
+describe('which finding the panel is showing', () => {
+  const rows = [
+    { id: '/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/disks/a' },
+    { id: '/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/disks/b' },
+  ];
+
+  it('falls back to the first row when nothing has been clicked', () => {
+    // The page opens with a resource already on screen. Anything that acts on
+    // "the selected resource" has to agree with that, or it acts on nothing --
+    // which is how the delete button ended up permanently disabled with no
+    // reason shown.
+    expect(selectedItem(rows, '')).toBe(rows[0]);
+  });
+
+  it('follows an explicit click', () => {
+    expect(selectedItem(rows, rows[1].id)).toBe(rows[1]);
+  });
+
+  it('falls back again when the picked row is gone', () => {
+    // Deleting the selected finding removes it from the list. The panel must
+    // move to whatever is left rather than showing a stale resource.
+    expect(selectedItem(rows, '/subscriptions/s/deleted')).toBe(rows[0]);
+  });
+
+  it('is null when there is nothing to show', () => {
+    expect(selectedItem([], '')).toBeNull();
+    expect(selectedItem(undefined, '')).toBeNull();
+  });
+});
+
+describe('what the delete button offers', () => {
+  const id = (type, name) =>
+    ({ id: `/subscriptions/s/resourceGroups/rg/providers/${type}/${name}` });
+
+  it('offers leftover infrastructure', () => {
+    expect(isDeletable(id('Microsoft.Compute/disks', 'd1'))).toBe(true);
+    expect(isDeletable(id('Microsoft.Network/publicIPAddresses', 'ip1'))).toBe(true);
+    expect(isDeletable(id('Microsoft.Web/serverfarms', 'plan1'))).toBe(true);
+  });
+
+  it('never offers a virtual machine', () => {
+    // A stopped VM is flagged by the scan but is not cleanup: deleting it
+    // destroys a machine somebody may intend to start again.
+    expect(isDeletable(id('Microsoft.Compute/virtualMachines', 'vm1'))).toBe(false);
+  });
+
+  it('never offers a resource group or a subscription', () => {
+    expect(isDeletable({ id: '/subscriptions/s/resourceGroups/rg' })).toBe(false);
+    expect(isDeletable({ id: '/subscriptions/s' })).toBe(false);
+  });
+
+  it('ignores casing, because Azure ids are inconsistent about it', () => {
+    expect(isDeletable(id('microsoft.compute/DISKS', 'd1'))).toBe(true);
   });
 });

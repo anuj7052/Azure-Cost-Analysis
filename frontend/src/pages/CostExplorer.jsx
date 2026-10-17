@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { TrendingUp, Layers, Bookmark, X, Search, Boxes, ChevronRight, GitCompareArrows, Network, RefreshCw } from 'lucide-react';
+import { TrendingUp, Layers, Bookmark, X, Search, Boxes, ChevronRight, GitCompareArrows, Network, RefreshCw, CalendarDays, SlidersHorizontal, RotateCcw } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { usePageRefresh } from '../store/usePageRefresh';
 import { useFilteredCosts } from '../hooks/useFilteredCosts';
@@ -18,12 +18,18 @@ import { monthByKey, servicesInMonth, unattributed } from '../utils/monthDrill';
 import { hasTrendFilters, monthsFromRows, monthsFromSummary, summaryFilterSupported, rowCoverage } from '../utils/trendFilter';
 import { groupsFromRows, groupsTotal } from '../utils/rgDrill';
 import ServiceBreakdownChart from '../components/Charts/ServiceBreakdownChart';
+import { Button as UiButton, Input as UiInput, NativeSelect, Label as UiLabel, TabsList } from '../components/shadcn';
+import { Card as SCard, CardContent as SCardContent } from '../components/billing-ui/card';
+import { SpendOverTime } from '../components/Charts/CostDashboardCharts';
+import { CostStrip } from '../components/Layout/CostNavigation';
+import { buildSeries } from '../utils/costDashboardSeries';
+import { GROUP_BY_OPTIONS, groupByLabel, groupedMonthPeriods, groupNeedsRows, pricingMonthPeriods } from '../utils/explorerGroupBy';
 import { formatAmount } from '../utils/currency';
 import { Amount } from '../components/Common/Amount';
 import { linearForecast, currentMonthKey } from '../utils/breakdown';
 import {
-  Button, Badge, Card, Panel, Metric, Tabs, SegmentedControl,
-  FilterBar, Select, DataTable, EmptyState, ErrorState, Callout, TableSkeleton,
+  Button, Badge, Panel, Metric, SegmentedControl,
+  Select, DataTable, EmptyState, ErrorState, Callout, TableSkeleton,
 } from '../components/ui';
 
 /*
@@ -45,6 +51,8 @@ const MonthVariance = lazy(() => import('./Compare'));
 const ResourceGroupsReport = lazy(() => import('./ResourceGroups'));
 const BandwidthTab = lazy(() => import('../components/Common/BandwidthTab'));
 const BillingCategoryDetails = lazy(() => import('../components/Charts/BillingCategoryDetails'));
+const DayDetails = lazy(() => import('../components/Charts/DayDetails'));
+const ResourceGroupResources = lazy(() => import('../components/Charts/ResourceGroupResources'));
 
 function TabLoading({ what }) {
   return <div role="status" className="p-6 text-sm text-slate-400">Loading {what}…</div>;
@@ -97,6 +105,7 @@ export default function CostExplorer() {
     costData, costLoading: costsPending, costError, loadCosts,
     activeServices, servicesError, loadServices,
     rowsData, rowsLoading: rowsPending, rowsError, loadCostRows,
+    pricingData, pricingLoading, loadPricing,
     selectedTenantId, selectedSubscriptionIds, subscriptions, months, dateKey, dateMode, fromDate, toDate, imported,
   } = useAppStore();
   const costLoading = costsPending && !costData;
@@ -113,8 +122,9 @@ export default function CostExplorer() {
   // variance (its own page until it moved here) and a quick total-vs-total read
   // that honours the filter bar above. Neither subsumes the other.
   const [compareMode, setCompareMode] = useState('full');
-  const [groupMode, setGroupMode] = useState('report');
+  const [groupMode, setGroupMode] = useState('resources');
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [groupBy, setGroupBy] = useState('service');
   const [views, setViews] = useState(readViews);
   // The month whose services are open under the trend chart. Empty means the
   // reader has not asked, which is not the same as a month with no services.
@@ -158,7 +168,9 @@ export default function CostExplorer() {
     include_reservation_context: true,
   }, Boolean(needsMonthly && usesServerFilters && selectedTenantId && subsKey));
   const usesMeterRows = trendFiltered && !summaryFilterSupported(filters) && !usesServerFilters;
-  const needsRows = (usesMeterRows && (quickCompare || (tab === 'trend' && timeline === 'monthly'))) || filteredGroups;
+  const groupedTrend = tab === 'trend' && timeline === 'monthly' && groupBy !== 'none';
+  const needsRows = (usesMeterRows && (quickCompare || (tab === 'trend' && timeline === 'monthly'))) || filteredGroups
+    || (groupedTrend && !imported && groupNeedsRows(groupBy, costData?.months || []));
   const rowsLoading = (rowsPending && needsRows) || filteredResult.loading;
   const registerRefresh = usePageRefresh(s => s.register);
   const refreshFilteredCosts = filteredResult.refresh;
@@ -222,6 +234,14 @@ export default function CostExplorer() {
     [usesMeterRows, rows, monthKeys, monthly],
   );
 
+  useEffect(() => {
+    if (groupedTrend && groupBy === 'pricing_model' && !imported) loadPricing();
+  }, [groupedTrend, groupBy, imported, loadPricing, dateKey, subsKey]);
+  const groupedSeries = useMemo(() => (groupedTrend ? buildSeries(groupBy === 'pricing_model' ? pricingMonthPeriods(pricingData?.months || []) : groupedMonthPeriods({
+    groupBy, months: trendMonths, rows, filters, names: Object.fromEntries((subscriptions || []).map(sub => [sub.subscription_id, sub.display_name])),
+  })) : null), [groupedTrend, groupBy, trendMonths, rows, filters, subscriptions, pricingData]);
+  const groupedFromRows = groupedTrend && groupNeedsRows(groupBy, trendMonths);
+
   const forecast = useMemo(
     // A forecast drawn from a filtered slice would project a subset as if it
     // were the bill, so it is offered only on the whole estate.
@@ -270,7 +290,7 @@ export default function CostExplorer() {
 
   const subName = useMemo(() => {
     const map = new Map(subscriptions.map((s) => [s.subscription_id, s.display_name]));
-    return (id) => map.get(id) || id;
+    return (id) => map.get(id) || 'Unnamed subscription';
   }, [subscriptions]);
 
   /* ── saved views ────────────────────────────────────────────────────
@@ -284,7 +304,7 @@ export default function CostExplorer() {
     if (!name?.trim()) return;
     persistViews([
       ...views.filter((v) => v.name !== name.trim()),
-      { name: name.trim(), tab, timeline, compareMode, groupMode, filters, category: searchParams.get('category') || 'payg' },
+      { name: name.trim(), tab, timeline, compareMode, groupMode, filters, groupBy, category: searchParams.get('category') || 'payg' },
     ]);
   };
 
@@ -298,8 +318,9 @@ export default function CostExplorer() {
     });
     setTimeline(migrated.timeline);
     setCompareMode(v.compareMode === 'quick' ? 'quick' : 'full');
-    setGroupMode(v.groupMode === 'filtered' ? 'filtered' : 'report');
+    setGroupMode(['filtered', 'report'].includes(v.groupMode) ? v.groupMode : 'resources');
     setFilters({ ...EMPTY_FILTERS, ...(v.filters || {}) });
+    setGroupBy(GROUP_BY_OPTIONS.some(o => o.value === v.groupBy) ? v.groupBy : 'service');
   };
 
   if (!selectedTenantId || !selectedSubscriptionIds.length) {
@@ -320,6 +341,7 @@ export default function CostExplorer() {
     { key: 'compare', label: 'Month compare', icon: GitCompareArrows },
     { key: 'bandwidth', label: 'Bandwidth', icon: Network },
     { key: 'billing', label: 'Billing categories', icon: Layers },
+    { key: 'day', label: 'Day details', icon: CalendarDays },
   ];
 
   // The two moved-in tabs answer the header selection, not the filter bar, so
@@ -327,21 +349,23 @@ export default function CostExplorer() {
   const showFilters = tab === 'trend' || filteredGroups || quickCompare;
 
   return (
-    <div className="mx-auto max-w-screen-2xl space-y-5 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="mx-auto max-w-screen-2xl space-y-6 p-4 sm:p-6">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Cost Explorer</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-100">Cost Explorer</h1>
           <p className="mt-1 text-sm text-slate-400">
             Spend over time, split any way, down to the resource billing it.
           </p>
         </div>
-        <Button variant="secondary" size="sm" onClick={saveView} icon={Bookmark}>
+        <UiButton variant="outline" size="sm" onClick={saveView}>
+          <Bookmark aria-hidden="true" />
           Save view
-        </Button>
-      </div>
+        </UiButton>
+      </header>
+
+      <CostStrip />
 
       {/* Coverage sits with the figures, not in a console log. */}
-      {needsMonthly && <DataQuality coverage={costData?.coverage} />}
       {needsMonthly && costError && <ErrorState title="Could not load monthly costs" message={costError} onRetry={loadCosts} />}
       {usesServerFilters && filteredResult.error && <ErrorState title="Could not load filtered costs" message={filteredResult.error} />}
       {usesServerFilters && <DataQuality coverage={filteredResult.data?.coverage} />}
@@ -349,13 +373,13 @@ export default function CostExplorer() {
 
       {views.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-slate-500">Saved:</span>
+          <span className="text-xs font-medium text-slate-500">Saved views</span>
           {views.map((v) => (
             <span
               key={v.name}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900 pl-2 text-xs text-slate-300"
+              className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 pl-2.5 text-xs font-medium text-slate-300 shadow-sm"
             >
-              <button onClick={() => applyView(v)} className="py-1 hover:text-blue-300">
+              <button onClick={() => applyView(v)} className="py-1.5 hover:text-[#c2410c]">
                 {v.name}
               </button>
               <button
@@ -370,55 +394,101 @@ export default function CostExplorer() {
         </div>
       )}
 
-      <Tabs tabs={tabs} active={tab} onChange={setTab} />
+      <TabsList label="Cost Explorer views" items={tabs.map(t => ({ value: t.key, label: t.label, icon: t.icon, count: t.count }))} value={tab} onValueChange={setTab} />
+
+      {tab === 'day' && <Suspense fallback={<TabLoading what="day details" />}><DayDetails /></Suspense>}
 
       {tab === 'billing' && <Suspense fallback={<TabLoading what="billing categories" />}><BillingCategoryDetails /></Suspense>}
 
       {/* Filters drive every tab, the trend included. The trend is re-summed
           from meter rows when a filter is set, so the narrowing is real rather
           than a control that appears to do nothing. */}
-      {showFilters && <Card className="p-4" onFocusCapture={loadFilterOptions}>
-          <FilterBar
-            active={activeFilterCount}
-            onReset={() => setFilters(EMPTY_FILTERS)}
-          >
-            <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-2 text-xs text-slate-400">
-              <Search className="h-3.5 w-3.5" />
-              <input
-                value={filters.search}
-                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                placeholder="Search name, type, SKU…"
-                className="h-8 w-52 bg-transparent text-slate-200 outline-none placeholder:text-slate-600"
-              />
-            </label>
-            <Select
-              label="Subscription"
-              value={filters.subscription}
-              onChange={(v) => setFilters({ ...filters, subscription: v })}
-              options={optionsFor(filterSource, 'subscription_id', 'subscriptions')
-                .filter(o => !o.value || selectedSubscriptionIds.includes(o.value))
-                .map((o) => (o.value ? { ...o, label: subName(o.value) } : o))}
-            />
-            <Select
-              label="Resource group"
-              value={filters.resource_group}
-              onChange={(v) => setFilters({ ...filters, resource_group: v })}
-              options={optionsFor(filterSource, 'resource_group', 'groups')}
-            />
-            <Select
-              label="Region"
-              value={filters.location}
-              onChange={(v) => setFilters({ ...filters, location: v })}
-              options={optionsFor(filterSource, 'location', 'regions')}
-            />
-            <Select
-              label="Service"
-              value={filters.service}
-              onChange={(v) => setFilters({ ...filters, service: v })}
-              options={optionsFor(filterSource, 'service', 'services')}
-            />
-          </FilterBar>
-      </Card>}
+      {showFilters && (() => {
+        const fields = [
+          ['subscription', 'Subscription', optionsFor(filterSource, 'subscription_id', 'subscriptions')
+            .filter(o => !o.value || selectedSubscriptionIds.includes(o.value))
+            .map((o) => (o.value ? { ...o, label: subName(o.value) } : o))],
+          ['resource_group', 'Resource group', optionsFor(filterSource, 'resource_group', 'groups')],
+          ['location', 'Region', optionsFor(filterSource, 'location', 'regions')],
+          ['service', 'Service', optionsFor(filterSource, 'service', 'services')],
+        ];
+        const dailyMode = tab === 'trend' && timeline === 'daily';
+        const chips = [
+          ...(filters.search ? [['search', `Search: ${filters.search}`]] : []),
+          ...fields.filter(([key]) => filters[key]).map(([key, label, options]) => [key, `${label}: ${options.find(o => o.value === filters[key])?.label || filters[key]}`]),
+        ];
+        return (
+          <SCard onFocusCapture={loadFilterOptions}>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-5">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-[#ea580c]" aria-hidden="true" />
+                <h2 className="text-sm font-semibold text-slate-100">Filters</h2>
+                {activeFilterCount > 0 && <span className="rounded-full bg-[#ffedd5] px-2 py-0.5 text-[11px] font-semibold text-[#9a3412]">{activeFilterCount} active</span>}
+              </div>
+              <UiButton variant="ghost" size="sm" disabled={!activeFilterCount} onClick={() => setFilters(EMPTY_FILTERS)}>
+                <RotateCcw aria-hidden="true" />Reset filters
+              </UiButton>
+            </div>
+            <SCardContent className="space-y-4 p-4 sm:p-5">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-[minmax(14rem,1.3fr)_repeat(4,minmax(0,1fr))]">
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-3 2xl:col-span-1">
+                  <UiLabel htmlFor="explorer-search">Search</UiLabel>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" aria-hidden="true" />
+                    <UiInput id="explorer-search" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder="Resource, service, meter…" className="pl-8 pr-8" />
+                    {filters.search && <button type="button" aria-label="Clear search" onClick={() => setFilters({ ...filters, search: '' })} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-500 hover:text-slate-200"><X className="h-4 w-4" /></button>}
+                  </div>
+                </div>
+                {fields.map(([key, label, options]) => (
+                  <div key={key} className="min-w-0 space-y-1.5">
+                    <UiLabel htmlFor={`explorer-filter-${key}`}>{label}</UiLabel>
+                    <NativeSelect id={`explorer-filter-${key}`} value={filters[key]} onChange={(e) => setFilters({ ...filters, [key]: e.target.value })} className={filters[key] ? 'border-[#fdba74]' : ''}>
+                      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </NativeSelect>
+                  </div>
+                ))}
+              </div>
+              {tab === 'trend' && (
+                <div className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                  <div className="space-y-1.5">
+                    <UiLabel className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5 text-[#ea580c]" aria-hidden="true" />View</UiLabel>
+                    <TabsList
+                      size="sm"
+                      label="Timeline granularity"
+                      className="bg-slate-800/70"
+                      items={[{ value: 'daily', label: 'Daily', icon: CalendarDays }, { value: 'monthly', label: 'Monthly', icon: TrendingUp }]}
+                      value={timeline}
+                      onValueChange={setTimeline}
+                    />
+                  </div>
+                  <div className="min-w-[12rem] flex-1 space-y-1.5 sm:max-w-xs">
+                    <UiLabel htmlFor="explorer-group-by" className="flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-[#ea580c]" aria-hidden="true" />Group by</UiLabel>
+                    <NativeSelect id="explorer-group-by" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
+                      {GROUP_BY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </NativeSelect>
+                  </div>
+                  <p className="flex-1 text-xs leading-5 text-slate-500">
+                    {groupBy === 'none'
+                      ? 'Showing totals only. Pick a dimension to stack the spend chart by it.'
+                      : `Stacks the ${dailyMode ? 'daily' : 'monthly'} spend chart by ${groupByLabel(groupBy).toLowerCase()}. Top six shown, the rest grouped as Other.`}
+                  </p>
+                </div>
+              )}
+              {chips.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-slate-500">Applied:</span>
+                  {chips.map(([key, text]) => (
+                    <span key={key} className="inline-flex max-w-full items-center gap-1 rounded-full border border-[#fdba74] bg-[#ffedd5] py-0.5 pl-2.5 pr-1 text-xs font-medium text-[#9a3412]">
+                      <span className="truncate">{text}</span>
+                      <button type="button" aria-label={`Remove ${text}`} onClick={() => setFilters({ ...filters, [key]: '' })} className="rounded-full p-0.5 hover:bg-[#fed7aa]"><X className="h-3 w-3" /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </SCardContent>
+          </SCard>
+        );
+      })()}
 
       {tab === 'bandwidth' && (
         <Suspense fallback={<TabLoading what="the bandwidth report" />}>
@@ -432,12 +502,7 @@ export default function CostExplorer() {
 
       {tab === 'trend' && (
         <div className="space-y-5">
-          <SegmentedControl
-            options={[{ value: 'monthly', label: 'Monthly' }, { value: 'daily', label: 'Daily timeline' }]}
-            value={timeline}
-            onChange={setTimeline}
-          />
-          {timeline === 'daily' ? <CostDailyTimeline filters={filters} /> : <>
+          {timeline === 'daily' ? <CostDailyTimeline filters={filters} groupBy={groupBy} /> : <>
           {trendFiltered && !usesMeterRows && <Callout tone="info" title="Filtered Azure summary">{usesServerFilters ? 'These filters are applied by Azure Cost Management to the selected dates and subscriptions.' : 'Service-only and subscription-only amounts come directly from the same monthly summary as Dashboard.'} All figures below follow your selection.</Callout>}
           {filters.service === 'Bandwidth' && <Callout tone="info" title="Bandwidth service scope">This filter selects the Azure service named Bandwidth. The Bandwidth tab includes transfer-related meters under other services too; it is a broader total.</Callout>}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -495,6 +560,20 @@ export default function CostExplorer() {
               Filtering the trend needs the individual meter rows. The chart will narrow
               once they arrive.
             </Callout>
+          )}
+
+          {groupedSeries && (
+            <SpendOverTime
+              key={`${dateKey}:${groupBy}`}
+              series={groupedSeries}
+              daily={false}
+              groupLabel={groupByLabel(groupBy)}
+              description={`Each month in the selected period, split by ${groupByLabel(groupBy).toLowerCase()}. Hover a month for the breakdown.${groupedFromRows ? ' Built from meter rows, so totals can sit slightly below the invoice.' : ''}`}
+              loading={costLoading || (groupedFromRows && rowsLoading) || (groupBy === 'pricing_model' && pricingLoading)}
+              error={costError}
+              currency={currency}
+              onRetry={() => loadCosts({ force: true })}
+            />
           )}
 
           <Panel
@@ -651,10 +730,18 @@ export default function CostExplorer() {
       )}
 
       {tab === 'groups' && <>
-        <SegmentedControl value={groupMode} onChange={setGroupMode} options={[
-          { value: 'report', label: 'Costs & history' },
-          { value: 'filtered', label: 'Filtered service breakdown' },
-        ]} />
+        <nav aria-label="Resource group views" className="flex flex-wrap items-center gap-x-1 text-sm text-slate-500">
+          {[['resources', 'Resources & payment type'], ['report', 'Costs & history'], ['filtered', 'Filtered service breakdown']].map(([value, text], index) => (
+            <span key={value} className="inline-flex items-center gap-x-1">
+              {index > 0 && <span aria-hidden="true" className="px-1 text-slate-700">·</span>}
+              <button type="button" aria-current={groupMode === value ? 'page' : undefined} onClick={() => setGroupMode(value)}
+                className={`rounded px-0.5 transition hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c] ${groupMode === value ? 'font-semibold text-slate-100' : ''}`}>{text}</button>
+            </span>
+          ))}
+        </nav>
+        {groupMode === 'resources' && <Suspense fallback={<TabLoading what="resource groups" />}>
+          <ResourceGroupResources key={`${selectedTenantId}:${subsKey}:${dateKey}`} />
+        </Suspense>}
         {groupMode === 'report' && <Suspense fallback={<TabLoading what="resource groups" />}>
           <ResourceGroupsReport embedded key={`${selectedTenantId}:${subsKey}:${dateKey}`} />
         </Suspense>}
