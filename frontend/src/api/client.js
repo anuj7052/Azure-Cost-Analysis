@@ -899,6 +899,7 @@ export const importBillingLedger = form => api.post('/billing/ledger/import', fo
 export const getBillingLedger = id => api.get(`/billing/customers/${encodeURIComponent(id)}/ledger`).then(r => r.data);
 export const saveBillingWorkload = (customer, id, body) => (id ? api.put(`/billing/workloads/${encodeURIComponent(id)}`, body) : api.post(`/billing/customers/${encodeURIComponent(customer)}/workloads`, body)).then(r => r.data);
 export const saveBillingEntry = (workload, id, body) => (id ? api.put(`/billing/ledger/entries/${encodeURIComponent(id)}`, body) : api.post(`/billing/workloads/${encodeURIComponent(workload)}/entries`, body)).then(r => r.data);
+export const deleteBillingItem = (kind, id, confirmName = '') => api.delete(`/billing/ledger/${kind}/${encodeURIComponent(id)}`, { params: confirmName ? { confirm_name: confirmName } : {} }).then(r => r.data);
 export const archiveBillingItem = (kind, id, restore = false) => api.post(`/billing/ledger/${kind}/${encodeURIComponent(id)}/${restore ? 'restore' : 'archive'}`).then(r => r.data);
 export const billingItemHistory = (kind, id) => api.get(`/billing/ledger/${kind}/${encodeURIComponent(id)}/history`).then(r => r.data);
 export const uploadBillingDocument = async (id, form, provider) => api.post(`/billing/customers/${encodeURIComponent(id)}/documents`, form, { headers: provider === 'azure_blob' ? {} : await billingFileHeaders(), timeout: 180000 }).then(r => r.data);

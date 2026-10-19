@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Check, Download, FileUp, Loader2, Pencil, Plus, X } from 'lucide-react';
+import { Check, Download, FileUp, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import {
-  bulkImportBillingCustomers, createBillingCustomer, exportBillingCustomersCsv, getBillingLedger, listBillingCustomers, listBillingDistributors,
+  bulkImportBillingCustomers, createBillingCustomer, deleteBillingItem, exportBillingCustomersCsv, getBillingLedger, listBillingCustomers, listBillingDistributors,
   saveBillingEntry, saveBillingWorkload,
 } from '../api/client';
 import { errorMessage } from '../utils/apiError';
@@ -139,6 +139,18 @@ export default function BillingEntries() {
     setAdding('');
   };
 
+  const removeEntry = async entry => {
+    if (!window.confirm(`Delete the ${monthName(entry.period)} entry for ${subName(entry.workload_id)}? This cannot be undone.`)) return;
+    try { await deleteBillingItem('entry', entry.id); setLedger(await getBillingLedger(customerId)); toast.success('Entry deleted'); } catch (e) { toast.error(errorMessage(e)); }
+  };
+  const removeSubscription = async () => {
+    const sub = subscriptions.find(w => w.id === workloadId);
+    if (!sub) return;
+    const count = entries.filter(e => e.workload_id === sub.id).length;
+    if (!window.confirm(`Delete subscription "${sub.name}" and its ${count} monthly entr${count === 1 ? 'y' : 'ies'}? This cannot be undone.`)) return;
+    try { await deleteBillingItem('workload', sub.id); setWorkloadId(''); setLedger(await getBillingLedger(customerId)); toast.success('Subscription deleted'); } catch (e) { toast.error(errorMessage(e)); }
+  };
+
   const edit = entry => {
     setWorkloadId(entry.workload_id);
     setForm({
@@ -204,6 +216,7 @@ export default function BillingEntries() {
                   <option value="">{!customerId ? 'Choose a customer first' : !ledger ? 'Loading…' : subscriptions.length ? 'Choose a subscription' : 'No subscriptions yet — add one'}</option>
                   {subscriptions.map(w => <option key={w.id} value={w.id}>{w.name}{w.owner ? ` · ${w.owner}` : ''}</option>)}
                 </NativeSelect>
+                {canEdit && workloadId && adding !== 'sub' && <button type="button" onClick={removeSubscription} className="mt-1.5 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-400"><Trash2 className="h-3 w-3" />Delete this subscription</button>}
                 {adding === 'sub' && <AddInline placeholder="Subscription name" busy={busy} onAdd={addSubscription} onCancel={() => setAdding('')} />}
               </div>
 
@@ -280,7 +293,7 @@ export default function BillingEntries() {
                         <td className="px-4 py-2.5 text-slate-300">{e.distributor || '—'}</td>
                         <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(e.distributor_amount, e.currency)}</td>
                         <td className={`whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums ${p == null ? 'text-slate-500' : p >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{p == null ? '—' : money(p, e.currency)}</td>
-                        <td className="px-4 py-2.5 text-right"><Pencil className="inline h-3.5 w-3.5 text-slate-500" aria-label="Edit" /></td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right"><Pencil className="inline h-3.5 w-3.5 text-slate-500" aria-label="Edit" />{canEdit && <button type="button" aria-label="Delete entry" title="Delete entry" onClick={ev => { ev.stopPropagation(); removeEntry(e); }} className="ml-2 rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="inline h-3.5 w-3.5" /></button>}</td>
                       </tr>
                     );
                   })}

@@ -253,6 +253,47 @@ async def archive(kind: Literal['customer', 'workload', 'entry'], entity_id: str
     return {'archived': True}
 
 
+@router.delete('/ledger/{kind}/{entity_id}')
+async def delete_permanently(kind: Literal['customer', 'workload', 'entry'], entity_id: str, confirm_name: str = '', user=Depends(require_workspace_admin), db=Depends(get_db)):
+    """
+    Permanently delete a customer, subscription or monthly entry.
+
+    A customer must be confirmed by typing its exact name, and cannot be
+    deleted while it has uploaded invoice documents — archive it instead, so
+    stored originals are never left without a record.
+    """
+    owner = user['account_id']
+    before = await ledger.get_entity(db, owner, kind, entity_id)
+    if kind == 'customer':
+        if confirm_name.strip() != before['name'].strip():
+            raise HTTPException(422, 'Type the customer name exactly to confirm deletion.')
+        if await ledger.one(db, 'SELECT id FROM billing_documents WHERE owner_id=? AND customer_id=?', (owner, entity_id)):
+            raise HTTPException(409, 'This customer has uploaded invoices. Archive it instead so the original files stay on record.')
+        async with db.execute('SELECT id FROM billing_ledger WHERE owner_id=? AND customer_id=?', (owner, entity_id)) as cursor:
+            entry_ids = [row[0] for row in await cursor.fetchall()]
+        async with db.execute('SELECT id FROM billing_workloads WHERE owner_id=? AND customer_id=?', (owner, entity_id)) as cursor:
+            workload_ids = [row[0] for row in await cursor.fetchall()]
+        await db.execute('DELETE FROM billing_ledger WHERE owner_id=? AND customer_id=?', (owner, entity_id))
+        await db.execute('DELETE FROM billing_workloads WHERE owner_id=? AND customer_id=?', (owner, entity_id))
+        await db.execute('DELETE FROM billing_customers WHERE owner_id=? AND id=?', (owner, entity_id))
+        for kind_, ids in (('entry', entry_ids), ('workload', workload_ids), ('customer', [entity_id])):
+            for key in ids:
+                await db.execute('DELETE FROM billing_archives WHERE owner_id=? AND entity_type=? AND entity_id=?', (owner, kind_, key))
+        removed = {'entries': len(entry_ids), 'subscriptions': len(workload_ids)}
+    elif kind == 'workload':
+        cursor = await db.execute('DELETE FROM billing_ledger WHERE owner_id=? AND workload_id=?', (owner, entity_id))
+        removed = {'entries': cursor.rowcount}
+        await db.execute('DELETE FROM billing_workloads WHERE owner_id=? AND id=?', (owner, entity_id))
+        await db.execute("DELETE FROM billing_archives WHERE owner_id=? AND entity_type='workload' AND entity_id=?", (owner, entity_id))
+    else:
+        await db.execute('DELETE FROM billing_ledger WHERE owner_id=? AND id=?', (owner, entity_id))
+        await db.execute("DELETE FROM billing_archives WHERE owner_id=? AND entity_type='entry' AND entity_id=?", (owner, entity_id))
+        removed = {'entries': 1}
+    await ledger.audit(db, owner, user['user_id'], kind, entity_id, 'delete', before, removed)
+    await db.commit()
+    return {'deleted': True, **removed}
+
+
 @router.post('/ledger/{kind}/{entity_id}/restore')
 async def restore(kind: Literal['customer', 'workload', 'entry'], entity_id: str, user=Depends(require_workspace_admin), db=Depends(get_db)):
     await ledger.get_entity(db, user['account_id'], kind, entity_id)

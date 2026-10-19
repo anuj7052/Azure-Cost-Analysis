@@ -137,3 +137,39 @@ async def test_bulk_customer_import_is_idempotent_sets_owners_and_exports(db):
     assert 'Acme,Acme Dev,Meera' in text and "'=Evil,Sub,Asha" in text and 'Beta,,' in text
     with pytest.raises(HTTPException):
         await routes.bulk_import_customers(StarletteUpload(io.BytesIO(b'Name\nx\n'), filename='bad.csv'), user, db)
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_needs_confirmation_and_cascades(db):
+    from routers import billing as customer_routes
+    user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
+    customer = await customer_routes.create_customer(customer_routes.CustomerInput(name='Unused Co'), user, db)
+    sub = await routes.create_workload(customer['id'], routes.WorkloadInput(name='Sub A'), user, db)
+    other = await routes.create_workload(customer['id'], routes.WorkloadInput(name='Sub B'), user, db)
+    e1 = await routes.create_entry(sub['id'], routes.EntryInput(period='2026-09', currency='INR', customer_amount='10'), user, db)
+    await routes.create_entry(other['id'], routes.EntryInput(period='2026-09', currency='INR', customer_amount='5'), user, db)
+
+    assert (await routes.delete_permanently('entry', e1['id'], '', user, db))['entries'] == 1
+    assert (await routes.delete_permanently('workload', other['id'], '', user, db))['entries'] == 1
+    with pytest.raises(HTTPException) as wrong:
+        await routes.delete_permanently('customer', customer['id'], 'unused', user, db)
+    assert wrong.value.status_code == 422
+    with pytest.raises(HTTPException):
+        await routes.delete_permanently('customer', customer['id'], 'Unused Co', {'account_id': 2, 'user_id': 'x'}, db)
+    result = await routes.delete_permanently('customer', customer['id'], 'Unused Co', user, db)
+    assert result == {'deleted': True, 'entries': 0, 'subscriptions': 1}
+    with pytest.raises(HTTPException) as gone:
+        await routes.profile_ledger(customer['id'], user, db)
+    assert gone.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_customer_with_uploaded_invoices_cannot_be_deleted(db):
+    from routers import billing as customer_routes
+    user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
+    customer = await customer_routes.create_customer(customer_routes.CustomerInput(name='Docs Co'), user, db)
+    await db.execute("INSERT INTO billing_documents(id,owner_id,customer_id,kind,period,filename,sha256,drive_id,item_id,web_url,uploaded_by) VALUES('d1',1,?,'customer','2026-09','a.pdf','x','blob','p','','one')", (customer['id'],))
+    await db.commit()
+    with pytest.raises(HTTPException) as kept:
+        await routes.delete_permanently('customer', customer['id'], 'Docs Co', user, db)
+    assert kept.value.status_code == 409
