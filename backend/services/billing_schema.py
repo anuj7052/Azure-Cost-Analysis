@@ -83,4 +83,4 @@ MIGRATIONS = {
 }
 
 # Distributors offered by default; any other name typed in is remembered.
-DEFAULT_DISTRIBUTORS = ("Savex", "Redington", "Tata", "Ingram")
+DEFAULT_DISTRIBUTORS = ("Savex", "Redington", "Tata", "Ingram", "Tech Data")

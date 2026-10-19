@@ -117,8 +117,8 @@ async def test_simple_entry_flow_stores_distributor_per_month_and_lists_names(db
     assert entry['distributor'] == 'Savex' and entry['invoice_number'] == 'INV-9'
     await routes.update_entry(entry['id'], routes.EntryInput(period='2026-10', currency='INR', customer_amount='1200', distributor_amount='950', distributor='Acme Distribution', revision=entry['revision']), user, db)
     names = (await routes.list_distributors(user, db))['distributors']
-    assert names[:4] == ['Savex', 'Redington', 'Tata', 'Ingram'] and 'Acme Distribution' in names
-    assert (await routes.list_distributors({'account_id': 2}, db))['distributors'] == ['Savex', 'Redington', 'Tata', 'Ingram']
+    assert names[:5] == ['Savex', 'Redington', 'Tata', 'Ingram', 'Tech Data'] and 'Acme Distribution' in names
+    assert (await routes.list_distributors({'account_id': 2}, db))['distributors'] == ['Savex', 'Redington', 'Tata', 'Ingram', 'Tech Data']
 
 
 @pytest.mark.asyncio

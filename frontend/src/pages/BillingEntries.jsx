@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { Check, Download, FileUp, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import {
   bulkImportBillingCustomers, createBillingCustomer, deleteBillingItem, exportBillingCustomersCsv, getBillingLedger, listBillingCustomers, listBillingDistributors,
-  saveBillingEntry, saveBillingWorkload,
+  saveBillingEntry, saveBillingWorkload, updateBillingCustomer,
 } from '../api/client';
 import { errorMessage } from '../utils/apiError';
 import { useCanAdminister } from '../hooks/useCanAdminister';
@@ -28,14 +28,14 @@ const monthName = key => {
   return y && m ? new Date(y, m - 1, 1).toLocaleString('en', { month: 'short', year: 'numeric' }) : key;
 };
 
-function AddInline({ placeholder, onAdd, busy, onCancel }) {
-  const [value, setValue] = useState('');
+function AddInline({ placeholder, onAdd, busy, onCancel, initial = '', label = 'Add' }) {
+  const [value, setValue] = useState(initial);
   const submit = () => { if (value.trim()) onAdd(value.trim()); };
   // A div, not a form: it sits inside the entry form, and nested forms are invalid.
   return (
     <div className="mt-2 flex gap-2">
       <Input autoFocus value={value} onChange={e => setValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } if (e.key === 'Escape') onCancel(); }} placeholder={placeholder} aria-label={placeholder} />
-      <Button type="button" size="sm" className="h-9" onClick={submit} disabled={busy || !value.trim()}>{busy ? <Loader2 className="animate-spin" /> : <Check />}Add</Button>
+      <Button type="button" size="sm" className="h-9" onClick={submit} disabled={busy || !value.trim()}>{busy ? <Loader2 className="animate-spin" /> : <Check />}{label}</Button>
       <Button type="button" size="sm" variant="ghost" className="h-9" onClick={onCancel} aria-label="Cancel"><X /></Button>
     </div>
   );
@@ -51,7 +51,7 @@ export default function BillingEntries() {
   const [ledger, setLedger] = useState(null);
   const [workloadId, setWorkloadId] = useState('');
   const [form, setForm] = useState(EMPTY);
-  const [distributors, setDistributors] = useState(['Savex', 'Redington', 'Tata', 'Ingram']);
+  const [distributors, setDistributors] = useState(['Savex', 'Redington', 'Tata', 'Ingram', 'Tech Data']);
   const [adding, setAdding] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -139,6 +139,31 @@ export default function BillingEntries() {
     setAdding('');
   };
 
+  const renameCustomer = async name => {
+    const current = (customers || []).find(c => c.id === customerId);
+    if (!current || name === current.name) { setAdding(''); return; }
+    setBusy(true);
+    try {
+      const saved = await updateBillingCustomer(customerId, { name, company: current.company || '', contact_email: current.contact_email || '', notes: current.notes || '' });
+      setCustomers(list => (list || []).map(c => (c.id === customerId ? { ...c, ...saved } : c)).sort((a, b) => a.name.localeCompare(b.name)));
+      setAdding('');
+      toast.success('Customer renamed');
+    } catch (e) { toast.error(errorMessage(e)); } finally { setBusy(false); }
+  };
+  const renameSubscription = async name => {
+    const sub = subscriptions.find(w => w.id === workloadId);
+    if (!sub || name === sub.name) { setAdding(''); return; }
+    setBusy(true);
+    try {
+      const fields = ['po_id', 'po_date', 'period_start', 'period_end', 'frequency', 'plan_name', 'requirement_id', 'distributor', 'notes'];
+      const body = { name, owner: sub.owner || '', revision: sub.revision, ...Object.fromEntries(fields.map(f => [f, sub[f] ?? ''])) };
+      await saveBillingWorkload(customerId, sub.id, body);
+      setLedger(await getBillingLedger(customerId));
+      setAdding('');
+      toast.success('Subscription renamed');
+    } catch (e) { toast.error(errorMessage(e)); } finally { setBusy(false); }
+  };
+
   const removeEntry = async entry => {
     if (!window.confirm(`Delete the ${monthName(entry.period)} entry for ${subName(entry.workload_id)}? This cannot be undone.`)) return;
     try { await deleteBillingItem('entry', entry.id); setLedger(await getBillingLedger(customerId)); toast.success('Entry deleted'); } catch (e) { toast.error(errorMessage(e)); }
@@ -207,7 +232,9 @@ export default function BillingEntries() {
                   <option value="">{customers ? 'Choose a customer' : 'Loading…'}</option>
                   {(customers || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </NativeSelect>
+                {canEdit && customerId && !adding && <button type="button" onClick={() => setAdding('rename-customer')} className="mt-1.5 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-[#c2410c]"><Pencil className="h-3 w-3" />Rename customer</button>}
                 {adding === 'customer' && <AddInline placeholder="Customer name" busy={busy} onAdd={addCustomer} onCancel={() => setAdding('')} />}
+                {adding === 'rename-customer' && <AddInline placeholder="New customer name" label="Save" initial={(customers || []).find(c => c.id === customerId)?.name || ''} busy={busy} onAdd={renameCustomer} onCancel={() => setAdding('')} />}
               </div>
 
               <div>
@@ -216,7 +243,8 @@ export default function BillingEntries() {
                   <option value="">{!customerId ? 'Choose a customer first' : !ledger ? 'Loading…' : subscriptions.length ? 'Choose a subscription' : 'No subscriptions yet — add one'}</option>
                   {subscriptions.map(w => <option key={w.id} value={w.id}>{w.name}{w.owner ? ` · ${w.owner}` : ''}</option>)}
                 </NativeSelect>
-                {canEdit && workloadId && adding !== 'sub' && <button type="button" onClick={removeSubscription} className="mt-1.5 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-400"><Trash2 className="h-3 w-3" />Delete this subscription</button>}
+                {canEdit && workloadId && !adding && <div className="mt-1.5 flex gap-4"><button type="button" onClick={() => setAdding('rename-sub')} className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-[#c2410c]"><Pencil className="h-3 w-3" />Rename subscription</button><button type="button" onClick={removeSubscription} className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-400"><Trash2 className="h-3 w-3" />Delete this subscription</button></div>}
+                {adding === 'rename-sub' && <AddInline placeholder="New subscription name" label="Save" initial={subscriptions.find(w => w.id === workloadId)?.name || ''} busy={busy} onAdd={renameSubscription} onCancel={() => setAdding('')} />}
                 {adding === 'sub' && <AddInline placeholder="Subscription name" busy={busy} onAdd={addSubscription} onCancel={() => setAdding('')} />}
               </div>
 
