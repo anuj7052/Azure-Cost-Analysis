@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, Building2, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Cloud, FileText, Layers, RefreshCw, ShieldCheck, TrendingUp, Wallet } from 'lucide-react';
-import { fetchBillingDashboard } from '../api/client';
+import { fetchBillingDashboard, listBillingCustomers } from '../api/client';
 import { errorMessage } from '../utils/apiError';
 import { dashboardFilters, dashboardPayload, exactDays, monthRange, rollingRange } from '../utils/billingDashboard';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/billing-ui/card';
@@ -99,6 +99,25 @@ function periodLabel(filters) {
   return `${fmt(filters.from, { day: 'numeric', month: 'short', year: 'numeric' })} – ${fmt(filters.to, { day: 'numeric', month: 'short', year: 'numeric' })}`;
 }
 
+function CustomerPicker({ value, onChange }) {
+  const [customers, setCustomers] = useState([]);
+  useEffect(() => {
+    let live = true;
+    listBillingCustomers().then(data => { if (live) setCustomers((data.items || []).filter(c => !c.archived)); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return <label className="relative inline-flex items-center">
+    <span className="sr-only">Customer</span>
+    <Building2 size={16} className="pointer-events-none absolute left-3 text-[#ea580c]" />
+    <select value={value} onChange={e => onChange(e.target.value)}
+      className="h-10 max-w-64 appearance-none rounded-lg border border-slate-700 bg-slate-900 pl-9 pr-8 text-sm font-semibold text-slate-200 shadow-sm hover:border-[#ea580c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c]">
+      <option value="">All customers</option>
+      {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </select>
+    <ChevronDown size={14} className="pointer-events-none absolute right-3 text-slate-400" />
+  </label>;
+}
+
 function PeriodPicker({ filters, year, month, change, tab }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState(filters.mode);
@@ -150,7 +169,7 @@ export default function BillingDashboard() {
   const year = Number(filters.from.slice(0, 4)) || new Date().getFullYear();
   const month = Number(filters.from.slice(5, 7)) || 1;
   const tab = (on, extra = '') => `rounded-md px-3 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c] ${on ? 'bg-[#ea580c] text-[#ffffff] shadow-sm' : 'text-slate-500 hover:bg-[#ffedd5] hover:text-[#9a3412]'} ${extra}`;
-  return <BillingPage title="Billing overview" actions={<PeriodPicker filters={filters} year={year} month={month} change={change} tab={tab} />}>
+  return <BillingPage title="Billing overview" actions={<div className="flex flex-wrap items-center gap-2"><CustomerPicker value={filters.customer} onChange={customer => change({ customer })} /><PeriodPicker filters={filters} year={year} month={month} change={change} tab={tab} /></div>}>
     <DashboardReport key={JSON.stringify(filters)} filters={filters} onMetadata={noop} />
   </BillingPage>;
 }
