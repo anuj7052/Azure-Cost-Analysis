@@ -1,5 +1,6 @@
 import io
 import json
+import unicodedata
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -265,8 +266,10 @@ async def delete_permanently(kind: Literal['customer', 'workload', 'entry'], ent
     owner = user['account_id']
     before = await ledger.get_entity(db, owner, kind, entity_id)
     if kind == 'customer':
-        if confirm_name.strip() != before['name'].strip():
-            raise HTTPException(422, 'Type the customer name exactly to confirm deletion.')
+        def norm(text):
+            return ' '.join(unicodedata.normalize('NFKC', str(text or '')).split()).casefold()
+        if norm(confirm_name) not in ('delete', norm(before['name'])):
+            raise HTTPException(422, 'Type DELETE to confirm deletion.')
         if await ledger.one(db, 'SELECT id FROM billing_documents WHERE owner_id=? AND customer_id=?', (owner, entity_id)):
             raise HTTPException(409, 'This customer has uploaded invoices. Archive it instead so the original files stay on record.')
         async with db.execute('SELECT id FROM billing_ledger WHERE owner_id=? AND customer_id=?', (owner, entity_id)) as cursor:

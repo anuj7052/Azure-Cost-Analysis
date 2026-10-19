@@ -17,3 +17,13 @@ describe('billing dashboard dates', () => {
     expect(dashboardPayload(filters)).toEqual({ from_date: '2026-10-16', to_date: '2026-11-16', source: 'invoices', currency: 'INR', customer_id: '' });
   });
 });
+
+import { rollingRange } from '../src/utils/billingDashboard';
+describe('rolling billing periods', () => {
+  it('covers whole months back from the current one', () => {
+    const now = new Date(2026, 9, 19);
+    expect(rollingRange(1, now)).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+    expect(rollingRange(3, now)).toEqual({ from: '2026-08-01', to: '2026-10-31' });
+    expect(rollingRange(12, now)).toEqual({ from: '2025-11-01', to: '2026-10-31' });
+  });
+});

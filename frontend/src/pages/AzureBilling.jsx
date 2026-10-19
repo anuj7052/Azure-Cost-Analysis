@@ -128,10 +128,10 @@ export default function AzureBilling() {
   if (customer) return <CustomerProfile key={id} customer={customer} settings={settings} onCustomerChanged={load} />;
   const canDelete = !!settings.can_edit;
   const onDelete = item => {
-    const typed = window.prompt(`Permanently delete "${item.name}", its subscriptions and all its monthly entries?\n\nThis cannot be undone. Type the customer name to confirm:`);
+    const typed = window.prompt(`Permanently delete "${item.name}", its subscriptions and all its monthly entries?\n\nThis cannot be undone. Type DELETE to confirm:`);
     if (typed == null) return;
-    if (typed.trim() !== item.name.trim()) { setError('The name did not match, so nothing was deleted.'); return; }
-    run(async () => { const r = await api.deleteBillingItem('customer', item.id, typed.trim()); await load(); setError(''); window.alert(`Deleted ${item.name} (${r.subscriptions} subscriptions, ${r.entries} monthly entries).`); });
+    if (typed.trim().toUpperCase() !== 'DELETE') { setError('You did not type DELETE, so nothing was deleted.'); return; }
+    run(async () => { const r = await api.deleteBillingItem('customer', item.id, 'DELETE'); await load(); setError(''); window.alert(`Deleted ${item.name} (${r.subscriptions} subscriptions, ${r.entries} monthly entries).`); });
   };
   const shown = customers.filter(item => (showArchived ? !!item.archived : !item.archived) && `${item.name} ${item.company} ${item.contact_email}`.toLowerCase().includes(search.trim().toLowerCase()));
   return <BillingPage title="Customers" description="Choose a company to see its monthly billing or add a new bill." actions={settings.can_edit && <><button className={secondary} onClick={() => setImporting(v => !v)}><Upload size={16} />Import spreadsheet</button><button className={primary} onClick={() => setAdding(v => !v)}><Plus size={16} />Add customer</button></>}>

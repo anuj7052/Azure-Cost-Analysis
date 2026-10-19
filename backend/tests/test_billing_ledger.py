@@ -156,7 +156,7 @@ async def test_permanent_delete_needs_confirmation_and_cascades(db):
     assert wrong.value.status_code == 422
     with pytest.raises(HTTPException):
         await routes.delete_permanently('customer', customer['id'], 'Unused Co', {'account_id': 2, 'user_id': 'x'}, db)
-    result = await routes.delete_permanently('customer', customer['id'], 'Unused Co', user, db)
+    result = await routes.delete_permanently('customer', customer['id'], 'delete', user, db)
     assert result == {'deleted': True, 'entries': 0, 'subscriptions': 1}
     with pytest.raises(HTTPException) as gone:
         await routes.profile_ledger(customer['id'], user, db)
@@ -173,3 +173,11 @@ async def test_customer_with_uploaded_invoices_cannot_be_deleted(db):
     with pytest.raises(HTTPException) as kept:
         await routes.delete_permanently('customer', customer['id'], 'Docs Co', user, db)
     assert kept.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_customer_names_with_odd_spacing_can_be_confirmed(db):
+    from routers import billing as customer_routes
+    user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
+    c = await customer_routes.create_customer(customer_routes.CustomerInput(name='titan workspace-  provide customer ₹123,449.72'), user, db)
+    assert (await routes.delete_permanently('customer', c['id'], 'Titan Workspace- provide customer ₹123,449.72', user, db))['deleted']
