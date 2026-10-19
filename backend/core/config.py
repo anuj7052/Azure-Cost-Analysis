@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     # somewhere plausible is how production ends up writing to a developer's
     # machine.
     DATABASE_URL: str = ""
+    # Optional shared response cache, e.g. rediss://:<key>@<name>.redis.cache.windows.net:6380/0
+    REDIS_URL: str = ""
 
     # --- API protection ---
     # A token bucket per account. Generous enough that no legitimate page load

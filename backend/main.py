@@ -216,7 +216,7 @@ app.add_middleware(
     # had lost access to their own subscriptions.
     allow_headers=[
         "Authorization", "Content-Type", "X-Request-ID",
-        "X-Graph-Token", "X-Azure-Token",
+        "X-Graph-Token", "X-Azure-Token", "X-Refresh",
     ],
     expose_headers=[
         "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After",
@@ -229,6 +229,19 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
 
 register_routers(app, API_ROUTERS)
+
+
+@app.middleware("http")
+async def response_cache_refresh(request: Request, call_next):
+    """X-Refresh: 1 asks the response cache for a fresh answer."""
+    from services import response_cache
+    token = response_cache.refresh_requested.set(request.headers.get("x-refresh") == "1")
+    try:
+        response = await call_next(request)
+    finally:
+        response_cache.refresh_requested.reset(token)
+    response.headers["X-Cache-Backend"] = response_cache.backend_name()
+    return response
 
 
 @app.middleware("http")

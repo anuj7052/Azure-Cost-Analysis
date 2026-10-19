@@ -36,6 +36,7 @@ from services.retail_prices import (
     best_vm_rates, fetch_prices, price_cache, vm_sku_filter,
 )
 from services.token_resolver import resolve_tenant_token
+from services.response_cache import cached_endpoint
 
 router = APIRouter(prefix="/api/compute", tags=["compute"])
 
@@ -201,6 +202,7 @@ async def _attach_ram(token: str, fleet: List[Dict[str, Any]]) -> bool:
 
 
 @router.post("")
+@cached_endpoint("compute")
 async def analyse_compute(
     body: ComputeRequest,
     current_user: dict = Depends(get_current_user),

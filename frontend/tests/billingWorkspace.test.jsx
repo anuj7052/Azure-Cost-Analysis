@@ -8,10 +8,10 @@ vi.mock('../src/store/useTheme', () => ({ useTheme: selector => selector({ theme
 vi.mock('../src/store/useNav', () => ({ useNav: selector => selector({ openNav: vi.fn() }) }));
 
 describe('standalone billing shell', () => {
-  it('provides mobile navigation and theme controls without misleading cloud scope filters', () => {
+  it('provides mobile navigation, no theme switch and no misleading cloud scope filters', () => {
     const html = renderToStaticMarkup(<MemoryRouter><BillingTopbar /></MemoryRouter>);
     expect(html).toContain('Open navigation');
-    expect(html).toContain('Switch to dark mode');
+    expect(html).not.toContain('Switch to dark mode');
     expect(html).toContain('Azure Billing');
     expect(html).not.toContain('Search resources');
     expect(html).not.toContain('No subscription');

@@ -38,6 +38,7 @@ from models.schemas import (
 from services.coverage import build_coverage
 from services.pricing import summarise_pricing, reserved_detail
 from core.db import get_db
+from services.response_cache import cached_endpoint
 
 router = APIRouter(prefix="/api/costs", tags=["costs"])
 
@@ -51,6 +52,7 @@ class BillingCategoryRequest(CostQueryRequest):
 
 
 @router.post("/billing-category")
+@cached_endpoint("billing-category")
 async def get_billing_category(
     body: BillingCategoryRequest,
     current_user: dict = Depends(get_current_user),
@@ -89,6 +91,7 @@ async def get_billing_category(
 
 
 @router.post("", response_model=CostQueryResponse)
+@cached_endpoint("costs")
 async def get_costs(
     body: CostQueryRequest,
     current_user: dict = Depends(get_current_user),
@@ -143,6 +146,7 @@ async def _get_token(body_tenant_id: str, current_user: dict, db: aiosqlite.Conn
 
 
 @router.post("/rows", response_model=CostRowsResponse)
+@cached_endpoint("rows")
 async def get_cost_rows(
     body: CostQueryRequest,
     current_user: dict = Depends(get_current_user),
@@ -184,6 +188,7 @@ async def get_cost_rows(
 
 
 @router.post("/resources", response_model=CostRowsResponse)
+@cached_endpoint("resources")
 async def get_service_resources(
     body: ServiceResourceRequest,
     current_user: dict = Depends(get_current_user),
@@ -242,6 +247,7 @@ class DayResourcesRequest(BaseModel):
 
 
 @router.post("/day-resources")
+@cached_endpoint("day-resources")
 async def get_day_resources(
     body: DayResourcesRequest,
     current_user: dict = Depends(get_current_user),
@@ -332,6 +338,7 @@ def _day_key(record: dict) -> str:
 
 
 @router.post("/daily-split")
+@cached_endpoint("daily-split")
 async def get_daily_split(
     body: DailySplitRequest,
     current_user: dict = Depends(get_current_user),
@@ -388,6 +395,7 @@ class GroupResourcesRequest(BaseModel):
 
 
 @router.post("/resource-groups")
+@cached_endpoint("resource-groups")
 async def get_resource_group_resources(
     body: GroupResourcesRequest,
     current_user: dict = Depends(get_current_user),
@@ -474,6 +482,7 @@ class PricingModelRequest(BaseModel):
 
 
 @router.post("/pricing-model")
+@cached_endpoint("pricing-model")
 async def get_pricing_model(
     body: PricingModelRequest,
     current_user: dict = Depends(get_current_user),
@@ -709,6 +718,7 @@ async def get_usage_detail(
 
 
 @router.post("/rg", response_model=RgCostResponse)
+@cached_endpoint("rg")
 async def get_rg_costs(
     body: RgCostRequest,
     current_user: dict = Depends(get_current_user),
@@ -738,6 +748,7 @@ async def get_rg_costs(
 
 
 @router.post("/daily", response_model=DailyCostResponse)
+@cached_endpoint("daily")
 async def get_daily_costs(
     body: DailyCostRequest,
     current_user: dict = Depends(get_current_user),
@@ -784,6 +795,7 @@ async def get_daily_costs(
 
 
 @router.post("/pricing", response_model=PricingResponse)
+@cached_endpoint("pricing")
 async def get_pricing_split(
     body: CostQueryRequest,
     current_user: dict = Depends(get_current_user),

@@ -13,11 +13,11 @@ const cost = SECTIONS.find(section => section.key === 'cost');
 export function CostTabs({ items = cost.items, label = 'Cost workspace' }) {
   return (
     <nav aria-label={label} className="flex min-w-0 gap-1 overflow-x-auto">
-      {items.map(({ to, label: text, icon: Icon }) => (
+      {items.map(({ to, label: text, icon: Icon, end }) => (
         <NavLink
           key={to}
           to={to}
-          end={to === '/'}
+          end={end || to === '/'}
           className={({ isActive }) => `inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c] ${
             isActive
               ? 'bg-[#ffedd5] font-semibold text-[#9a3412] ring-1 ring-[#fdba74]'

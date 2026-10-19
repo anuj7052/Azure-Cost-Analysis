@@ -38,6 +38,7 @@ def aggregate(customers, workloads, records, start, end, currency, source):
                      '_net': True, '_paired': True} for c in customers}
     monthly = {}
     relevant = []
+    by_distributor = {}
     for record in records:
         if record['customer_id'] not in names or (selected and record.get('currency') and record['currency'] != selected):
             continue
@@ -75,6 +76,9 @@ def aggregate(customers, workloads, records, start, end, currency, source):
                 value = Decimal(record[field]) * factor
                 row[field] = (row[field] or ZERO) + value
                 bucket[field] = (bucket[field] or ZERO) + value
+        if record.get('distributor_amount') is not None:
+            name = str(record.get('distributor') or '').strip() or 'Not set'
+            by_distributor[name] = by_distributor.get(name, ZERO) + Decimal(record['distributor_amount']) * factor
     if source == 'invoices':
         for row in rows.values():
             periods = {r['period'] for r in relevant if r['customer_id'] == row['customer_id'] and (r.get('customer_amount') is not None or r.get('distributor_amount') is not None)}
@@ -104,6 +108,7 @@ def aggregate(customers, workloads, records, start, end, currency, source):
         'prorated_count': sum(r['prorated_count'] for r in values),
         'totals': public(totals), 'customers': [public(r) for r in values],
         'months': [public(monthly[p]) for p in sorted(monthly)],
+        'distributors': [] if mixed else [{'name': k, 'amount': money(v)} for k, v in sorted(by_distributor.items(), key=lambda item: -item[1])],
         'basis': 'Recurring monthly ledger amounts are allocated by selected calendar days. Partial-month invoices and one-time/unknown-frequency amounts are unallocated. This is not measured daily Azure usage.',
     }
 

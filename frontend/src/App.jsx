@@ -29,6 +29,7 @@ const ActivityLog    = lazy(() => import('./pages/ActivityExplorer'));
 const Boq            = lazy(() => import('./pages/Boq'));
 const AzureBilling = lazy(() => import('./pages/AzureBilling'));
 const BillingDashboard = lazy(() => import('./pages/BillingDashboard'));
+const BillingEntries = lazy(() => import('./pages/BillingEntries'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const AccessIdentity     = lazy(() => import('./pages/AccessIdentity'));
 const NetworkVisualizer  = lazy(() => import('./pages/NetworkVisualizer'));
@@ -161,6 +162,8 @@ function AppShell() {
   const addTenantToList = useAppStore(s => s.addTenantToList);
   const loadMe          = useAppStore(s => s.loadMe);
   const me              = useAppStore(s => s.me);
+  // The signed-in app has one look: light with the orange brand.
+  useEffect(() => { document.documentElement.setAttribute('data-theme', 'light'); }, []);
   const meError         = useAppStore(s => s.meError);
 
   /*
@@ -293,6 +296,7 @@ function AppShell() {
             <Route path="/azure-billing" element={<AzureBilling />} />
             <Route path="/azure-billing/settings" element={<AzureBilling />} />
             <Route path="/azure-billing/dashboard" element={<BillingDashboard />} />
+            <Route path="/azure-billing/entries" element={<BillingEntries />} />
             {/* Commitments was removed; old links land on the Cost dashboard. */}
             <Route path="/commitments" element={<Navigate to="/" replace />} />
             {/* Deployment Assistant was removed; old links land on Build. */}

@@ -104,3 +104,36 @@ async def test_revised_import_conflict_rolls_back_all_new_customers(db):
     with pytest.raises(HTTPException):
         await ledger.commit_import(db, 1, 'one', ledger.parse_csv(changed, 2026), 'b.csv', 'blob/b')
     assert await ledger.one(db, "SELECT id FROM billing_customers WHERE name='New company'", ()) is None
+
+
+@pytest.mark.asyncio
+async def test_simple_entry_flow_stores_distributor_per_month_and_lists_names(db):
+    from routers import billing as customer_routes
+    user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
+    customer = await customer_routes.create_customer(customer_routes.CustomerInput(name='Acme Ltd'), user, db)
+    sub = await routes.create_workload(customer['id'], routes.WorkloadInput(name='Acme Prod'), user, db)
+    assert sub['po_id'] == '' and sub['distributor'] == ''
+    entry = await routes.create_entry(sub['id'], routes.EntryInput(period='2026-10', currency='INR', invoice_number='INV-9', customer_amount='1200', distributor_amount='900', distributor='Savex'), user, db)
+    assert entry['distributor'] == 'Savex' and entry['invoice_number'] == 'INV-9'
+    await routes.update_entry(entry['id'], routes.EntryInput(period='2026-10', currency='INR', customer_amount='1200', distributor_amount='950', distributor='Acme Distribution', revision=entry['revision']), user, db)
+    names = (await routes.list_distributors(user, db))['distributors']
+    assert names[:4] == ['Savex', 'Redington', 'Tata', 'Ingram'] and 'Acme Distribution' in names
+    assert (await routes.list_distributors({'account_id': 2}, db))['distributors'] == ['Savex', 'Redington', 'Tata', 'Ingram']
+
+
+@pytest.mark.asyncio
+async def test_bulk_customer_import_is_idempotent_sets_owners_and_exports(db):
+    from starlette.datastructures import UploadFile as StarletteUpload
+    user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
+    csv_bytes = 'Customer,Subscription,Owner\nAcme,Acme Prod,Ravi\nAcme,Acme Dev,\nBeta,,\n=Evil,Sub,Asha\n'.encode()
+    first = await routes.bulk_import_customers(StarletteUpload(io.BytesIO(csv_bytes), filename='c.csv'), user, db)
+    assert first == {'rows': 4, 'customers_created': 3, 'subscriptions_created': 3, 'owners_updated': 0}
+    again = await routes.bulk_import_customers(StarletteUpload(io.BytesIO(csv_bytes), filename='c.csv'), user, db)
+    assert again['customers_created'] == 0 and again['subscriptions_created'] == 0
+    owners = 'customer,subscription,owner\nACME,acme dev,Meera\n'.encode()
+    assert (await routes.bulk_import_customers(StarletteUpload(io.BytesIO(owners), filename='o.csv'), user, db))['owners_updated'] == 1
+    text = (await routes.export_customers_csv(user, db)).body.decode()
+    assert text.splitlines()[0] == 'Customer,Subscription,Owner'
+    assert 'Acme,Acme Dev,Meera' in text and "'=Evil,Sub,Asha" in text and 'Beta,,' in text
+    with pytest.raises(HTTPException):
+        await routes.bulk_import_customers(StarletteUpload(io.BytesIO(b'Name\nx\n'), filename='bad.csv'), user, db)

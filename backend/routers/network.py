@@ -16,6 +16,7 @@ from auth.dependencies import get_current_user
 from core.db import get_db
 from services import network_topology
 from services.token_resolver import authorize_subscriptions, resolve_tenant_token
+from services.response_cache import cached_endpoint
 
 router = APIRouter(prefix="/api/network", tags=["network"])
 
@@ -28,6 +29,7 @@ class TopologyRequest(BaseModel):
 
 
 @router.post("/topology")
+@cached_endpoint("network-topology")
 async def get_topology(
     body: TopologyRequest,
     current_user: dict = Depends(get_current_user),

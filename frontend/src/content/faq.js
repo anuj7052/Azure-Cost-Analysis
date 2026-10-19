@@ -18,7 +18,7 @@ export const FAQ = [
   },
   {
     q: 'What does it cost to run?',
-    a: 'The app reads the Azure Cost Management and Resource Graph APIs, which Microsoft does not charge for. If you connect a model endpoint for the assistants, that is billed by your own provider against your own key.',
+    a: 'The app reads the Azure Cost Management and Resource Graph APIs, which Microsoft does not charge for. If you connect a model endpoint for the assistant, that is billed by your own provider against your own key.',
   },
   {
     q: 'Can I use it across more than one tenant?',

@@ -2,14 +2,14 @@ import { useMsal } from '@azure/msal-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../../store/useAppStore';
 import { usePageRefresh } from '../../store/usePageRefresh';
-import { useTheme } from '../../store/useTheme';
 import { useNav } from '../../store/useNav';
-import { RefreshCw, LogOut, ChevronDown, Calendar, X, Moon, Sun, FileText, Menu, Search, Coins } from 'lucide-react';
+import { RefreshCw, LogOut, ChevronDown, Calendar, X, FileText, Menu, Search, Coins } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { evictAll, evictApiCache } from '../../utils/persistCache';
 import { getDisplayCurrency, getRateMeta, setDisplayCurrency } from '../../utils/currency';
 import { tenantLabel } from '../../utils/tenantName';
 import SubscriptionPicker from './SubscriptionPicker';
+import { requestFreshData } from '../../api/client';
 
 // The currencies worth offering: Azure's own pricing currency, the one this
 // product is most often billed in, and the three that cover the rest of the
@@ -39,8 +39,6 @@ export default function Topbar() {
     selectedTenantId, tenants, setSelectedTenant,
     imported, clearImported,
   } = useAppStore();
-  const theme       = useTheme(s => s.theme);
-  const toggleTheme = useTheme(s => s.toggleTheme);
   const toggleNav   = useNav(s => s.toggleNav);
   const [tenantOpen, setTenantOpen]     = useState(false);
   const [filterOpen, setFilterOpen]     = useState(false);
@@ -107,6 +105,7 @@ export default function Topbar() {
    */
    const hardRefresh = async () => {
      if (refreshLock.current) return;
+     requestFreshData();
      if (pageRefresh) {
        refreshLock.current = true;
        setRefreshing(true);
@@ -170,7 +169,7 @@ export default function Topbar() {
      * the row to wrap keeps every control reachable at every width; from `lg`
      * upwards `flex-nowrap` restores the original single-line bar exactly.
      */
-    <header className="sticky top-0 z-40 flex flex-wrap items-center gap-2 border-b border-slate-800/80 bg-slate-950/75 px-3 py-2 backdrop-blur-xl elevated sm:gap-3 sm:px-5 lg:h-16 lg:flex-nowrap lg:py-0">
+    <header className="app-topbar sticky top-0 z-40 flex flex-wrap items-center gap-2 border-b border-[#fed7aa] bg-[#fff7ed]/90 px-3 py-2 backdrop-blur-xl elevated sm:gap-3 sm:px-5 lg:h-16 lg:flex-nowrap lg:py-0">
       {/* Opens the navigation drawer. Only meaningful below lg, where the rail
           is off-canvas -- without it every page on a phone is unreachable. */}
       <button
@@ -462,30 +461,14 @@ export default function Topbar() {
       </div>
 
       {/* Theme toggle */}
-      <button
-        onClick={toggleTheme}
-        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-         className="relative flex w-10 h-10 shrink-0 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 items-center justify-center transition-colors overflow-hidden"
-      >
-        <Sun
-          className={`w-4 h-4 absolute transition-all duration-300 ${
-            theme === 'light' ? 'opacity-100 rotate-0 scale-100' : 'opacity-0 -rotate-90 scale-50'
-          }`}
-        />
-        <Moon
-          className={`w-4 h-4 absolute transition-all duration-300 ${
-            theme === 'dark' ? 'opacity-100 rotate-0 scale-100' : 'opacity-0 rotate-90 scale-50'
-          }`}
-        />
-      </button>
+
 
       {/* User avatar. `ml-auto` only matters on the wrapped tablet layout,
           where it pushes the account to the right edge of its row instead of
           leaving it stranded at the left; on the single-line bar the spacer
           has already done the pushing and this resolves to zero. */}
       <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-auto lg:ml-1">
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-xs font-bold text-[#fff] shrink-0">
+        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#f97316] to-[#c2410c] flex items-center justify-center text-xs font-bold text-[#fff] shrink-0">
           {initials}
         </div>
         <span className="text-sm text-slate-400 hidden md:block truncate max-w-[140px]">

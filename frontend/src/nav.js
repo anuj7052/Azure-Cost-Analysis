@@ -2,7 +2,7 @@ import {
   Activity, AlertTriangle, Boxes, ClipboardList, Cpu, FileCode, Gauge,
   GitCompareArrows, KeyRound, LayoutDashboard, Lightbulb, Network,
   Plug, Scale,
-  Search, Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
+  ReceiptText, Search, Server, Settings, Shield, ShieldAlert, ShieldCheck, Trash2,
   TrendingUp, UserCog, Users, Wallet,
 } from 'lucide-react';
 
@@ -46,6 +46,7 @@ export const SECTIONS = [
     title: 'Azure Billing',
     icon: FileCode,
     hub: '/azure-billing/dashboard',
+    flat: true,
     tagline: 'Customer profiles, invoices, cloud documents and profit/loss reconciliation.',
     // This CRM workspace is separate from the Azure infrastructure product
     // areas featured on the public landing page.
@@ -56,11 +57,15 @@ export const SECTIONS = [
         blurb: 'Customer, distributor and usage totals with exact-date allocations and workspace-scoped access.',
       },
       {
+        to: '/azure-billing/entries', label: 'Add entry', icon: ReceiptText,
+        blurb: 'Customer, subscription, month, invoice number, our billing and distributor amounts.',
+      },
+      {
         to: '/azure-billing', label: 'Customers', icon: Users, end: true,
         blurb: 'Manage customers, upload customer/distributor/usage bills and compare reviewed invoice totals.',
       },
       {
-        to: '/azure-billing/settings', label: 'Billing settings', icon: Settings,
+        to: '/azure-billing/settings', label: 'Settings', icon: Settings,
         blurb: 'Cloud document storage, invoice extraction and billing preferences.',
       },
     ],

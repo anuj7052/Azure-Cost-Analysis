@@ -26,3 +26,12 @@ def _forget_cached_metric_definitions():
     azure_metrics.clear_definitions_cache()
     yield
     azure_metrics.clear_definitions_cache()
+
+
+@pytest.fixture(autouse=True)
+def _forget_cached_responses():
+    """Each test computes its own answer rather than reading the last test's."""
+    from services import response_cache
+    response_cache.clear_memory()
+    yield
+    response_cache.clear_memory()

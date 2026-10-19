@@ -379,8 +379,22 @@ async function prepareRequest(config) {
  * reject before the request is ever sent and the `Cancel` it throws carries no
  * `config` for the response handler to read an id from.
  */
+/*
+ * Refresh asks the server for fresh data, skipping its response cache, for a
+ * short window after the button is pressed. Kept in sessionStorage so it also
+ * covers the full reload the Refresh button does on some pages.
+ */
+const FRESH_KEY = 'aca:fresh-until';
+export function requestFreshData(windowMs = 30000) {
+  try { window.sessionStorage.setItem(FRESH_KEY, String(Date.now() + windowMs)); } catch { /* storage blocked */ }
+}
+function wantsFreshData() {
+  try { return Number(window.sessionStorage.getItem(FRESH_KEY) || 0) > Date.now(); } catch { return false; }
+}
+
 api.interceptors.request.use(async (config) => {
   config.__inflightId = inflight.begin(config.url || '');
+  if (wantsFreshData()) config.headers = { ...(config.headers || {}), 'X-Refresh': '1' };
   try {
     return await prepareRequest(config);
   } catch (err) {
@@ -874,6 +888,9 @@ async function billingFileHeaders() {
 export const getBillingConnection = () => api.get('/billing/connection').then(r => r.data);
 export const fetchBillingDashboard = params => api.get('/billing/dashboard', { params }).then(r => r.data);
 export const saveBillingConnection = async body => api.put('/billing/connection', body, { headers: await billingFileHeaders() }).then(r => r.data);
+export const bulkImportBillingCustomers = file => { const form = new FormData(); form.append('file', file); return api.post('/billing/customers/bulk', form).then(r => r.data); };
+export const exportBillingCustomersCsv = () => api.get('/billing/customers-export.csv', { responseType: 'blob' }).then(r => r.data);
+export const listBillingDistributors = () => api.get('/billing/distributors').then(r => r.data);
 export const listBillingCustomers = () => api.get('/billing/customers').then(r => r.data);
 export const createBillingCustomer = body => api.post('/billing/customers', body).then(r => r.data);
 export const updateBillingCustomer = (id, body) => api.put(`/billing/customers/${encodeURIComponent(id)}`, body).then(r => r.data);

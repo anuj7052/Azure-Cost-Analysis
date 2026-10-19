@@ -722,6 +722,10 @@ async def _init_postgres():
             await conn.execute(pg.translate_schema(ddl))
         for statement in billing_indexes:
             await conn.execute(statement)
+        from services.billing_schema import MIGRATIONS as billing_migrations
+        for table, columns in billing_migrations.items():
+            for column, ddl in columns.items():
+                await conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}")
         for ddl in note_schemas.values():
             await conn.execute(pg.translate_schema(ddl))
         for statement in note_indexes:
@@ -804,6 +808,9 @@ async def init_db():
             await db.execute(ddl)
         for statement in billing_indexes:
             await db.execute(statement)
+        from services.billing_schema import MIGRATIONS as billing_migrations
+        for table, columns in billing_migrations.items():
+            await _add_missing_columns(db, table, columns)
         for ddl in note_schemas.values():
             await db.execute(ddl)
         for statement in note_indexes:

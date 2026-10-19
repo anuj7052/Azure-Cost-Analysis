@@ -28,7 +28,16 @@ export default defineConfig({
   build: {
     rolldownOptions: {
       output: {
-        codeSplitting: {},
+        // Vendor libraries in their own long-lived chunks: they change far
+        // less often than app code, so a deploy no longer forces visitors to
+        // re-download React, MSAL and the chart library.
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-react', test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/, priority: 30 },
+            { name: 'vendor-msal', test: /node_modules[\\/]@azure[\\/]msal/, priority: 25 },
+            { name: 'vendor-charts', test: /node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor)[\\/]/, priority: 20 },
+          ],
+        },
       },
     },
   },

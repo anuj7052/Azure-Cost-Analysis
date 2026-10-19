@@ -20,6 +20,7 @@ from services.analysis import latest_billing_month, resource_cost_index
 from services.cost_client import gather_by_subscription, query_costs
 from services.orphaned import find_orphaned_resources
 from services.token_resolver import resolve_tenant_token, subscription_names
+from services.response_cache import cached_endpoint
 
 router = APIRouter(prefix="/api/orphaned", tags=["orphaned"])
 
@@ -27,6 +28,7 @@ log = logging.getLogger(__name__)
 
 
 @router.post("", response_model=OrphanedResponse)
+@cached_endpoint("orphaned")
 async def get_orphaned_resources(
     body: OrphanedRequest,
     current_user: dict = Depends(get_current_user),

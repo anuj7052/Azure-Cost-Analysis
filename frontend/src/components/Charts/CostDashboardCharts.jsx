@@ -244,7 +244,7 @@ export function SpendOverTime({ series, daily, loading, error, currency, onRetry
  * Donut with a ranked list beside it. Shared by the service and subscription
  * breakdowns so both read the same way: hover a slice or a row to focus it.
  */
-function ShareBreakdown({ title, description, icon, items, loading, currency, emptyMessage }) {
+export function ShareBreakdown({ title, description, icon, items, loading, currency, emptyMessage, stacked = false }) {
   const [focus, setFocus] = useState(null);
   const data = useMemo(() => {
     const top = items.slice(0, TOP_SERVICES);
@@ -258,7 +258,7 @@ function ShareBreakdown({ title, description, icon, items, loading, currency, em
   return (
     <Card title={title} description={description} icon={icon}>
       {!data.length ? <Placeholder loading={loading} message={emptyMessage} /> : (
-        <div className="grid items-center gap-6 sm:grid-cols-[minmax(0,14rem)_1fr]">
+        <div className={`grid items-center gap-6 ${stacked ? '' : 'sm:grid-cols-[minmax(0,14rem)_1fr]'}`}>
           <div className="relative mx-auto h-56 w-56">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>

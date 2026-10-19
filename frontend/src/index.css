@@ -178,7 +178,7 @@ html[data-theme="light"] .aca-on-dark {
 }
 
 @layer components {
-  .bg-slate-950 { background-image: radial-gradient(circle at 20% 0%, rgb(30 64 175 / 0.12), transparent 30rem); }
+  .bg-slate-950 { background-image: radial-gradient(circle at 20% 0%, rgb(249 115 22 / 0.10), transparent 30rem); }
   .bg-slate-900 { background-color: rgb(15 23 42 / 0.82); }
   .border-slate-800 { border-color: rgb(51 65 85 / 0.72); }
   .rounded-2xl { border-radius: 1rem; }
@@ -313,7 +313,7 @@ button:active:not(:disabled):not(.fixed) { transform: scale(0.97); }
    a near-black page is close to invisible on a near-white one.
    ------------------------------------------------------------------------- */
 .aca-accent-text {
-  background-image: linear-gradient(90deg, #60a5fa, #67e8f9);
+  background-image: linear-gradient(90deg, #fb923c, #fbbf24);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -323,7 +323,7 @@ button:active:not(:disabled):not(.fixed) { transform: scale(0.97); }
    real weight on white — the tail of the phrase gets it, and a pale cyan
    leaves the last words looking half-erased. */
 html[data-theme="light"] .aca-accent-text {
-  background-image: linear-gradient(90deg, #1d4ed8, #0e7490);
+  background-image: linear-gradient(90deg, #c2410c, #ea580c);
 }
 
 @keyframes aca-rise  { from { height: 0; opacity: 0 } }
@@ -390,3 +390,49 @@ html[data-theme="light"] .recharts-legend-item-text { color: #334155 !important;
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Brand: orange everywhere the app used blue ──────────────────────────────
+   Remapping the blue ramp once turns every button, active tab, link, badge
+   and focus ring orange without touching each component. Placed last so it
+   wins over the earlier light-mode remap. */
+html {
+  --color-blue-50: #fff7ed;  --color-blue-100: #ffedd5; --color-blue-200: #fed7aa;
+  --color-blue-300: #fdba74; --color-blue-400: #fb923c; --color-blue-500: #f97316;
+  --color-blue-600: #ea580c; --color-blue-700: #c2410c; --color-blue-800: #9a3412;
+  --color-blue-900: #7c2d12; --color-blue-950: #431407;
+  --color-indigo-500: #f97316; --color-indigo-600: #ea580c; --color-indigo-700: #c2410c;
+}
+html[data-theme="light"] {
+  --color-blue-200: #9a3412; --color-blue-300: #9a3412; --color-blue-400: #c2410c;
+  --color-blue-900: #fed7aa; --color-blue-950: #ffedd5;
+}
+
+/* Top bar controls: orange outline, warm fill, orange on hover. */
+.app-topbar > button,
+.app-topbar > div > button,
+.app-topbar form > input,
+.app-topbar form input {
+  border-color: #fdba74 !important;
+  background-color: #ffffff !important;
+  color: #7c2d12 !important;
+}
+.app-topbar > button:hover,
+.app-topbar > div > button:hover { background-color: #ffedd5 !important; border-color: #f97316 !important; }
+.app-topbar svg { color: #ea580c; }
+.app-topbar input::placeholder { color: #c2410c99; }
+
+/* ── Warm surfaces: orange-tinted greys instead of blue-greys ─────────────── */
+html[data-theme="light"] {
+  --color-slate-950: #fbf3ec; /* page background, soft peach   */
+  --color-slate-900: #ffffff; /* cards stay white               */
+  --color-slate-800: #f3e3d6; /* hairlines / subtle fills       */
+  --color-slate-700: #e7cdb9; /* stronger borders               */
+  --color-slate-600: #7a6658; /* faint text                     */
+  --color-slate-500: #6b574a; /* muted text                     */
+  --color-slate-400: #5c4a3f; /* secondary text                 */
+  --color-slate-300: #45362d; /* body text                      */
+  --color-slate-200: #2f241e; /* strong text                    */
+  --color-slate-100: #1f1712; /* headings                       */
+  --app-bg: #fbf3ec;
+}
+html[data-theme="light"] body { background: #fbf3ec; }

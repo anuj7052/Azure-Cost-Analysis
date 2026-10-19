@@ -43,6 +43,7 @@ SCHEMAS = {
         period_start TEXT NOT NULL DEFAULT '', period_end TEXT NOT NULL DEFAULT '',
         frequency TEXT NOT NULL DEFAULT '', plan_name TEXT NOT NULL DEFAULT '',
         requirement_id TEXT NOT NULL DEFAULT '', distributor TEXT NOT NULL DEFAULT '',
+        owner TEXT NOT NULL DEFAULT '',
         notes TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
     )""",
@@ -53,6 +54,7 @@ SCHEMAS = {
         period TEXT NOT NULL, currency TEXT NOT NULL, invoice_number TEXT NOT NULL DEFAULT '',
         customer_amount TEXT, distributor_amount TEXT, usage_amount TEXT,
         payment_status TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+        distributor TEXT NOT NULL DEFAULT '',
         amount_basis TEXT NOT NULL DEFAULT 'unspecified', status TEXT NOT NULL DEFAULT 'recorded',
         source_import_id TEXT, source_row INTEGER, raw_cells TEXT NOT NULL DEFAULT '{}',
         revision INTEGER NOT NULL DEFAULT 1, updated_by TEXT NOT NULL,
@@ -73,3 +75,12 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_billing_documents_customer ON billing_documents(owner_id,customer_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_invoice_number ON billing_documents(owner_id,customer_id,kind,invoice_number) WHERE status='confirmed' AND invoice_number<>''",
 ]
+
+# Columns added after the first release, applied to databases that already exist.
+MIGRATIONS = {
+    "billing_ledger": {"distributor": "TEXT NOT NULL DEFAULT ''"},
+    "billing_workloads": {"owner": "TEXT NOT NULL DEFAULT ''"},
+}
+
+# Distributors offered by default; any other name typed in is remembered.
+DEFAULT_DISTRIBUTORS = ("Savex", "Redington", "Tata", "Ingram")

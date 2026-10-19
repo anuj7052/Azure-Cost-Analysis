@@ -33,7 +33,7 @@ function Bubble({ role, content }) {
         className={[
           'max-w-[88%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words',
           mine
-            ? 'bg-sky-600 text-white rounded-br-sm'
+            ? 'bg-blue-600 text-white rounded-br-sm'
             : 'bg-slate-800 text-slate-200 rounded-bl-sm',
         ].join(' ')}
       >
@@ -120,7 +120,7 @@ export default function AssistantWidget() {
         onClick={() => setOpen(true)}
         aria-label="Ask about your Azure"
         title="Ask about your Azure"
-        className="fixed bottom-5 right-5 z-40 h-[52px] w-[52px] rounded-full bg-sky-600 text-white shadow-lg shadow-sky-900/30 flex items-center justify-center hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+        className="fixed bottom-5 right-5 z-40 h-[52px] w-[52px] rounded-full bg-[#ea580c] text-white shadow-lg shadow-orange-900/30 flex items-center justify-center hover:bg-[#c2410c] focus:outline-none focus:ring-2 focus:ring-[#fdba74]"
       >
         <MessageCircle size={22} />
       </button>
@@ -136,7 +136,7 @@ export default function AssistantWidget() {
                  sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[380px] sm:h-[560px] sm:max-h-[78vh]"
     >
       <header className="flex items-start gap-2 px-4 py-3 border-b border-slate-800">
-        <MessageCircle size={16} className="text-sky-400 mt-0.5 shrink-0" />
+        <MessageCircle size={16} className="text-blue-400 mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-white">Ask about your Azure</p>
           <p className="text-[11px] text-slate-500 flex items-center gap-1">
@@ -145,7 +145,7 @@ export default function AssistantWidget() {
             <Link
               to="/provision"
               onClick={() => setOpen(false)}
-              className="text-sky-400 underline underline-offset-2"
+              className="text-blue-400 underline underline-offset-2"
             >
               Build
             </Link>.
@@ -197,7 +197,7 @@ export default function AssistantWidget() {
                   key={s}
                   type="button"
                   onClick={() => send(s)}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 transition hover:border-sky-500 hover:text-sky-300"
+                  className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 transition hover:border-blue-500 hover:text-blue-300"
                 >
                   {s}
                 </button>
@@ -238,13 +238,13 @@ export default function AssistantWidget() {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
           }}
           placeholder="Ask about subscriptions, spend or resources…"
-          className="flex-1 resize-none rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+          className="flex-1 resize-none rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
         />
         <button
           type="submit"
           disabled={sending || !input.trim()}
           aria-label="Send"
-          className="rounded-xl bg-sky-600 text-white px-3 py-2 disabled:opacity-40"
+          className="rounded-xl bg-blue-600 text-white px-3 py-2 disabled:opacity-40"
         >
           <Send size={15} />
         </button>

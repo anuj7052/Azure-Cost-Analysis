@@ -44,10 +44,10 @@ function initialCollapsed() {
 }
 
 const itemClass = ({ isActive }) =>
-  `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] ${
+  `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffffff] ${
     isActive
-      ? 'border border-[#fdba74] bg-[#ffedd5] text-[#9a3412] shadow-sm'
-      : 'text-[#7c4a2d] hover:bg-[#ffedd5] hover:text-[#7c2d12]'
+      ? 'border border-[#ffffff] bg-[#ffffff] text-[#c2410c] shadow-md shadow-[#7c2d12]/25'
+      : 'border border-transparent text-[#ffffff]/90 hover:bg-[#ffffff]/15 hover:text-[#ffffff]'
   }`;
 
 export default function Sidebar() {
@@ -104,7 +104,7 @@ export default function Sidebar() {
 
       <aside
         aria-label="Main sidebar"
-        className={`z-50 flex h-screen min-h-screen shrink-0 flex-col border-r border-[#fed7aa] bg-[#fff7ed] text-[#7c2d12] transition-transform duration-200 lg:sticky lg:inset-auto lg:top-0 lg:translate-x-0 lg:transition-[width] ${
+        className={`z-50 flex h-screen min-h-screen shrink-0 flex-col border-r border-[#b8461a] bg-[#dc5a22] text-[#ffffff] transition-transform duration-200 lg:sticky lg:inset-auto lg:top-0 lg:translate-x-0 lg:transition-[width] ${
           // Off-canvas below lg, an ordinary column from lg upwards.
           navOpen ? 'fixed inset-y-0 left-0 translate-x-0' : 'fixed inset-y-0 left-0 -translate-x-full'
         } ${
@@ -113,23 +113,23 @@ export default function Sidebar() {
           collapsed ? 'w-64 lg:w-[68px]' : 'w-64 lg:w-60'
         }`}
       >
-        <div className={`flex items-center gap-3 border-b border-[#fed7aa] py-5 ${iconOnly ? 'px-5 lg:justify-center lg:px-3' : 'px-5'}`}>
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#f97316] to-[#c2410c] shadow-sm">
-          <svg viewBox="0 0 96 96" className="h-5 w-5 fill-[#fff]" aria-hidden="true">
+        <div className={`flex items-center gap-3 border-b border-[#ffffff]/20 py-5 ${iconOnly ? 'px-5 lg:justify-center lg:px-3' : 'px-5'}`}>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#ffffff] shadow-sm">
+          <svg viewBox="0 0 96 96" className="h-5 w-5 fill-[#ea580c]" aria-hidden="true">
             <path d="M33.4 6.4L10 73.8h19.3l13.6-36.1 14.1 25.2-10.2 10.9H66l17.8 17.7H96L57.3 6.4H33.4z" />
           </svg>
         </div>
         {!iconOnly && (
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold leading-tight tracking-tight text-[#7c2d12]">Azure Cost</p>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-[#9a3412]">Intelligence</p>
+            <p className="truncate text-sm font-bold leading-tight tracking-tight text-[#ffffff]">Azure Cost</p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-[#ffffff]/80">Intelligence</p>
           </div>
         )}
         <button
           type="button"
           onClick={closeNav}
           aria-label="Close navigation"
-          className="-mr-1 rounded-lg p-1.5 text-[#9a3412] transition hover:bg-[#ffedd5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] lg:hidden"
+          className="-mr-1 rounded-lg p-1.5 text-[#ffffff] transition hover:bg-[#ffffff]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffffff] lg:hidden"
         >
           <X className="h-5 w-5" />
         </button>
@@ -157,11 +157,11 @@ export default function Sidebar() {
                 aria-label={section.title}
                 onClick={closeNav}
                 aria-current={isActive ? 'page' : undefined}
-                className={`relative flex h-11 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] ${
-                  isActive ? 'bg-[#ffedd5] text-[#9a3412]' : 'text-[#7c4a2d] hover:bg-[#ffedd5] hover:text-[#7c2d12]'
+                className={`relative flex h-11 w-full items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffffff] ${
+                  isActive ? 'bg-[#ffffff] text-[#c2410c]' : 'text-[#ffffff]/90 hover:bg-[#ffffff]/15 hover:text-[#ffffff]'
                 }`}
               >
-                {isActive && <span className="absolute left-0 h-6 w-0.5 rounded-r bg-[#c2410c]" />}
+                {isActive && <span className="absolute left-0 h-6 w-0.5 rounded-r bg-[#ffffff]" />}
                 <SectionIcon className="h-5 w-5" />
               </NavLink>
             );
@@ -187,8 +187,8 @@ export default function Sidebar() {
                 type="button"
                 onClick={() => toggle(section.key, open)}
                 aria-expanded={open}
-                className={`group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] ${
-                  isActive ? 'text-[#7c2d12]' : 'text-[#7c4a2d] hover:bg-[#ffedd5] hover:text-[#7c2d12]'
+                className={`group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffffff] ${
+                  isActive ? 'text-[#ffffff]' : 'text-[#ffffff]/90 hover:bg-[#ffffff]/15 hover:text-[#ffffff]'
                 }`}
               >
                 <SectionIcon className="h-4 w-4 shrink-0" />
@@ -198,7 +198,7 @@ export default function Sidebar() {
                 {/* A closed section still shows how much is inside, so nothing
                     feels hidden away. */}
                 {!open && (
-                  <span className="text-[10px] text-[#9a3412]">
+                  <span className="text-[10px] text-[#ffffff]/70">
                     {section.items.length}
                   </span>
                 )}
@@ -208,7 +208,7 @@ export default function Sidebar() {
               </button>
 
               {open && (
-                <div className="mb-2 ml-4 mt-0.5 space-y-0.5 border-l border-[#fed7aa] pl-2 animate-fade-in">
+                <div className="mb-2 ml-4 mt-0.5 space-y-0.5 border-l border-[#ffffff]/30 pl-2 animate-fade-in">
                   {section.items.map(item => (
                     <NavLink key={item.to} to={item.to} end={item.end || item.to === '/'} className={itemClass}>
                       <item.icon className="h-4 w-4 shrink-0" />
@@ -222,14 +222,14 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className={`border-t border-[#fed7aa] py-3 ${iconOnly ? 'px-2' : 'px-3'}`}>
+      <div className={`border-t border-[#ffffff]/20 py-3 ${iconOnly ? 'px-2' : 'px-3'}`}>
         <button
           type="button"
           onClick={() => setRail(!collapsed)}
           aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
           title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
           /* Collapsing only means anything where the rail is a column. */
-          className={`hidden w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-[#7c4a2d] transition-colors hover:bg-[#ffedd5] hover:text-[#7c2d12] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c2410c] lg:flex ${
+          className={`hidden w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-[#ffffff]/90 transition-colors hover:bg-[#ffffff]/15 hover:text-[#ffffff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffffff] lg:flex ${
             iconOnly ? 'justify-center px-0' : ''
           }`}
         >
@@ -238,7 +238,7 @@ export default function Sidebar() {
             : <><PanelLeftClose className="h-4 w-4 shrink-0" /><span>Collapse</span></>}
         </button>
         {!iconOnly && (
-          <p className="px-3 pt-2 text-[11px] text-[#9a3412]">Cloudledger v1.0</p>
+          <p className="px-3 pt-2 text-[11px] text-[#ffffff]/70">Cloudledger v1.0</p>
         )}
       </div>
       </aside>

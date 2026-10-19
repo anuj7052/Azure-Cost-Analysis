@@ -42,7 +42,8 @@ describe('finance-facing billing language', () => {
   });
   it('separates finance navigation from technical Azure filters', () => {
     const html = renderToStaticMarkup(<MemoryRouter initialEntries={['/azure-billing/settings']}><BillingPage title="Billing settings"><BillingEmpty title="No bills yet">Upload your first bill.</BillingEmpty></BillingPage></MemoryRouter>);
-    expect(html).toContain('Overview');
+    expect(html).toContain('Dashboard');
+    expect(html).toContain('Add entry');
     expect(html).toContain('Customers');
     expect(html).toContain('Settings');
     expect(html).toContain('aria-current="page"');

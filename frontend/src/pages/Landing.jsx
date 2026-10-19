@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Menu, Moon, Sun, X, Check, Cpu, Database, Network } from 'lucide-react';
+import { ChevronRight, Menu, Moon, Sun, X, Check, Cpu, Database, Network, Wallet, CalendarDays, Layers, BadgeCheck, ClipboardList, FileText, Gauge, ShieldCheck } from 'lucide-react';
 import { PRODUCT_SECTIONS as SECTIONS } from '../nav';
 import { GUIDES, guidePath } from '../content/guides';
 import { PRODUCTS, productPath } from '../content/products';
@@ -24,14 +24,14 @@ import ProductShowcase from '../components/Common/ProductShowcase';
  */
 
 const NAV_LINKS = [
-  { href: '#product', id: 'product', label: 'Product' },
+  { href: '#showcase', id: 'showcase', label: 'Product' },
   { href: '#how', id: 'how', label: 'How it works' },
-  { href: '#assistants', id: 'assistants', label: 'Assistants' },
+  { href: '#features', id: 'features', label: 'Features' },
   { href: '#security', id: 'security', label: 'Security' },
   { href: '#faq', id: 'faq', label: 'FAQ' },
 ];
 
-/** The Microsoft services the app reads. Matches the API Catalog page. */
+/** The Microsoft services the app reads. */
 const SOURCES = [
   'Cost Management', 'Resource Graph', 'Activity Log',
   'Microsoft Entra', 'Azure Advisor', 'Microsoft Defender',
@@ -58,8 +58,8 @@ const SECURITY = [
     body: 'Every call to Azure is made with your own delegated token. If Azure would refuse you, it refuses the app. No service principal quietly holds more access than the person using it.',
   },
   {
-    title: 'Explicit deployment controls',
-    body: 'Reporting reads. Creating resources through Build requires workspace-admin authorization, explicit confirmation and sufficient Azure permissions.',
+    title: 'Admin-only changes',
+    body: 'Reporting only reads. Anything that changes Azure — resize, delete, revoke, build — is limited to workspace admins, previewed first and needs explicit confirmation.',
   },
   {
     title: 'Uploads are not kept',
@@ -67,11 +67,23 @@ const SECURITY = [
   },
   {
     title: 'Bring your own model',
-    body: 'Point the assistants at your own OpenAI or Azure OpenAI endpoint. They run on your key, your quota and your data agreement, and stop at the daily limit you set.',
+    body: 'Point the assistant at your own OpenAI or Azure OpenAI endpoint. It runs on your key, your quota and your data agreement, and stops at the daily limit you set.',
   },
 ];
 
 const FAQ = PUBLIC_FAQ;
+
+/** What the app does today, one line each. Kept in step with the sidebar. */
+const FEATURES = [
+  { icon: Wallet, title: 'Cost dashboard', body: 'Pay-as-you-go, reserved (RI) and total spend at a glance, with a daily or monthly graph split by service.' },
+  { icon: CalendarDays, title: 'Day by day', body: 'Click any day to see every resource billed on it, and leave a dated note so your team knows why it moved.' },
+  { icon: Layers, title: 'Group any way', body: 'Split spend by service, subscription, resource group, meter or payment type — daily or monthly.' },
+  { icon: BadgeCheck, title: 'RI, PAYG and DR / ASR', body: 'Billing categories read from Azure’s own pricing model, down to each resource and meter.' },
+  { icon: ClipboardList, title: 'BOQ vs actual', body: 'Upload a Pricing Calculator estimate and see, in plain words, where you paid more or less than planned.' },
+  { icon: FileText, title: 'Azure Billing workspace', body: 'Customer ledgers, invoices and profit / loss per customer, with cloud-stored documents.' },
+  { icon: Gauge, title: 'Estate', body: 'Anomalies, change tracking, activity, idle VMs and orphaned resources, with admin-only actions.' },
+  { icon: ShieldCheck, title: 'Access & security', body: 'Unused or risky access, Advisor, Defender, policy and network — with a change history.' },
+];
 
 /** Guides shown on the homepage. The rest live on the hub. */
 const FEATURED_GUIDES = GUIDES.slice(0, 3);
@@ -115,7 +127,7 @@ function ProductMock() {
             <div
               key={section.key}
               className={`mb-1 flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[12px] ${
-                i === 0 ? 'bg-blue-600 text-white' : 'text-slate-500'
+                i === 0 ? 'bg-[#ea580c] text-white' : 'text-slate-500'
               }`}
             >
               <section.icon className="h-4 w-4 shrink-0" />
@@ -144,8 +156,8 @@ function ProductMock() {
                   // One hue, varied only by weight. A full-saturation bar chart
                   // in a hero is decoration; this reads as data at a glance and
                   // stops competing with the headline above it.
-                  background: i % 4 === selected ? 'var(--brand-accent)' : 'var(--color-blue-400)',
-                  opacity: 0.3 + (height / 100) * 0.45,
+                  background: i % 4 === selected ? 'linear-gradient(180deg, #fb923c, #ea580c)' : 'color-mix(in srgb, #64748b 55%, transparent)',
+                  opacity: 1,
                   animationDelay: `${i * 35}ms`,
                 }}
               />
@@ -156,85 +168,6 @@ function ProductMock() {
             <span className="preview-insight-mark" aria-hidden="true"><Check size={16} /></span>
             <div><p className="text-sm font-semibold">Follow the {services[selected].label.toLowerCase()} cost</p><p className="mt-1 text-xs leading-6 text-slate-400">{services[selected].text}</p><a href={services[selected].href} className="marketing-cta mt-2 text-xs">Explore the workflow <ChevronRight size={14} /></a></div>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Product areas as a segmented control. */
-function ProductAreas() {
-  const [active, setActive] = useState(SECTIONS[0].key);
-  const section = SECTIONS.find((s) => s.key === active) ?? SECTIONS[0];
-  const product = PRODUCTS.find((p) => p.key === section.key);
-  const items = section.items.filter((item) => !item.overview);
-
-  const onKeyDown = (event, key) => {
-    const index = SECTIONS.findIndex((item) => item.key === key);
-    const next = event.key === 'ArrowRight' ? (index + 1) % SECTIONS.length
-      : event.key === 'ArrowLeft' ? (index + SECTIONS.length - 1) % SECTIONS.length
-        : event.key === 'Home' ? 0
-          : event.key === 'End' ? SECTIONS.length - 1 : null;
-    if (next === null) return;
-    event.preventDefault();
-    setActive(SECTIONS[next].key);
-    document.getElementById(`tab-${SECTIONS[next].key}`)?.focus();
-  };
-
-  return (
-    <div className="mt-14">
-      <div className="flex justify-center">
-        <div role="tablist" aria-label="Product areas" className="marketing-segment flex max-w-full gap-1 overflow-x-auto p-1 [scrollbar-width:none]">
-          {SECTIONS.map((s) => {
-            const selected = s.key === section.key;
-            return (
-              <button
-                key={s.key}
-                role="tab"
-                id={`tab-${s.key}`}
-                aria-selected={selected}
-                aria-controls={`panel-${s.key}`}
-                tabIndex={selected ? 0 : -1}
-                onKeyDown={(event) => onKeyDown(event, s.key)}
-                onClick={() => setActive(s.key)}
-                className={`marketing-segment-item shrink-0 px-4 py-2 text-[15px] font-medium ${
-                  selected ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {s.title}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div
-        key={section.key}
-        role="tabpanel"
-        id={`panel-${section.key}`}
-        aria-labelledby={`tab-${section.key}`}
-        className="animate-fade-up mt-12"
-      >
-        <div className="mx-auto max-w-2xl text-center">
-          {/* Deliberately smaller than a section headline: this is a panel
-              label that changes as you switch tabs, and one word set at
-              display size would out-shout the heading it sits under. */}
-          <h3 className="text-2xl font-semibold tracking-tight sm:text-3xl">{section.title}</h3>
-          <p className="mt-3 text-[17px] leading-7 text-slate-400">{section.tagline}</p>
-          <a href={productPath(product)} className="marketing-cta mt-5 text-[17px]">
-            Explore {section.title}
-            <ChevronRight className="marketing-chevron h-4 w-4" />
-          </a>
-        </div>
-
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((item) => (
-            <a key={item.to} href={`${productPath(product)}#${item.to.slice(1)}`} className="marketing-link p-7">
-              <item.icon className="h-6 w-6 text-blue-400" />
-              <p className="mt-6 text-lg font-semibold">{item.label}</p>
-              <p className="mt-2 text-[15px] leading-7 text-slate-400">{item.blurb}</p>
-            </a>
-          ))}
         </div>
       </div>
     </div>
@@ -377,39 +310,43 @@ export default function Landing() {
       </header>
 
       {/* ── hero ───────────────────────────────────────────────────── */}
-      <section id="top" className="warm-hero px-5 pb-12 pt-28 text-center sm:pt-28">
-        <Reveal>
-          <p className="hero-kicker"><span aria-hidden="true" /> Your Azure estate. In perspective.</p>
-          <h1 className="marketing-display mx-auto max-w-4xl">
-            Know what Azure costs.
-            <br className="hidden sm:block" />
-            <span className="brand-text"> And why it changed.</span>
-          </h1>
+      <section id="top" className="warm-hero px-5 pb-16 pt-28 sm:pt-32">
+        <div className="mx-auto grid max-w-[1200px] items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+          <Reveal className="text-center lg:text-left">
+            <p className="hero-kicker"><span aria-hidden="true" /> Azure cost, explained — for finance and cloud teams</p>
+            <h1 className="marketing-display hero-title">
+              Know what Azure costs. <span className="brand-text">And exactly why.</span>
+            </h1>
+            <p className="marketing-lead mx-auto mt-6 max-w-xl lg:mx-0">
+              Daily spend down to the resource, RI vs pay-as-you-go, BOQ vs actual and customer billing —
+              in one place, read with your own Azure permissions.
+            </p>
+            <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
+              <button onClick={signIn} className="brand-button rounded-full px-7 py-3 text-[16px] font-semibold">
+                Sign in with Microsoft
+              </button>
+              <a href="#features" className="ghost-button inline-flex items-center gap-1.5 rounded-full px-6 py-3 text-[15px] font-medium">
+                Explore features
+                <ChevronRight className="h-4 w-4" />
+              </a>
+            </div>
+            <div className="hero-proof hero-proof-left" aria-label="Product highlights">{['Microsoft Entra sign-in', 'Read-only reporting', 'Resource-level detail'].map(label => <span key={label}><Check size={14} aria-hidden="true" />{label}</span>)}</div>
+          </Reveal>
 
-          <p className="marketing-lead mx-auto mt-7 max-w-2xl">
-            Cost, running resources, changes and access across every Azure tenant you can reach —
-            read with your own permissions.
-          </p>
+          <Reveal delay={120}>
+            <div ref={heroRef} className="will-change-transform">
+              <ProductMock />
+            </div>
+            <p className="mt-3 text-center text-[12px] text-slate-500">
+              Illustration only — the app shows figures from your own Azure account.
+            </p>
+          </Reveal>
+        </div>
 
-          <div className="mt-7 flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-8">
-            <button onClick={signIn} className="brand-button rounded-full px-7 py-3 text-[17px] font-semibold">
-              Sign in with Microsoft
-            </button>
-            <a href="#showcase" className="marketing-cta text-[17px]">
-              See how it works
-              <ChevronRight className="marketing-chevron h-4 w-4" />
-            </a>
+        <Reveal className="mx-auto max-w-[1200px]">
+          <div className="hero-stats" aria-label="At a glance">
+            {[['Day-level', 'cost detail'], ['RI · PAYG', 'split by Azure'], ['0', 'agents to install'], ['Read-only', 'by default']].map(([v, l]) => <div key={l}><strong>{v}</strong><span>{l}</span></div>)}
           </div>
-          <div className="hero-proof" aria-label="Product highlights">{['Microsoft Entra sign-in', 'Read-only reporting', 'Resource-level detail'].map(label => <span key={label}><Check size={14} aria-hidden="true" />{label}</span>)}</div>
-        </Reveal>
-
-        <Reveal delay={120} className="mx-auto mt-9 max-w-[980px]">
-          <div ref={heroRef} className="will-change-transform">
-            <ProductMock />
-          </div>
-          <p className="mt-4 text-[12px] text-slate-400">
-            Illustration only. The app shows figures read from your own Azure account, never sample data.
-          </p>
         </Reveal>
       </section>
 
@@ -427,53 +364,8 @@ export default function Landing() {
 
       <ProductShowcase />
 
-      {/* ── platform ───────────────────────────────────────────────── */}
-      <section className="px-5 py-16 sm:py-20">
-        <div className="mx-auto max-w-[1024px]">
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <p className="marketing-eyebrow">One connected platform</p>
-            <h2 className="marketing-headline mt-3">Follow the question. Get the context behind it.</h2>
-          </Reveal>
-
-          <div className="mt-14 grid gap-4 sm:grid-cols-2">
-            {PRODUCTS.map((product, index) => {
-              const Icon = SECTIONS.find((s) => s.key === product.key).icon;
-              return (
-                <Reveal key={product.key} delay={index * 60}>
-                  <a href={productPath(product)} className="marketing-link platform-card flex h-full flex-col p-7 sm:p-9">
-                    <div className="flex items-center justify-between"><span className="platform-icon"><Icon size={24} /></span><span className="text-xs text-slate-400">0{index + 1}</span></div>
-                    <h3 className="mt-8 text-2xl font-semibold tracking-tight">{product.label}</h3>
-                    <p className="mt-3 flex-1 text-[15px] leading-7 text-slate-400">{product.description}</p>
-                    <p className="platform-outcome">{product.outcome}</p>
-                    <span className="marketing-cta mt-7 text-[15px]">
-                      Learn more
-                      <ChevronRight className="marketing-chevron h-4 w-4" />
-                    </span>
-                  </a>
-                </Reveal>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* ── product areas ──────────────────────────────────────────── */}
-      <section id="product" className="scroll-mt-12 px-5 py-24 sm:py-32" style={{ background: 'var(--surface-raised)' }}>
-        <div className="mx-auto max-w-[1024px]">
-          <Reveal className="mx-auto max-w-3xl text-center">
-            <p className="marketing-eyebrow">Azure cost analysis</p>
-            <h2 className="marketing-headline mt-3">Understand your cloud bill, down to the resource.</h2>
-            <p className="marketing-lead mt-5">
-              Compare spend month by month, investigate daily changes, and review reservations and
-              savings plans — with billing, inventory and access in one place.
-            </p>
-          </Reveal>
-          <ProductAreas />
-        </div>
-      </section>
-
       {/* ── how it works ───────────────────────────────────────────── */}
-      <section id="how" className="scroll-mt-12 px-5 py-24 sm:py-32">
+      <section id="how" className="scroll-mt-12 px-5 py-16 sm:py-20">
         <div className="mx-auto max-w-[1024px]">
           <Reveal className="mx-auto max-w-2xl text-center">
             <p className="marketing-eyebrow">How it works</p>
@@ -484,14 +376,13 @@ export default function Landing() {
             </p>
           </Reveal>
 
-          <ol className="mt-16 grid gap-12 md:grid-cols-3">
+          <ol className="mt-12 grid gap-3 md:grid-cols-3">
             {STEPS.map((step, i) => (
               <Reveal key={step.title} delay={i * 70}>
-                <li>
-                  <span className="text-[15px] font-semibold text-blue-400">{String(i + 1).padStart(2, '0')}</span>
-                  <hr className="marketing-rule mt-4" />
-                  <h3 className="mt-5 text-xl font-semibold tracking-tight">{step.title}</h3>
-                  <p className="mt-3 text-[15px] leading-7 text-slate-400">{step.body}</p>
+                <li className="feature-card">
+                  <span className="text-[15px] font-semibold" style={{ color: 'var(--brand-accent)' }}>{String(i + 1).padStart(2, '0')}</span>
+                  <h3 className="mt-3 text-[17px] font-semibold tracking-tight">{step.title}</h3>
+                  <p className="mt-2 text-[14px] leading-6 text-slate-400">{step.body}</p>
                 </li>
               </Reveal>
             ))}
@@ -499,62 +390,42 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── assistants ─────────────────────────────────────────────── */}
-      <section id="assistants" className="scroll-mt-12 px-5 py-24 sm:py-32" style={{ background: 'var(--surface-raised)' }}>
-        <div className="mx-auto max-w-[1024px]">
+      {/* ── features ──────────────────────────────────────────────── */}
+      <section id="features" className="scroll-mt-12 px-5 py-16 sm:py-20" style={{ background: 'var(--surface-raised)' }}>
+        <div className="mx-auto max-w-[1120px]">
           <Reveal className="mx-auto max-w-2xl text-center">
-            <p className="marketing-eyebrow">Assistants</p>
-            <h2 className="marketing-headline mt-3">Two assistants, kept apart on purpose.</h2>
-            <p className="marketing-lead mt-5">
-              Asking a question and building infrastructure have different consequences, so they are
-              different tools. The one that can spend money is deliberately harder to reach.
-            </p>
+            <p className="marketing-eyebrow">Features</p>
+            <h2 className="marketing-headline mt-3">Understand your cloud bill, down to the resource.</h2>
+            <p className="marketing-lead mt-5">Built for finance and cloud teams. Every figure comes from your own Azure account.</p>
           </Reveal>
-
-          <div className="mt-14 grid gap-4 lg:grid-cols-2">
-            <Reveal>
-              <div className="h-full p-9 sm:p-11" style={{ background: 'var(--surface-base)', borderRadius: '1.25rem' }}>
-                <h3 className="text-2xl font-semibold tracking-tight">Ask anything</h3>
-                <p className="mt-3 text-[15px] leading-7 text-slate-400">
-                  A bubble on every page, because questions about spend arrive while you are looking
-                  at spend. It answers from your subscriptions, costs and running resources.
-                </p>
-                <ul className="mt-8 space-y-4 text-[15px] leading-7 text-slate-400">
-                  {[
-                    'Read-only by construction — it is given no tool that changes anything',
-                    'Says “Not available” rather than filling a gap with a guess',
-                    'Never names a resource that a tool did not return',
-                  ].map((t) => (
-                    <li key={t} className="pt-4" style={{ borderTop: '1px solid var(--hairline)' }}>{t}</li>
-                  ))}
-                </ul>
-              </div>
-            </Reveal>
-
-            <Reveal delay={70}>
-              <div className="h-full p-9 sm:p-11" style={{ background: 'var(--surface-base)', borderRadius: '1.25rem' }}>
-                <h3 className="text-2xl font-semibold tracking-tight">Deployment assistant</h3>
-                <p className="mt-3 text-[15px] leading-7 text-slate-400">
-                  Upload a Pricing Calculator estimate or describe what you need. It drafts the
-                  resources, prices them against public retail rates and writes Terraform or Bicep.
-                </p>
-                <ul className="mt-8 space-y-4 text-[15px] leading-7 text-slate-400">
-                  {[
-                    'Review generated templates and pricing assumptions before acting',
-                    'Lines it could not represent are named, with the reason',
-                    'Build deployment requires confirmation, an admin role and Azure permissions',
-                  ].map((t) => (
-                    <li key={t} className="pt-4" style={{ borderTop: '1px solid var(--hairline)' }}>{t}</li>
-                  ))}
-                </ul>
-              </div>
-            </Reveal>
+          <div className="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {FEATURES.map((f, i) => (
+              <Reveal key={f.title} delay={i * 40}>
+                <div className="feature-card">
+                  <span className="platform-icon"><f.icon size={20} /></span>
+                  <h3 className="mt-5 text-[17px] font-semibold tracking-tight">{f.title}</h3>
+                  <p className="mt-2 text-[14px] leading-6 text-slate-400">{f.body}</p>
+                </div>
+              </Reveal>
+            ))}
           </div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {PRODUCTS.map((product) => (
+              <a key={product.key} href={productPath(product)} className="feature-card flex items-center justify-between gap-3 !py-4">
+                <span><span className="block text-[14px] font-semibold">{product.label}</span><span className="block text-[12px] text-slate-400">{product.outcome}</span></span>
+                <ChevronRight className="h-4 w-4 shrink-0" style={{ color: 'var(--brand-accent)' }} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+          <Reveal className="mt-8 rounded-2xl p-6 text-center sm:p-7" style={{ background: 'var(--surface-base)', border: '1px solid var(--hairline)' }}>
+            <p className="text-[15px] font-semibold">Plus a read-only assistant on every page</p>
+            <p className="mx-auto mt-2 max-w-2xl text-[14px] leading-6 text-slate-400">Ask about your spend in plain words. It answers only from your subscriptions and costs, says “Not available” instead of guessing, and cannot change anything.</p>
+          </Reveal>
         </div>
       </section>
 
       {/* ── security ───────────────────────────────────────────────── */}
-      <section id="security" className="scroll-mt-12 px-5 py-24 sm:py-32">
+      <section id="security" className="scroll-mt-12 px-5 py-16 sm:py-20">
         <div className="mx-auto max-w-[1024px]">
           <Reveal className="mx-auto max-w-2xl text-center">
             <p className="marketing-eyebrow">Security</p>
@@ -565,13 +436,12 @@ export default function Landing() {
             </p>
           </Reveal>
 
-          <div className="mt-16 grid gap-x-16 gap-y-12 md:grid-cols-2">
+          <div className="mt-12 grid gap-3 md:grid-cols-2">
             {SECURITY.map((item, i) => (
               <Reveal key={item.title} delay={i * 60}>
-                <div>
-                  <hr className="marketing-rule" />
-                  <h3 className="mt-6 text-xl font-semibold tracking-tight">{item.title}</h3>
-                  <p className="mt-3 text-[15px] leading-7 text-slate-400">{item.body}</p>
+                <div className="feature-card">
+                  <h3 className="flex items-center gap-2 text-[17px] font-semibold tracking-tight"><ShieldCheck size={18} style={{ color: 'var(--brand-accent)' }} aria-hidden="true" />{item.title}</h3>
+                  <p className="mt-3 text-[14px] leading-6 text-slate-400">{item.body}</p>
                 </div>
               </Reveal>
             ))}
@@ -580,7 +450,7 @@ export default function Landing() {
       </section>
 
       {/* ── guides ─────────────────────────────────────────────────── */}
-      <section className="px-5 py-24 sm:py-32" style={{ background: 'var(--surface-raised)' }}>
+      <section className="px-5 py-16 sm:py-20" style={{ background: 'var(--surface-raised)' }}>
         <div className="mx-auto max-w-[1024px]">
           <Reveal className="mx-auto max-w-2xl text-center">
             <p className="marketing-eyebrow">Learning centre</p>
@@ -594,8 +464,8 @@ export default function Landing() {
           <div className="mt-14 grid gap-4 md:grid-cols-3">
             {FEATURED_GUIDES.map((guide, i) => (
               <Reveal key={guide.slug} delay={i * 60}>
-                <a href={guidePath(guide)} className="marketing-link flex h-full flex-col p-8" style={{ background: 'var(--surface-base)' }}>
-                  <p className="text-[13px] text-blue-400">{guide.topic}</p>
+                <a href={guidePath(guide)} className="feature-card flex flex-col">
+                  <p className="text-[13px]" style={{ color: 'var(--brand-accent)' }}>{guide.topic}</p>
                   <h3 className="mt-4 text-lg font-semibold leading-snug tracking-tight">{guide.title}</h3>
                   <p className="mt-3 flex-1 text-[15px] leading-7 text-slate-400">{guide.description}</p>
                   <span className="marketing-cta mt-6 text-[15px]">
@@ -617,7 +487,7 @@ export default function Landing() {
       </section>
 
       {/* ── faq ────────────────────────────────────────────────────── */}
-      <section id="faq" className="scroll-mt-12 px-5 py-24 sm:py-32">
+      <section id="faq" className="scroll-mt-12 px-5 py-16 sm:py-20">
         <div className="mx-auto max-w-3xl">
           <Reveal className="text-center">
             <p className="marketing-eyebrow">FAQ</p>
@@ -630,7 +500,7 @@ export default function Landing() {
                 <details className="group" style={{ borderTop: i === 0 ? '1px solid var(--hairline)' : undefined, borderBottom: '1px solid var(--hairline)' }}>
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-6 py-6 text-[17px] font-medium">
                     {item.q}
-                    <span className="shrink-0 text-blue-400 transition-transform group-open:rotate-45">
+                    <span className="shrink-0 transition-transform group-open:rotate-45" style={{ color: 'var(--brand-accent)' }}>
                       <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
                         <path d="M9 3.5v11M3.5 9h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                       </svg>
@@ -645,8 +515,8 @@ export default function Landing() {
       </section>
 
       {/* ── closing ────────────────────────────────────────────────── */}
-      <section className="px-5 py-24 text-center sm:py-32" style={{ background: 'var(--surface-raised)' }}>
-        <Reveal className="mx-auto max-w-2xl">
+      <section className="px-5 py-20 text-center sm:py-24">
+        <Reveal className="closing-band">
           <h2 className="marketing-headline">See your own numbers.</h2>
           <p className="marketing-lead mt-5">
             Sign in with your work account, connect a tenant, and start with a read-only cost review.

@@ -37,15 +37,13 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!ready) return undefined;
-    let cancelled = false;
     useAppStore.getState().primeDashboardCache();
-    // Costs first, then the rest, so the tenant is not throttled by a burst.
-    (async () => {
-      await loadCosts();
-      if (cancelled || !useAppStore.getState().costData) return;
-      await Promise.allSettled([loadPricing(), daily ? loadDailyCosts(null) : Promise.resolve()]);
-    })();
-    return () => { cancelled = true; };
+    // All three at once: each paints its own card or chart as soon as it
+    // lands. The backend already paces queries per subscription, so starting
+    // them together no longer risks a throttling burst, and the cards no
+    // longer wait behind the slowest monthly summary.
+    Promise.allSettled([loadCosts(), loadPricing(), daily ? loadDailyCosts(null) : Promise.resolve()]);
+    return undefined;
   }, [ready, selectedTenantId, selectedSubscriptionIds.join(','), dateKey, daily]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const series = useMemo(() => {

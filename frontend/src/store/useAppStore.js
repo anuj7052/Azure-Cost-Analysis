@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe, fetchOrphaned, fetchPricing, fetchCompute, fetchActivity, fetchPolicy, fetchDefender, fetchAdvisor, fetchAccessReview, fetchRoleAssignments } from '../api/client';
+import { fetchTenants, fetchSubscriptions, fetchCosts, fetchCostRows, fetchServices, fetchRgCosts, fetchDailyCosts, fetchBandwidth, fetchMe, fetchOrphaned, fetchPricing, fetchCompute, fetchActivity, fetchPolicy, fetchDefender, fetchAdvisor, fetchAccessReview, fetchRoleAssignments, requestFreshData } from '../api/client';
 import { buildBandwidthSummary, buildCostSummary, buildRgSummary, buildServiceList, filterRows, mergeImports } from '../utils/importAnalytics';
 import { readSavedViews, removeView, saveView, writeSavedViews } from '../utils/costExplorer';
 import { readCache, readPrefs, writeCache, writePrefs, evictApiCache, rememberAccount } from '../utils/persistCache';
@@ -1152,6 +1152,7 @@ export const useAppStore = create((set, get) => ({
    */
   refreshAll: async () => {
     const s = get();
+    requestFreshData();
     evictApiCache();
     if (s.imported) {
       s.recomputeImported();
