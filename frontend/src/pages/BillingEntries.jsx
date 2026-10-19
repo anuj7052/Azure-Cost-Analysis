@@ -52,7 +52,7 @@ export default function BillingEntries() {
   const [workloadId, setWorkloadId] = useState('');
   const [form, setForm] = useState(EMPTY);
   const [distributors, setDistributors] = useState(['Savex', 'Redington', 'Tata', 'Ingram', 'Tech Data']);
-  const [adding, setAdding] = useState('');
+  const [adding, setAdding] = useState(params.get('new') === 'customer' ? 'customer' : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef(null);

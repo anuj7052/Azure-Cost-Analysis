@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowUpRight, Building2, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Cloud, FileText, Layers, RefreshCw, ShieldCheck, TrendingUp, Wallet } from 'lucide-react';
+import { ArrowUpRight, Building2, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Cloud, FileText, Layers, Plus, RefreshCw, Search, ShieldCheck, TrendingUp, Wallet } from 'lucide-react';
 import { fetchBillingDashboard, listBillingCustomers } from '../api/client';
 import { errorMessage } from '../utils/apiError';
 import { dashboardFilters, dashboardPayload, exactDays, monthRange, rollingRange } from '../utils/billingDashboard';
@@ -68,29 +68,53 @@ function DashboardReport({ filters, onMetadata }) {
       <ShareBreakdown title="Distributor amount" description="Split by distributor." icon={FileText} items={distributorItems} loading={loading} currency={currency} emptyMessage="No distributor amounts for this period." stacked listLimit={5} />
       <ShareBreakdown title="Where our billing goes" description="Distributor cost versus what we keep." icon={TrendingUp} items={splitItems} loading={loading} currency={currency} emptyMessage="Needs both billing and distributor amounts." stacked />
     </div>
-    {customers.length > 0 && (
-      <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">By customer</CardTitle><CardDescription>Click a customer to open it.</CardDescription></CardHeader>
-        <CardContent className="overflow-x-auto pt-0">
-          <table className="w-full min-w-[34rem] text-sm">
-            <thead><tr className="border-b border-slate-800 text-left text-xs text-slate-500">{['Customer', 'Our billing', 'Distributor', 'Profit / loss'].map(h => <th key={h} className={`px-3 py-2 font-medium ${h !== 'Customer' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
-            <tbody>{customers.map(r => {
-              const p = r.customer_amount != null && r.distributor_amount != null ? Number(r.customer_amount) - Number(r.distributor_amount) : null;
-              return <tr key={r.customer_id} className="border-b border-slate-800/60 last:border-0">
-                <td className="px-3 py-2.5"><Link to={`/azure-billing/entries?customer=${encodeURIComponent(r.customer_id)}`} className="font-medium text-slate-200 hover:text-[#c2410c] hover:underline">{r.name}</Link></td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmtShort(r.customer_amount)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmtShort(r.distributor_amount)}</td>
-                <td className={`px-3 py-2.5 text-right font-semibold tabular-nums ${p == null ? 'text-slate-500' : p >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmtShort(p)}</td>
-              </tr>;
-            })}</tbody>
-          </table>
-        </CardContent>
-      </Card>
-    )}
+    <CustomerTable rows={result?.customers || []} fmtShort={fmtShort} />
   </div>;
 }
 
 const noop = () => {};
+
+function CustomerTable({ rows, fmtShort }) {
+  const [all, setAll] = useState([]);
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    let live = true;
+    listBillingCustomers().then(d => { if (live) setAll((d.items || []).filter(c => !c.archived)); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const byId = new Map(rows.map(r => [r.customer_id, r]));
+  const merged = [
+    ...all.map(c => ({ customer_id: c.id, name: c.name, detail: c.contact_email || (c.company !== c.name ? c.company : '') || '', ...(byId.get(c.id) || {}) })),
+    ...rows.filter(r => !all.some(c => c.id === r.customer_id)),
+  ].sort((x, y) => (Number(y.customer_amount) || 0) - (Number(x.customer_amount) || 0) || x.name.localeCompare(y.name));
+  const q = query.trim().toLowerCase();
+  const shown = q ? merged.filter(r => [r.name, r.detail].some(v => (v || '').toLowerCase().includes(q))) : merged;
+  return <Card>
+    <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pb-3">
+      <div><CardTitle className="text-base">Customers ({merged.length})</CardTitle><CardDescription>Click a customer to open it.</CardDescription></div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="relative"><span className="sr-only">Search customers</span><Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search customer…" className="h-9 w-56 rounded-lg border border-slate-700 bg-slate-950 pl-9 pr-3 text-sm text-slate-100 outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c]" /></label>
+        <Link to="/azure-billing/entries?new=customer" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#ea580c] px-3 text-sm font-semibold text-[#ffffff] hover:bg-[#c2410c]"><Plus size={15} />Create customer</Link>
+      </div>
+    </CardHeader>
+    <CardContent className="overflow-x-auto pt-0">
+      <table className="w-full min-w-[34rem] text-sm">
+        <thead><tr className="border-b border-slate-800 text-left text-xs text-slate-500">{['Customer', 'Our billing', 'Distributor', 'Profit / loss'].map(h => <th key={h} className={`px-3 py-2 font-medium ${h !== 'Customer' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
+        <tbody>{shown.map(r => {
+          const p = r.customer_amount != null && r.distributor_amount != null ? Number(r.customer_amount) - Number(r.distributor_amount) : null;
+          return <tr key={r.customer_id} className="border-b border-slate-800/60 last:border-0">
+            <td className="px-3 py-2.5"><Link to={`/azure-billing/entries?customer=${encodeURIComponent(r.customer_id)}`} className="font-medium text-slate-200 hover:text-[#c2410c] hover:underline">{r.name}</Link>{r.detail && <p className="text-xs text-slate-500">{r.detail}</p>}</td>
+            <td className="px-3 py-2.5 text-right tabular-nums">{fmtShort(r.customer_amount)}</td>
+            <td className="px-3 py-2.5 text-right tabular-nums">{fmtShort(r.distributor_amount)}</td>
+            <td className={`px-3 py-2.5 text-right font-semibold tabular-nums ${p == null ? 'text-slate-500' : p >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmtShort(p)}</td>
+          </tr>;
+        })}
+        {!shown.length && <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-500">{q ? `No customer matches "${query}".` : 'No customers yet. Create your first one.'}</td></tr>}</tbody>
+      </table>
+    </CardContent>
+  </Card>;
+}
 
 function periodLabel(filters) {
   const fmt = (d, opts) => new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', opts);
