@@ -64,8 +64,8 @@ function DashboardReport({ filters, onMetadata }) {
       ))}
     </div>
     <div className="grid gap-5 xl:grid-cols-3">
-      <ShareBreakdown title="Billing by customer" description={`Our billing, ${currency}. Hover a slice or row.`} icon={Building2} items={billingItems} loading={loading} currency={currency} emptyMessage="No billing entered for this period." stacked />
-      <ShareBreakdown title="Distributor amount" description="Split by distributor." icon={FileText} items={distributorItems} loading={loading} currency={currency} emptyMessage="No distributor amounts for this period." stacked />
+      <ShareBreakdown title="Billing by customer" description={`Our billing, ${currency}. Hover a slice or row.`} icon={Building2} items={billingItems} loading={loading} currency={currency} emptyMessage="No billing entered for this period." stacked listLimit={5} />
+      <ShareBreakdown title="Distributor amount" description="Split by distributor." icon={FileText} items={distributorItems} loading={loading} currency={currency} emptyMessage="No distributor amounts for this period." stacked listLimit={5} />
       <ShareBreakdown title="Where our billing goes" description="Distributor cost versus what we keep." icon={TrendingUp} items={splitItems} loading={loading} currency={currency} emptyMessage="Needs both billing and distributor amounts." stacked />
     </div>
     {customers.length > 0 && (
