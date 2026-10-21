@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Check, Download, FileUp, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import {
-  bulkImportBillingCustomers, createBillingCustomer, deleteBillingItem, exportBillingCustomersCsv, getBillingLedger, listBillingCustomers, listBillingDistributors,
+  bulkImportBillingCustomers, createBillingCustomer, exportBillingEntriesCsv, deleteBillingItem, getBillingLedger, listBillingCustomers, listBillingDistributors,
   saveBillingEntry, saveBillingWorkload, updateBillingCustomer, listBillingExtraCharges, createBillingExtraCharge, deleteBillingExtraCharge,
 } from '../api/client';
 import { errorMessage } from '../utils/apiError';
@@ -42,7 +42,7 @@ function AddInline({ placeholder, onAdd, busy, onCancel, initial = '', label = '
 }
 
 const EXTRA_TYPES = ['Implementation', 'Migration', 'Consulting', 'Support', 'Licence', 'Training', 'Other'];
-const EXTRA_EMPTY = { charge_type: 'Implementation', description: '', period: new Date().toISOString().slice(0, 7), invoice_number: '', amount: '', distributor: '', distributor_amount: '', amount_basis: 'gross' };
+const EXTRA_EMPTY = { charge_type: 'Implementation', description: '', period: new Date().toISOString().slice(0, 7), invoice_number: '', amount: '', distributor: '', distributor_invoice: '', distributor_amount: '', amount_basis: 'gross' };
 
 function ExtraCharges({ customerId, canEdit, items, setItems, distributors = [] }) {
   const [form, setForm] = useState(EXTRA_EMPTY);
@@ -52,7 +52,7 @@ function ExtraCharges({ customerId, canEdit, items, setItems, distributors = [] 
     if (!(Number(form.amount) > 0)) { toast.error('Enter an amount above zero'); return; }
     setBusy(true);
     try {
-      const saved = await createBillingExtraCharge(customerId, { ...form, currency: 'INR', description: form.description.trim(), invoice_number: form.invoice_number.trim(), distributor: form.distributor.trim(), distributor_amount: form.distributor_amount === '' ? null : form.distributor_amount });
+      const saved = await createBillingExtraCharge(customerId, { ...form, currency: 'INR', description: form.description.trim(), invoice_number: form.invoice_number.trim(), distributor: form.distributor.trim(), distributor_invoice: form.distributor_invoice.trim(), distributor_amount: form.distributor_amount === '' ? null : form.distributor_amount });
       setItems(list => [saved, ...(list || [])].sort((a, b) => b.period.localeCompare(a.period)));
       setForm(f => ({ ...EXTRA_EMPTY, period: f.period, charge_type: f.charge_type, amount_basis: f.amount_basis }));
       toast.success('Extra charge added');
@@ -80,6 +80,7 @@ function ExtraCharges({ customerId, canEdit, items, setItems, distributors = [] 
         <div><Label htmlFor="ex-amount">Our billing amount (INR)</Label><Input id="ex-amount" className="mt-1.5" type="number" min="0" step="0.01" inputMode="decimal" value={form.amount} onChange={e => set({ amount: e.target.value })} placeholder="0.00" /></div>
         <div className="grid grid-cols-2 gap-3">
           <div><Label htmlFor="ex-dist">Distributor <span className="font-normal text-slate-500">(optional)</span></Label><Input id="ex-dist" className="mt-1.5" list="ex-dist-list" value={form.distributor} onChange={e => set({ distributor: e.target.value })} placeholder="None" /><datalist id="ex-dist-list">{distributors.map(d => <option key={d} value={d} />)}</datalist></div>
+          <div><Label htmlFor="ex-dist-inv">Distributor invoice</Label><Input id="ex-dist-inv" className="mt-1.5" value={form.distributor_invoice} onChange={e => set({ distributor_invoice: e.target.value })} placeholder="e.g. RD-5521" /></div>
           <div><Label htmlFor="ex-dist-amount">Distributor amount</Label><Input id="ex-dist-amount" className="mt-1.5" type="number" min="0" step="0.01" inputMode="decimal" value={form.distributor_amount} onChange={e => set({ distributor_amount: e.target.value })} placeholder="0.00" /></div>
         </div>
         <div className="flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-xs"><span className="text-slate-400">Profit on this charge</span><span className="font-semibold tabular-nums text-emerald-400">{form.amount ? money(Number(form.amount) - (Number(form.distributor_amount) || 0), 'INR') : '—'}</span></div>
@@ -108,7 +109,7 @@ function ExtraCharges({ customerId, canEdit, items, setItems, distributors = [] 
   );
 }
 
-const EMPTY = { period: thisMonth(), invoice_number: '', customer_amount: '', distributor: '', distributor_amount: '', currency: 'INR', amount_basis: 'net' };
+const EMPTY = { period: thisMonth(), invoice_number: '', customer_amount: '', distributor: '', distributor_invoice: '', distributor_amount: '', currency: 'INR', amount_basis: 'net' };
 
 export default function BillingEntries() {
   const canEdit = useCanAdminister();
@@ -131,7 +132,7 @@ export default function BillingEntries() {
     URL.revokeObjectURL(url);
   };
   const exportCsv = async () => {
-    try { download(await exportBillingCustomersCsv(), 'customers.csv'); } catch (e) { toast.error(errorMessage(e)); }
+    try { download(await exportBillingEntriesCsv(customerId), 'billing-entries.csv'); } catch (e) { toast.error(errorMessage(e)); }
   };
   const template = () => download(new Blob(['Customer,Subscription,Owner\nAcme Ltd,Acme Production,Ravi Kumar\nAcme Ltd,Acme Dev,Ravi Kumar\nBeta Corp,Beta Main,Meera Shah\n'], { type: 'text/csv' }), 'customers-template.csv');
   const importCsv = async file => {
@@ -255,7 +256,7 @@ export default function BillingEntries() {
     setWorkloadId(entry.workload_id);
     setForm({
       period: entry.period, invoice_number: entry.invoice_number || '', customer_amount: entry.customer_amount ?? '',
-      distributor: entry.distributor || '', distributor_amount: entry.distributor_amount ?? '', currency: entry.currency || 'INR',
+      distributor: entry.distributor || '', distributor_invoice: entry.distributor_invoice || '', distributor_amount: entry.distributor_amount ?? '', currency: entry.currency || 'INR',
       amount_basis: entry.amount_basis === 'gross' ? 'gross' : 'net',
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -346,6 +347,7 @@ export default function BillingEntries() {
                 {adding === 'dist' && <AddInline placeholder="Distributor name" onAdd={addDistributor} onCancel={() => setAdding('')} />}
               </div>
 
+              <div><Label htmlFor="be-dist-inv">Distributor invoice number</Label><Input id="be-dist-inv" className="mt-1.5" value={form.distributor_invoice} onChange={e => set({ distributor_invoice: e.target.value })} placeholder="e.g. RD-5521" /></div>
               <div><Label htmlFor="be-dist-amt">7 · Distributor amount</Label><Input id="be-dist-amt" className="mt-1.5 tabular-nums" type="number" step="0.01" inputMode="decimal" value={form.distributor_amount} onChange={e => set({ distributor_amount: e.target.value })} placeholder="0.00" /></div>
 
               <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2.5">
@@ -382,9 +384,9 @@ export default function BillingEntries() {
           </div>
           {!customerId ? null : !ledger ? <p className="flex items-center gap-2 p-8 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p> : !rows.length ? <p className="p-8 text-center text-sm text-slate-400">No months recorded yet. Use the form to add the first one.</p> : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[44rem] text-sm">
+              <table className="w-full min-w-[52rem] text-sm">
                 <thead><tr className="border-b border-slate-800 text-left text-xs text-slate-500">
-                  {['Month', 'Subscription', 'Invoice', 'Our billing', 'Distributor', 'Distributor amount', 'Profit', ''].map(h => <th key={h} className={`px-4 py-2.5 font-medium ${['Our billing', 'Distributor amount', 'Profit'].includes(h) ? 'text-right' : ''}`}>{h}</th>)}
+                  {['Month', 'Subscription', 'Invoice', 'Our billing', 'Distributor', 'Distributor invoice', 'Distributor amount', 'Profit / loss', ''].map(h => <th key={h} className={`px-4 py-2.5 font-medium ${['Our billing', 'Distributor amount', 'Profit / loss'].includes(h) ? 'text-right' : ''}`}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {rows.map(e => e._extra ? (
@@ -394,6 +396,7 @@ export default function BillingEntries() {
                       <td className="px-4 py-2.5 text-slate-400">{e.invoice_number || '—'}</td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(e.amount, e.currency)}</td>
                       <td className="px-4 py-2.5 text-slate-300">{e.distributor || '—'}</td>
+                      <td className="px-4 py-2.5 text-slate-400">{e.distributor_invoice || '—'}</td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{e.distributor_amount != null ? money(e.distributor_amount, e.currency) : '—'}</td>
                       <td className={`whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums ${Number(e.amount) - Number(e.distributor_amount || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{money(Number(e.amount) - Number(e.distributor_amount || 0), e.currency)}</td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-right">{canEdit && <button type="button" aria-label="Delete extra charge" title="Delete extra charge" onClick={async () => { if (!window.confirm(`Delete the ${e.charge_type} charge for ${monthName(e.period)}?`)) return; try { await deleteBillingExtraCharge(e.id); setExtras(list => list.filter(i => i.id !== e.id)); toast.success('Extra charge deleted'); } catch (err) { toast.error(errorMessage(err)); } }} className="ml-2 rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="inline h-3.5 w-3.5" /></button>}</td>
@@ -408,6 +411,8 @@ export default function BillingEntries() {
                         <td className="px-4 py-2.5 text-slate-400">{e.invoice_number || '—'}</td>
                         <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(e.customer_amount, e.currency)}</td>
                         <td className="px-4 py-2.5 text-slate-300">{e.distributor || '—'}</td>
+                        <td className="px-4 py-2.5 text-slate-400">{e.distributor_invoice || '—'}</td>
+                      <td className="px-4 py-2.5 text-slate-400">{e.distributor_invoice || '—'}</td>
                         <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(e.distributor_amount, e.currency)}</td>
                         <td className={`whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums ${p == null ? 'text-slate-500' : p >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{p == null ? '—' : money(p, e.currency)}</td>
                         <td className="whitespace-nowrap px-4 py-2.5 text-right"><Pencil className="inline h-3.5 w-3.5 text-slate-500" aria-label="Edit" />{canEdit && <button type="button" aria-label="Delete entry" title="Delete entry" onClick={ev => { ev.stopPropagation(); removeEntry(e); }} className="ml-2 rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="inline h-3.5 w-3.5" /></button>}</td>

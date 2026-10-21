@@ -215,3 +215,16 @@ async def test_extra_charge_with_distributor_cost_reduces_profit(db):
     row = report['customers'][0]
     assert row['customer_amount'] == '1000.00' and row['distributor_amount'] == '600.00' and row['profit'] == '400.00'
     assert report['distributors'] == [{'name': 'Redington', 'amount': '600.00'}]
+
+
+@pytest.mark.asyncio
+async def test_ledger_export_has_distributor_invoice_and_negative_loss(db):
+    from routers import billing as customer_routes
+    user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
+    c = await customer_routes.create_customer(customer_routes.CustomerInput(name='Export Co'), user, db)
+    w = await routes.create_workload(c['id'], routes.WorkloadInput(name='Plan'), user, db)
+    await routes.create_entry(w['id'], routes.EntryInput(period='2026-05', currency='INR', invoice_number='C-1', customer_amount='100', distributor='Redington', distributor_invoice='R-9', distributor_amount='150'), user, db)
+    await routes.create_extra_charge(c['id'], routes.ExtraChargeInput(period='2026-05', charge_type='Other', description='Bandwidth', amount='50'), user, db)
+    body = (await routes.export_ledger_csv('', user, db)).body.decode()
+    assert 'Distributor invoice' in body and '2026-05,Export Co,Plan,C-1,100.00,Redington,R-9,150.00,-50.00' in body
+    assert 'Extra: Other - Bandwidth' in body

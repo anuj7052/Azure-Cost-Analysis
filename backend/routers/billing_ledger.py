@@ -43,6 +43,7 @@ class EntryInput(BaseModel):
     amount_basis: Literal['unspecified', 'gross', 'net'] = 'unspecified'
     status: Literal['recorded', 'needs_review'] = 'recorded'
     distributor: str = Field(default='', max_length=120)
+    distributor_invoice: str = Field(default='', max_length=200)
     revision: int = Field(default=1, ge=1)
 
 
@@ -122,7 +123,7 @@ async def create_entry(workload_id: str, body: EntryInput, user=Depends(require_
     if await ledger.one(db, 'SELECT id FROM billing_ledger WHERE owner_id=? AND workload_id=? AND period=?', (owner, workload_id, body.period)):
         raise HTTPException(409, 'This workload already has an entry for that month. Edit or restore it instead.')
     key = str(uuid.uuid4())
-    await db.execute(f'INSERT INTO billing_ledger(id,owner_id,customer_id,workload_id,{",".join(ledger.ENTRY_FIELDS)},distributor,updated_by) VALUES({",".join("?" for _ in range(16))})', (key, owner, work['customer_id'], workload_id, *values(body, ledger.ENTRY_FIELDS), body.distributor.strip(), user['user_id']))
+    await db.execute(f'INSERT INTO billing_ledger(id,owner_id,customer_id,workload_id,{",".join(ledger.ENTRY_FIELDS)},distributor,distributor_invoice,updated_by) VALUES({",".join("?" for _ in range(17))})', (key, owner, work['customer_id'], workload_id, *values(body, ledger.ENTRY_FIELDS), body.distributor.strip(), body.distributor_invoice.strip(), user['user_id']))
     await ledger.audit(db, owner, user['user_id'], 'entry', key, 'create', {}, body.model_dump(mode='json'))
     await db.commit()
     return await ledger.get_entity(db, owner, 'entry', key)
@@ -138,7 +139,7 @@ async def update_entry(entry_id: str, body: EntryInput, user=Depends(require_wor
     other = await ledger.one(db, 'SELECT id FROM billing_ledger WHERE owner_id=? AND workload_id=? AND period=? AND id<>?', (owner, before['workload_id'], body.period, entry_id))
     if other:
         raise HTTPException(409, 'That month already exists for this workload.')
-    cursor = await db.execute(f'UPDATE billing_ledger SET {",".join(field+"=?" for field in ledger.ENTRY_FIELDS)},distributor=?,updated_by=?,updated_at=CURRENT_TIMESTAMP,revision=revision+1 WHERE id=? AND owner_id=? AND revision=?', (*values(body, ledger.ENTRY_FIELDS), body.distributor.strip(), user['user_id'], entry_id, owner, body.revision))
+    cursor = await db.execute(f'UPDATE billing_ledger SET {",".join(field+"=?" for field in ledger.ENTRY_FIELDS)},distributor=?,distributor_invoice=?,updated_by=?,updated_at=CURRENT_TIMESTAMP,revision=revision+1 WHERE id=? AND owner_id=? AND revision=?', (*values(body, ledger.ENTRY_FIELDS), body.distributor.strip(), body.distributor_invoice.strip(), user['user_id'], entry_id, owner, body.revision))
     if cursor.rowcount != 1:
         raise HTTPException(409, 'Entry changed elsewhere. Reload before saving to avoid losing another edit.')
     await ledger.audit(db, owner, user['user_id'], 'entry', entry_id, 'update', before, body.model_dump(mode='json'))
@@ -229,6 +230,37 @@ async def export_customers_csv(user=Depends(get_current_user), db=Depends(get_db
         cells = [str(v or '') for v in (customer, subscription, sub_owner)]
         writer.writerow([("'" + v) if v and v[0] in '=+-@' else v for v in cells])
     return Response(out.getvalue(), media_type='text/csv', headers={'Content-Disposition': 'attachment; filename="customers.csv"'})
+
+
+@router.get('/ledger-export.csv')
+async def export_ledger_csv(customer_id: str = '', user=Depends(get_current_user), db=Depends(get_db)):
+    """Monthly entries and extra charges with profit (negative = loss), one row each."""
+    import csv
+    from fastapi.responses import Response
+    owner = user['account_id']
+    where, args = ('AND l.customer_id=?', (owner, customer_id)) if customer_id else ('', (owner,))
+    async with db.execute(
+        "SELECT l.period, c.name, w.name, l.invoice_number, l.customer_amount, l.distributor, l.distributor_invoice, l.distributor_amount, l.currency, l.amount_basis "
+        "FROM billing_ledger l JOIN billing_customers c ON c.id=l.customer_id JOIN billing_workloads w ON w.id=l.workload_id "
+        f"WHERE l.owner_id=? {where} AND NOT EXISTS (SELECT 1 FROM billing_archives a WHERE a.owner_id=l.owner_id AND a.entity_type='entry' AND a.entity_id=l.id)", args,
+    ) as cursor:
+        rows = [list(r) for r in await cursor.fetchall()]
+    xwhere = 'AND x.customer_id=?' if customer_id else ''
+    async with db.execute(
+        "SELECT x.period, c.name, 'Extra: ' || x.charge_type || CASE WHEN x.description<>'' THEN ' - ' || x.description ELSE '' END, x.invoice_number, x.amount, x.distributor, x.distributor_invoice, x.distributor_amount, x.currency, x.amount_basis "
+        f"FROM billing_extra_charges x JOIN billing_customers c ON c.id=x.customer_id WHERE x.owner_id=? {xwhere}", args,
+    ) as cursor:
+        rows += [list(r) for r in await cursor.fetchall()]
+    rows.sort(key=lambda r: (r[0], (r[1] or '').lower(), r[2] or ''))
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(['Month', 'Customer', 'Subscription', 'Invoice', 'Our billing', 'Distributor', 'Distributor invoice', 'Distributor amount', 'Profit / loss', 'Currency', 'Amounts'])
+    safe = lambda v: ("'" + v) if v and v[0] in '=+@' else v
+    for period, cust, sub, inv, billed, dist, dinv, damt, cur, basis in rows:
+        profit = '' if billed in (None, '') or damt in (None, '') else f'{Decimal(billed) - Decimal(damt):.2f}'
+        money_ = lambda v: '' if v in (None, '') else f'{Decimal(v):.2f}'
+        writer.writerow([period, safe(cust or ''), safe(sub or ''), safe(inv or ''), money_(billed), safe(dist or ''), safe(dinv or ''), money_(damt), profit, cur, 'tax included' if basis == 'gross' else 'before tax' if basis == 'net' else ''])
+    return Response('\ufeff' + out.getvalue(), media_type='text/csv', headers={'Content-Disposition': 'attachment; filename="billing-entries.csv"'})
 
 
 @router.get('/distributors')
@@ -327,10 +359,11 @@ class ExtraChargeInput(BaseModel):
     amount_basis: Literal['gross', 'net'] = 'gross'
     distributor: str = Field(default='', max_length=120)
     distributor_amount: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=4, allow_inf_nan=False)
+    distributor_invoice: str = Field(default='', max_length=200)
 
 
 def extra_output(row):
-    return {k: row[k] for k in ('id', 'customer_id', 'period', 'charge_type', 'description', 'invoice_number', 'amount', 'currency', 'amount_basis', 'distributor', 'distributor_amount', 'created_at')}
+    return {k: row[k] for k in ('id', 'customer_id', 'period', 'charge_type', 'description', 'invoice_number', 'amount', 'currency', 'amount_basis', 'distributor', 'distributor_amount', 'distributor_invoice', 'created_at')}
 
 
 @router.get('/customers/{customer_id}/extra-charges')
@@ -346,8 +379,8 @@ async def create_extra_charge(customer_id: str, body: ExtraChargeInput, user=Dep
     owner = user['account_id']
     await active_customer(db, owner, customer_id)
     key = str(uuid.uuid4())
-    await db.execute('INSERT INTO billing_extra_charges(id,owner_id,customer_id,period,charge_type,description,invoice_number,amount,currency,amount_basis,distributor,distributor_amount,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                     (key, owner, customer_id, body.period, body.charge_type, body.description.strip(), body.invoice_number.strip(), str(body.amount), body.currency, body.amount_basis, body.distributor.strip(), None if body.distributor_amount is None else str(body.distributor_amount), user['user_id']))
+    await db.execute('INSERT INTO billing_extra_charges(id,owner_id,customer_id,period,charge_type,description,invoice_number,amount,currency,amount_basis,distributor,distributor_amount,distributor_invoice,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                     (key, owner, customer_id, body.period, body.charge_type, body.description.strip(), body.invoice_number.strip(), str(body.amount), body.currency, body.amount_basis, body.distributor.strip(), None if body.distributor_amount is None else str(body.distributor_amount), body.distributor_invoice.strip(), user['user_id']))
     await ledger.audit(db, owner, user['user_id'], 'extra_charge', key, 'create', {}, body.model_dump(mode='json'))
     await db.commit()
     async with db.execute('SELECT * FROM billing_extra_charges WHERE id=?', (key,)) as cursor:

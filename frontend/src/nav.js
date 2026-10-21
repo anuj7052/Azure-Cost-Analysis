@@ -21,7 +21,7 @@ import {
 export const SECTIONS = [
   {
     key: 'cost',
-    title: 'Cost',
+    title: 'Dashboard',
     flat: true,
     icon: Wallet,
     hub: '/',
@@ -72,7 +72,7 @@ export const SECTIONS = [
   },
   {
     key: 'estate',
-    title: 'Estate',
+    title: 'Inventory',
     flat: true,
     icon: Gauge,
     hub: '/estate',
