@@ -97,9 +97,14 @@ def aggregate(customers, workloads, records, start, end, currency, source, extra
             row['_net'] = False
         row['extra_amount'] = (row['extra_amount'] or ZERO) + value
         row['customer_amount'] = (row['customer_amount'] or ZERO) + value
-        row['distributor_amount'] = row['distributor_amount'] if row['distributor_amount'] is not None else ZERO
+        cost = Decimal(extra['distributor_amount']) if extra.get('distributor_amount') not in (None, '') else ZERO
+        row['distributor_amount'] = (row['distributor_amount'] or ZERO) + cost
         bucket = monthly.setdefault(extra['period'], {'period': extra['period'], 'selected_days': days, 'calendar_days': month_days, **{f: None for f in FIELDS}})
         bucket['customer_amount'] = (bucket['customer_amount'] or ZERO) + value
+        if cost:
+            bucket['distributor_amount'] = (bucket['distributor_amount'] or ZERO) + cost
+            name = str(extra.get('distributor') or '').strip() or 'Not set'
+            by_distributor[name] = by_distributor.get(name, ZERO) + cost
     if source == 'invoices':
         for row in rows.values():
             periods = {r['period'] for r in relevant if r['customer_id'] == row['customer_id'] and (r.get('customer_amount') is not None or r.get('distributor_amount') is not None)}
@@ -158,6 +163,6 @@ async def load(db, owner, start, end, currency='', source='ledger', customer_id=
                 records.append({**dict(r), **{f: r['net_amount'] if f == mapping[r['kind']] else None for f in FIELDS}, 'amount_basis': 'net', 'frequency': ''})
     extras = []
     if source == 'ledger':
-        async with db.execute("SELECT customer_id,period,amount,currency,amount_basis FROM billing_extra_charges WHERE owner_id=? AND period>=? AND period<=?", (owner, first, last)) as cursor:
+        async with db.execute("SELECT customer_id,period,amount,currency,amount_basis,distributor,distributor_amount FROM billing_extra_charges WHERE owner_id=? AND period>=? AND period<=?", (owner, first, last)) as cursor:
             extras = [dict(r) for r in await cursor.fetchall() if r['customer_id'] in {c['id'] for c in customers}]
     return aggregate(customers, workloads, records, start, end, currency, source, extras)

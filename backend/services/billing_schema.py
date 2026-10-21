@@ -89,6 +89,7 @@ INDEXES = [
 MIGRATIONS = {
     "billing_ledger": {"distributor": "TEXT NOT NULL DEFAULT ''"},
     "billing_workloads": {"owner": "TEXT NOT NULL DEFAULT ''"},
+    "billing_extra_charges": {"distributor": "TEXT NOT NULL DEFAULT ''", "distributor_amount": "TEXT"},
 }
 
 # Distributors offered by default; any other name typed in is remembered.

@@ -201,3 +201,17 @@ async def test_extra_charges_add_to_billing_and_can_be_deleted(db):
     assert (await load(db, 1, date(2026, 5, 2), date(2026, 5, 31)))['customers'][0]['extra_amount'] is None
     assert (await routes.delete_extra_charge(charge['id'], user, db))['deleted']
     assert (await routes.list_extra_charges(c['id'], user, db))['items'] == []
+
+
+@pytest.mark.asyncio
+async def test_extra_charge_with_distributor_cost_reduces_profit(db):
+    from datetime import date
+    from routers import billing as customer_routes
+    from services.billing_dashboard import load
+    user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
+    c = await customer_routes.create_customer(customer_routes.CustomerInput(name='Bandwidth Co'), user, db)
+    await routes.create_extra_charge(c['id'], routes.ExtraChargeInput(period='2026-06', charge_type='Other', amount='1000', distributor='Redington', distributor_amount='600', amount_basis='net'), user, db)
+    report = await load(db, 1, date(2026, 6, 1), date(2026, 6, 30))
+    row = report['customers'][0]
+    assert row['customer_amount'] == '1000.00' and row['distributor_amount'] == '600.00' and row['profit'] == '400.00'
+    assert report['distributors'] == [{'name': 'Redington', 'amount': '600.00'}]

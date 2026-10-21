@@ -325,10 +325,12 @@ class ExtraChargeInput(BaseModel):
     amount: Decimal = Field(gt=0, max_digits=18, decimal_places=4, allow_inf_nan=False)
     currency: str = Field(default='INR', pattern=r'^[A-Z]{3}$')
     amount_basis: Literal['gross', 'net'] = 'gross'
+    distributor: str = Field(default='', max_length=120)
+    distributor_amount: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=4, allow_inf_nan=False)
 
 
 def extra_output(row):
-    return {k: row[k] for k in ('id', 'customer_id', 'period', 'charge_type', 'description', 'invoice_number', 'amount', 'currency', 'amount_basis', 'created_at')}
+    return {k: row[k] for k in ('id', 'customer_id', 'period', 'charge_type', 'description', 'invoice_number', 'amount', 'currency', 'amount_basis', 'distributor', 'distributor_amount', 'created_at')}
 
 
 @router.get('/customers/{customer_id}/extra-charges')
@@ -344,8 +346,8 @@ async def create_extra_charge(customer_id: str, body: ExtraChargeInput, user=Dep
     owner = user['account_id']
     await active_customer(db, owner, customer_id)
     key = str(uuid.uuid4())
-    await db.execute('INSERT INTO billing_extra_charges(id,owner_id,customer_id,period,charge_type,description,invoice_number,amount,currency,amount_basis,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-                     (key, owner, customer_id, body.period, body.charge_type, body.description.strip(), body.invoice_number.strip(), str(body.amount), body.currency, body.amount_basis, user['user_id']))
+    await db.execute('INSERT INTO billing_extra_charges(id,owner_id,customer_id,period,charge_type,description,invoice_number,amount,currency,amount_basis,distributor,distributor_amount,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                     (key, owner, customer_id, body.period, body.charge_type, body.description.strip(), body.invoice_number.strip(), str(body.amount), body.currency, body.amount_basis, body.distributor.strip(), None if body.distributor_amount is None else str(body.distributor_amount), user['user_id']))
     await ledger.audit(db, owner, user['user_id'], 'extra_charge', key, 'create', {}, body.model_dump(mode='json'))
     await db.commit()
     async with db.execute('SELECT * FROM billing_extra_charges WHERE id=?', (key,)) as cursor:

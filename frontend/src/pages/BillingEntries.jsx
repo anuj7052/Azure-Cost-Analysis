@@ -42,9 +42,9 @@ function AddInline({ placeholder, onAdd, busy, onCancel, initial = '', label = '
 }
 
 const EXTRA_TYPES = ['Implementation', 'Migration', 'Consulting', 'Support', 'Licence', 'Training', 'Other'];
-const EXTRA_EMPTY = { charge_type: 'Implementation', description: '', period: new Date().toISOString().slice(0, 7), invoice_number: '', amount: '', amount_basis: 'gross' };
+const EXTRA_EMPTY = { charge_type: 'Implementation', description: '', period: new Date().toISOString().slice(0, 7), invoice_number: '', amount: '', distributor: '', distributor_amount: '', amount_basis: 'gross' };
 
-function ExtraCharges({ customerId, canEdit, items, setItems }) {
+function ExtraCharges({ customerId, canEdit, items, setItems, distributors = [] }) {
   const [form, setForm] = useState(EXTRA_EMPTY);
   const [busy, setBusy] = useState(false);
   const set = patch => setForm(f => ({ ...f, ...patch }));
@@ -52,7 +52,7 @@ function ExtraCharges({ customerId, canEdit, items, setItems }) {
     if (!(Number(form.amount) > 0)) { toast.error('Enter an amount above zero'); return; }
     setBusy(true);
     try {
-      const saved = await createBillingExtraCharge(customerId, { ...form, currency: 'INR', description: form.description.trim(), invoice_number: form.invoice_number.trim() });
+      const saved = await createBillingExtraCharge(customerId, { ...form, currency: 'INR', description: form.description.trim(), invoice_number: form.invoice_number.trim(), distributor: form.distributor.trim(), distributor_amount: form.distributor_amount === '' ? null : form.distributor_amount });
       setItems(list => [saved, ...(list || [])].sort((a, b) => b.period.localeCompare(a.period)));
       setForm(f => ({ ...EXTRA_EMPTY, period: f.period, charge_type: f.charge_type, amount_basis: f.amount_basis }));
       toast.success('Extra charge added');
@@ -69,17 +69,20 @@ function ExtraCharges({ customerId, canEdit, items, setItems }) {
         <h3 id="ex-title" className="text-sm font-semibold text-slate-100">8 · Extra charges <span className="font-normal text-slate-500">(optional)</span></h3>
         {items?.length > 0 && <span className="text-xs tabular-nums text-slate-400">Total {money(total, 'INR')}</span>}
       </div>
-      <p className="text-xs text-slate-500">One-off charges like implementation, migration or bandwidth. Added to this customer's billing, with no distributor cost.</p>
+      <p className="text-xs text-slate-500">One-off charges like implementation, migration or bandwidth. Leave the distributor empty if the whole amount is yours.</p>
       {canEdit && <>
         <div className="grid grid-cols-2 gap-3">
           <div><Label htmlFor="ex-type">Type</Label><NativeSelect id="ex-type" className="mt-1.5" value={form.charge_type} onChange={e => set({ charge_type: e.target.value })}>{EXTRA_TYPES.map(t => <option key={t}>{t}</option>)}</NativeSelect></div>
           <div><Label htmlFor="ex-month">Month</Label><Input id="ex-month" className="mt-1.5" type="month" value={form.period} onChange={e => set({ period: e.target.value })} /></div>
         </div>
         <div><Label htmlFor="ex-desc">Description</Label><Input id="ex-desc" className="mt-1.5" value={form.description} onChange={e => set({ description: e.target.value })} placeholder="e.g. Bandwidth charge" /></div>
+        <div><Label htmlFor="ex-invoice">Invoice number</Label><Input id="ex-invoice" className="mt-1.5" value={form.invoice_number} onChange={e => set({ invoice_number: e.target.value })} placeholder="INV-1042" /></div>
+        <div><Label htmlFor="ex-amount">Our billing amount (INR)</Label><Input id="ex-amount" className="mt-1.5" type="number" min="0" step="0.01" inputMode="decimal" value={form.amount} onChange={e => set({ amount: e.target.value })} placeholder="0.00" /></div>
         <div className="grid grid-cols-2 gap-3">
-          <div><Label htmlFor="ex-invoice">Invoice number</Label><Input id="ex-invoice" className="mt-1.5" value={form.invoice_number} onChange={e => set({ invoice_number: e.target.value })} placeholder="INV-1042" /></div>
-          <div><Label htmlFor="ex-amount">Amount (INR)</Label><Input id="ex-amount" className="mt-1.5" type="number" min="0" step="0.01" inputMode="decimal" value={form.amount} onChange={e => set({ amount: e.target.value })} placeholder="0.00" /></div>
+          <div><Label htmlFor="ex-dist">Distributor <span className="font-normal text-slate-500">(optional)</span></Label><Input id="ex-dist" className="mt-1.5" list="ex-dist-list" value={form.distributor} onChange={e => set({ distributor: e.target.value })} placeholder="None" /><datalist id="ex-dist-list">{distributors.map(d => <option key={d} value={d} />)}</datalist></div>
+          <div><Label htmlFor="ex-dist-amount">Distributor amount</Label><Input id="ex-dist-amount" className="mt-1.5" type="number" min="0" step="0.01" inputMode="decimal" value={form.distributor_amount} onChange={e => set({ distributor_amount: e.target.value })} placeholder="0.00" /></div>
         </div>
+        <div className="flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-xs"><span className="text-slate-400">Profit on this charge</span><span className="font-semibold tabular-nums text-emerald-400">{form.amount ? money(Number(form.amount) - (Number(form.distributor_amount) || 0), 'INR') : '—'}</span></div>
         <div className="flex items-center justify-between gap-3">
           <label className="text-xs text-slate-400">Amount is <select value={form.amount_basis} onChange={e => set({ amount_basis: e.target.value })} className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-xs text-slate-200"><option value="gross">tax included</option><option value="net">before tax</option></select></label>
           <Button type="button" variant="outline" size="sm" disabled={busy || !form.amount || !form.period} onClick={add}>{busy ? <Loader2 className="animate-spin" /> : <Plus />}Add charge</Button>
@@ -94,7 +97,7 @@ function ExtraCharges({ customerId, canEdit, items, setItems }) {
                 {i.description && <p className="mt-1 truncate text-xs text-slate-300" title={i.description}>{i.description}</p>}
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                <span className="tabular-nums text-slate-100">{money(i.amount, i.currency)}</span>
+                <span className="text-right tabular-nums text-slate-100">{money(i.amount, i.currency)}{i.distributor_amount != null && <span className="block text-[11px] text-slate-500">{i.distributor || 'Distributor'} {money(i.distributor_amount, i.currency)}</span>}</span>
                 {canEdit && <button type="button" aria-label="Delete extra charge" onClick={() => remove(i)} className="rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>}
               </div>
             </li>
@@ -365,7 +368,7 @@ export default function BillingEntries() {
               </Button>
               {!canEdit && <p className="text-center text-xs text-slate-500">Workspace admins only</p>}
             </form>
-            {customerId && <ExtraCharges customerId={customerId} canEdit={canEdit} items={extras} setItems={setExtras} />}
+            {customerId && <ExtraCharges customerId={customerId} canEdit={canEdit} items={extras} setItems={setExtras} distributors={distributors} />}
           </CardContent>
         </Card>
 
@@ -390,9 +393,9 @@ export default function BillingEntries() {
                       <td className="max-w-[12rem] truncate px-4 py-2.5 text-slate-300" title={e.description}><span className="mr-1.5 rounded-full bg-[#ffedd5] px-2 py-0.5 text-[11px] font-medium text-[#9a3412]">Extra · {e.charge_type}</span>{e.description}</td>
                       <td className="px-4 py-2.5 text-slate-400">{e.invoice_number || '—'}</td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(e.amount, e.currency)}</td>
-                      <td className="px-4 py-2.5 text-slate-500">—</td>
-                      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-500">—</td>
-                      <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums text-emerald-400">{money(e.amount, e.currency)}</td>
+                      <td className="px-4 py-2.5 text-slate-300">{e.distributor || '—'}</td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{e.distributor_amount != null ? money(e.distributor_amount, e.currency) : '—'}</td>
+                      <td className={`whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums ${Number(e.amount) - Number(e.distributor_amount || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{money(Number(e.amount) - Number(e.distributor_amount || 0), e.currency)}</td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-right">{canEdit && <button type="button" aria-label="Delete extra charge" title="Delete extra charge" onClick={async () => { if (!window.confirm(`Delete the ${e.charge_type} charge for ${monthName(e.period)}?`)) return; try { await deleteBillingExtraCharge(e.id); setExtras(list => list.filter(i => i.id !== e.id)); toast.success('Extra charge deleted'); } catch (err) { toast.error(errorMessage(err)); } }} className="ml-2 rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="inline h-3.5 w-3.5" /></button>}</td>
                     </tr>
                   ) : (() => {
