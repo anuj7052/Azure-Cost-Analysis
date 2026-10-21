@@ -61,6 +61,14 @@ SCHEMAS = {
         created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP), updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
         UNIQUE(owner_id,workload_id,period)
     )""",
+    "billing_extra_charges": """CREATE TABLE IF NOT EXISTS billing_extra_charges (
+        id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id),
+        customer_id TEXT NOT NULL REFERENCES billing_customers(id),
+        period TEXT NOT NULL, charge_type TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+        invoice_number TEXT NOT NULL DEFAULT '', amount TEXT NOT NULL, currency TEXT NOT NULL,
+        amount_basis TEXT NOT NULL DEFAULT 'gross', created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    )""",
     "billing_changes": """CREATE TABLE IF NOT EXISTS billing_changes (
         id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id), entity_type TEXT NOT NULL,
         entity_id TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL,
@@ -69,6 +77,7 @@ SCHEMAS = {
 }
 
 INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_billing_extra_owner ON billing_extra_charges(owner_id,customer_id,period)",
     "CREATE INDEX IF NOT EXISTS idx_billing_workloads_owner ON billing_workloads(owner_id,customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_billing_ledger_owner ON billing_ledger(owner_id,customer_id,period)",
     "CREATE INDEX IF NOT EXISTS idx_billing_customer_owner ON billing_customers(owner_id)",

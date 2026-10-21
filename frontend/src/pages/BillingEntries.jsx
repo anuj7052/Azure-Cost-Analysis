@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { Check, Download, FileUp, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import {
   bulkImportBillingCustomers, createBillingCustomer, deleteBillingItem, exportBillingCustomersCsv, getBillingLedger, listBillingCustomers, listBillingDistributors,
-  saveBillingEntry, saveBillingWorkload, updateBillingCustomer,
+  saveBillingEntry, saveBillingWorkload, updateBillingCustomer, listBillingExtraCharges, createBillingExtraCharge, deleteBillingExtraCharge,
 } from '../api/client';
 import { errorMessage } from '../utils/apiError';
 import { useCanAdminister } from '../hooks/useCanAdminister';
@@ -38,6 +38,73 @@ function AddInline({ placeholder, onAdd, busy, onCancel, initial = '', label = '
       <Button type="button" size="sm" className="h-9" onClick={submit} disabled={busy || !value.trim()}>{busy ? <Loader2 className="animate-spin" /> : <Check />}{label}</Button>
       <Button type="button" size="sm" variant="ghost" className="h-9" onClick={onCancel} aria-label="Cancel"><X /></Button>
     </div>
+  );
+}
+
+const EXTRA_TYPES = ['Implementation', 'Migration', 'Consulting', 'Support', 'Licence', 'Training', 'Other'];
+const EXTRA_EMPTY = { charge_type: 'Implementation', description: '', period: new Date().toISOString().slice(0, 7), invoice_number: '', amount: '', amount_basis: 'gross' };
+
+function ExtraCharges({ customerId, customerName, canEdit }) {
+  const [items, setItems] = useState(null);
+  const [form, setForm] = useState(EXTRA_EMPTY);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    listBillingExtraCharges(customerId).then(d => { if (live) setItems(d.items || []); }).catch(e => { if (live) { setItems([]); toast.error(errorMessage(e)); } });
+    return () => { live = false; };
+  }, [customerId]);
+  const set = patch => setForm(f => ({ ...f, ...patch }));
+  const add = async () => {
+    if (!(Number(form.amount) > 0)) { toast.error('Enter an amount above zero'); return; }
+    setBusy(true);
+    try {
+      const saved = await createBillingExtraCharge(customerId, { ...form, currency: 'INR', description: form.description.trim(), invoice_number: form.invoice_number.trim() });
+      setItems(list => [saved, ...(list || [])].sort((a, b) => b.period.localeCompare(a.period)));
+      setForm(f => ({ ...EXTRA_EMPTY, period: f.period, charge_type: f.charge_type, amount_basis: f.amount_basis }));
+      toast.success('Extra charge added');
+    } catch (e) { toast.error(errorMessage(e)); } finally { setBusy(false); }
+  };
+  const remove = async item => {
+    if (!window.confirm(`Delete the ${item.charge_type} charge for ${monthName(item.period)}? This cannot be undone.`)) return;
+    try { await deleteBillingExtraCharge(item.id); setItems(list => list.filter(i => i.id !== item.id)); toast.success('Extra charge deleted'); } catch (e) { toast.error(errorMessage(e)); }
+  };
+  const total = (items || []).reduce((sum, i) => sum + Number(i.amount || 0), 0);
+  return (
+    <Card className="mt-6">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-800 p-5">
+        <div>
+          <h2 className="text-base font-semibold text-slate-100">Extra charges{customerName ? ` · ${customerName}` : ''}</h2>
+          <p className="mt-1 text-sm text-slate-400">One-off charges such as implementation, migration or consulting. They count in this customer's billing, with no distributor cost.</p>
+        </div>
+        {items?.length > 0 && <div className="text-right text-xs"><p className="text-slate-500">Total extra</p><p className="font-semibold tabular-nums text-slate-100">{money(total, 'INR')}</p></div>}
+      </div>
+      {canEdit && <div className="grid gap-3 border-b border-slate-800 p-5 sm:grid-cols-2 lg:grid-cols-[10rem_minmax(0,1fr)_9rem_9rem_10rem_auto] lg:items-end">
+        <div><Label htmlFor="ex-type">Type</Label><NativeSelect id="ex-type" className="mt-1.5" value={form.charge_type} onChange={e => set({ charge_type: e.target.value })}>{EXTRA_TYPES.map(t => <option key={t}>{t}</option>)}</NativeSelect></div>
+        <div><Label htmlFor="ex-desc">Description</Label><Input id="ex-desc" className="mt-1.5" value={form.description} onChange={e => set({ description: e.target.value })} placeholder="e.g. SAP migration setup" /></div>
+        <div><Label htmlFor="ex-month">Month</Label><Input id="ex-month" className="mt-1.5" type="month" value={form.period} onChange={e => set({ period: e.target.value })} /></div>
+        <div><Label htmlFor="ex-invoice">Invoice number</Label><Input id="ex-invoice" className="mt-1.5" value={form.invoice_number} onChange={e => set({ invoice_number: e.target.value })} placeholder="INV-1042" /></div>
+        <div><Label htmlFor="ex-amount">Amount (INR)</Label><Input id="ex-amount" className="mt-1.5" type="number" min="0" step="0.01" inputMode="decimal" value={form.amount} onChange={e => set({ amount: e.target.value })} placeholder="0.00" />
+          <select aria-label="Tax" value={form.amount_basis} onChange={e => set({ amount_basis: e.target.value })} className="mt-1 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-xs text-slate-200"><option value="gross">Tax included</option><option value="net">Before tax</option></select></div>
+        <Button type="button" className="h-10" disabled={busy || !form.amount || !form.period} onClick={add}>{busy ? <Loader2 className="animate-spin" /> : <Plus />}Add charge</Button>
+      </div>}
+      {items == null ? <p className="flex items-center gap-2 p-6 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p> : !items.length ? <p className="p-6 text-center text-sm text-slate-400">No extra charges yet.</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[40rem] text-sm">
+            <thead><tr className="border-b border-slate-800 text-left text-xs text-slate-500">{['Month', 'Type', 'Description', 'Invoice', 'Amount', ''].map(h => <th key={h} className={`px-4 py-2.5 font-medium ${h === 'Amount' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
+            <tbody>{items.map(i => (
+              <tr key={i.id} className="border-b border-slate-800/60 last:border-0">
+                <td className="whitespace-nowrap px-4 py-2.5 text-slate-200">{monthName(i.period)}</td>
+                <td className="px-4 py-2.5"><span className="rounded-full bg-[#ffedd5] px-2 py-0.5 text-xs font-medium text-[#9a3412]">{i.charge_type}</span></td>
+                <td className="max-w-[16rem] truncate px-4 py-2.5 text-slate-300" title={i.description}>{i.description || '—'}</td>
+                <td className="px-4 py-2.5 text-slate-400">{i.invoice_number || '—'}</td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(i.amount, i.currency)}<span className="ml-1 text-[10px] text-slate-500">{i.amount_basis === 'net' ? 'before tax' : 'incl. tax'}</span></td>
+                <td className="px-4 py-2.5 text-right">{canEdit && <button type="button" aria-label="Delete extra charge" onClick={() => remove(i)} className="rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -331,6 +398,7 @@ export default function BillingEntries() {
           )}
         </Card>
       </div>
+      {customerId && <ExtraCharges customerId={customerId} customerName={(customers || []).find(c => c.id === customerId)?.name || ''} canEdit={canEdit} />}
     </BillingPage>
   );
 }

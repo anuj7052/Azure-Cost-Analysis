@@ -276,6 +276,7 @@ async def delete_permanently(kind: Literal['customer', 'workload', 'entry'], ent
             entry_ids = [row[0] for row in await cursor.fetchall()]
         async with db.execute('SELECT id FROM billing_workloads WHERE owner_id=? AND customer_id=?', (owner, entity_id)) as cursor:
             workload_ids = [row[0] for row in await cursor.fetchall()]
+        await db.execute('DELETE FROM billing_extra_charges WHERE owner_id=? AND customer_id=?', (owner, entity_id))
         await db.execute('DELETE FROM billing_ledger WHERE owner_id=? AND customer_id=?', (owner, entity_id))
         await db.execute('DELETE FROM billing_workloads WHERE owner_id=? AND customer_id=?', (owner, entity_id))
         await db.execute('DELETE FROM billing_customers WHERE owner_id=? AND id=?', (owner, entity_id))
@@ -311,3 +312,54 @@ async def history(kind: Literal['customer', 'workload', 'entry'], entity_id: str
     await ledger.get_entity(db, user['account_id'], kind, entity_id)
     async with db.execute('SELECT * FROM billing_changes WHERE owner_id=? AND entity_type=? AND entity_id=? ORDER BY created_at DESC LIMIT 100', (user['account_id'], kind, entity_id)) as cursor:
         return {'items': [dict(row) for row in await cursor.fetchall()]}
+
+
+EXTRA_TYPES = ('Implementation', 'Migration', 'Consulting', 'Support', 'Licence', 'Training', 'Other')
+
+
+class ExtraChargeInput(BaseModel):
+    period: str = Field(pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
+    charge_type: Literal[EXTRA_TYPES] = 'Implementation'
+    description: str = Field(default='', max_length=500)
+    invoice_number: str = Field(default='', max_length=200)
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=4, allow_inf_nan=False)
+    currency: str = Field(default='INR', pattern=r'^[A-Z]{3}$')
+    amount_basis: Literal['gross', 'net'] = 'gross'
+
+
+def extra_output(row):
+    return {k: row[k] for k in ('id', 'customer_id', 'period', 'charge_type', 'description', 'invoice_number', 'amount', 'currency', 'amount_basis', 'created_at')}
+
+
+@router.get('/customers/{customer_id}/extra-charges')
+async def list_extra_charges(customer_id: str, user=Depends(get_current_user), db=Depends(get_db)):
+    owner = user['account_id']
+    await ledger.get_entity(db, owner, 'customer', customer_id)
+    async with db.execute('SELECT * FROM billing_extra_charges WHERE owner_id=? AND customer_id=? ORDER BY period DESC, created_at DESC', (owner, customer_id)) as cursor:
+        return {'items': [extra_output(r) for r in await cursor.fetchall()], 'types': list(EXTRA_TYPES)}
+
+
+@router.post('/customers/{customer_id}/extra-charges', status_code=201)
+async def create_extra_charge(customer_id: str, body: ExtraChargeInput, user=Depends(require_workspace_admin), db=Depends(get_db)):
+    owner = user['account_id']
+    await active_customer(db, owner, customer_id)
+    key = str(uuid.uuid4())
+    await db.execute('INSERT INTO billing_extra_charges(id,owner_id,customer_id,period,charge_type,description,invoice_number,amount,currency,amount_basis,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                     (key, owner, customer_id, body.period, body.charge_type, body.description.strip(), body.invoice_number.strip(), str(body.amount), body.currency, body.amount_basis, user['user_id']))
+    await ledger.audit(db, owner, user['user_id'], 'extra_charge', key, 'create', {}, body.model_dump(mode='json'))
+    await db.commit()
+    async with db.execute('SELECT * FROM billing_extra_charges WHERE id=?', (key,)) as cursor:
+        return extra_output(await cursor.fetchone())
+
+
+@router.delete('/extra-charges/{charge_id}')
+async def delete_extra_charge(charge_id: str, user=Depends(require_workspace_admin), db=Depends(get_db)):
+    owner = user['account_id']
+    async with db.execute('SELECT * FROM billing_extra_charges WHERE owner_id=? AND id=?', (owner, charge_id)) as cursor:
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, 'Extra charge not found.')
+    await db.execute('DELETE FROM billing_extra_charges WHERE owner_id=? AND id=?', (owner, charge_id))
+    await ledger.audit(db, owner, user['user_id'], 'extra_charge', charge_id, 'delete', extra_output(row), {})
+    await db.commit()
+    return {'deleted': True}

@@ -181,3 +181,23 @@ async def test_customer_names_with_odd_spacing_can_be_confirmed(db):
     user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
     c = await customer_routes.create_customer(customer_routes.CustomerInput(name='titan workspace-  provide customer ₹123,449.72'), user, db)
     assert (await routes.delete_permanently('customer', c['id'], 'Titan Workspace- provide customer ₹123,449.72', user, db))['deleted']
+
+
+@pytest.mark.asyncio
+async def test_extra_charges_add_to_billing_and_can_be_deleted(db):
+    from datetime import date
+    from routers import billing as customer_routes
+    from services.billing_dashboard import load
+    user = {'account_id': 1, 'user_id': 'one', 'actor_id': 1}
+    c = await customer_routes.create_customer(customer_routes.CustomerInput(name='Extra Co'), user, db)
+    w = await routes.create_workload(c['id'], routes.WorkloadInput(name='Plan', frequency='Monthly'), user, db)
+    await routes.create_entry(w['id'], routes.EntryInput(period='2026-05', currency='INR', customer_amount='1000', distributor_amount='800', amount_basis='net'), user, db)
+    charge = await routes.create_extra_charge(c['id'], routes.ExtraChargeInput(period='2026-05', charge_type='Implementation', description='Setup', invoice_number='INV-9', amount='500', amount_basis='net'), user, db)
+    listed = await routes.list_extra_charges(c['id'], user, db)
+    assert [i['id'] for i in listed['items']] == [charge['id']]
+    report = await load(db, 1, date(2026, 5, 1), date(2026, 5, 31))
+    row = next(r for r in report['customers'] if r['customer_id'] == c['id'])
+    assert row['customer_amount'] == '1500.00' and row['extra_amount'] == '500.00' and row['profit'] == '700.00'
+    assert (await load(db, 1, date(2026, 5, 2), date(2026, 5, 31)))['customers'][0]['extra_amount'] is None
+    assert (await routes.delete_extra_charge(charge['id'], user, db))['deleted']
+    assert (await routes.list_extra_charges(c['id'], user, db))['items'] == []

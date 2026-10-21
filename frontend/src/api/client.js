@@ -896,6 +896,9 @@ export const createBillingCustomer = body => api.post('/billing/customers', body
 export const updateBillingCustomer = (id, body) => api.put(`/billing/customers/${encodeURIComponent(id)}`, body).then(r => r.data);
 export const getBillingCustomer = id => api.get(`/billing/customers/${encodeURIComponent(id)}`).then(r => r.data);
 export const importBillingLedger = form => api.post('/billing/ledger/import', form, { timeout: 180000 }).then(r => r.data);
+export const listBillingExtraCharges = customer => api.get(`/billing/customers/${encodeURIComponent(customer)}/extra-charges`).then(r => r.data);
+export const createBillingExtraCharge = (customer, body) => api.post(`/billing/customers/${encodeURIComponent(customer)}/extra-charges`, body).then(r => r.data);
+export const deleteBillingExtraCharge = id => api.delete(`/billing/extra-charges/${encodeURIComponent(id)}`).then(r => r.data);
 export const getBillingLedger = id => api.get(`/billing/customers/${encodeURIComponent(id)}/ledger`).then(r => r.data);
 export const saveBillingWorkload = (customer, id, body) => (id ? api.put(`/billing/workloads/${encodeURIComponent(id)}`, body) : api.post(`/billing/customers/${encodeURIComponent(customer)}/workloads`, body)).then(r => r.data);
 export const saveBillingEntry = (workload, id, body) => (id ? api.put(`/billing/ledger/entries/${encodeURIComponent(id)}`, body) : api.post(`/billing/workloads/${encodeURIComponent(workload)}/entries`, body)).then(r => r.data);

@@ -20,7 +20,7 @@ def overlap(period, start, end):
     return count, days
 
 
-def aggregate(customers, workloads, records, start, end, currency, source):
+def aggregate(customers, workloads, records, start, end, currency, source, extras=()):
     """Totals are summed from the same unrounded rows as the customer table.
 
     Date endpoints are inclusive. We know monthly totals, not daily usage.
@@ -28,14 +28,14 @@ def aggregate(customers, workloads, records, start, end, currency, source):
     Invoice documents have no frequency field and remain unallocated for partial
     months instead of turning an upfront purchase into recurring revenue.
     """
-    currencies = sorted({r['currency'] for r in records if r.get('currency')})
+    currencies = sorted({r['currency'] for r in [*records, *extras] if r.get('currency')})
     selected = currency or (currencies[0] if len(currencies) == 1 else '')
     names = {c['id']: c['name'] for c in customers}
     rows = {c['id']: {'customer_id': c['id'], 'name': c['name'],
                      **{f: None for f in FIELDS}, 'record_count': 0, 'review_count': 0,
                      'unallocated_count': 0, 'missing_count': 0, 'prorated_count': 0,
                      'workload_count': sum(w['customer_id'] == c['id'] for w in workloads),
-                     '_net': True, '_paired': True} for c in customers}
+                     'extra_amount': None, '_net': True, '_paired': True} for c in customers}
     monthly = {}
     relevant = []
     by_distributor = {}
@@ -79,6 +79,27 @@ def aggregate(customers, workloads, records, start, end, currency, source):
         if record.get('distributor_amount') is not None:
             name = str(record.get('distributor') or '').strip() or 'Not set'
             by_distributor[name] = by_distributor.get(name, ZERO) + Decimal(record['distributor_amount']) * factor
+    for extra in extras:
+        # One-off charges (implementation, migration...) are billed income with
+        # no distributor cost. They are counted only when the whole month is selected.
+        if extra['customer_id'] not in names or (selected and extra['currency'] != selected):
+            continue
+        days, month_days = overlap(extra['period'], start, end)
+        if not days:
+            continue
+        row = rows[extra['customer_id']]
+        row['record_count'] += 1
+        if days != month_days:
+            row['unallocated_count'] += 1
+            continue
+        value = Decimal(extra['amount'])
+        if extra.get('amount_basis') != 'net':
+            row['_net'] = False
+        row['extra_amount'] = (row['extra_amount'] or ZERO) + value
+        row['customer_amount'] = (row['customer_amount'] or ZERO) + value
+        row['distributor_amount'] = row['distributor_amount'] if row['distributor_amount'] is not None else ZERO
+        bucket = monthly.setdefault(extra['period'], {'period': extra['period'], 'selected_days': days, 'calendar_days': month_days, **{f: None for f in FIELDS}})
+        bucket['customer_amount'] = (bucket['customer_amount'] or ZERO) + value
     if source == 'invoices':
         for row in rows.values():
             periods = {r['period'] for r in relevant if r['customer_id'] == row['customer_id'] and (r.get('customer_amount') is not None or r.get('distributor_amount') is not None)}
@@ -87,7 +108,8 @@ def aggregate(customers, workloads, records, start, end, currency, source):
                 and any(r['customer_id'] == row['customer_id'] and r['period'] == p and r.get('distributor_amount') is not None and r['status'] == 'confirmed' for r in relevant)
                 for p in periods)
     values = list(rows.values())
-    totals = {f: sum((r[f] for r in values if r[f] is not None), ZERO) if any(r[f] is not None for r in values) else None for f in FIELDS}
+    totals = {'extra_amount': sum((r['extra_amount'] for r in values if r['extra_amount'] is not None), ZERO) if any(r['extra_amount'] is not None for r in values) else None}
+    totals.update({f: sum((r[f] for r in values if r[f] is not None), ZERO) if any(r[f] is not None for r in values) else None for f in FIELDS})
     for row in values:
         row['profit'] = row['customer_amount'] - row['distributor_amount'] if row['_net'] and row['_paired'] and not row['review_count'] and not row['unallocated_count'] and row['customer_amount'] is not None and row['distributor_amount'] is not None else None
     # Do not sum only profitable/complete customers into a misleading overall P/L.
@@ -95,7 +117,7 @@ def aggregate(customers, workloads, records, start, end, currency, source):
     totals['profit'] = sum((r['profit'] for r in contributors), ZERO) if contributors and all(r['profit'] is not None for r in contributors) else None
     mixed = not selected and len(currencies) > 1
     def public(row):
-        return {k: None if mixed and k in (*FIELDS, 'profit') else money(v) if isinstance(v, Decimal) else v for k, v in row.items() if not k.startswith('_')}
+        return {k: None if mixed and k in (*FIELDS, 'profit', 'extra_amount') else money(v) if isinstance(v, Decimal) else v for k, v in row.items() if not k.startswith('_')}
     return {
         'from_date': start.isoformat(), 'to_date': end.isoformat(), 'days': (end - start).days + 1,
         'source': source, 'currency': selected or None, 'currencies': currencies,
@@ -134,4 +156,8 @@ async def load(db, owner, start, end, currency='', source='ledger', customer_id=
                 if r['customer_id'] not in allowed:
                     continue
                 records.append({**dict(r), **{f: r['net_amount'] if f == mapping[r['kind']] else None for f in FIELDS}, 'amount_basis': 'net', 'frequency': ''})
-    return aggregate(customers, workloads, records, start, end, currency, source)
+    extras = []
+    if source == 'ledger':
+        async with db.execute("SELECT customer_id,period,amount,currency,amount_basis FROM billing_extra_charges WHERE owner_id=? AND period>=? AND period<=?", (owner, first, last)) as cursor:
+            extras = [dict(r) for r in await cursor.fetchall() if r['customer_id'] in {c['id'] for c in customers}]
+    return aggregate(customers, workloads, records, start, end, currency, source, extras)
