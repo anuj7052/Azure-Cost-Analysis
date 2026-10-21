@@ -44,7 +44,7 @@ function AddInline({ placeholder, onAdd, busy, onCancel, initial = '', label = '
 const EXTRA_TYPES = ['Implementation', 'Migration', 'Consulting', 'Support', 'Licence', 'Training', 'Other'];
 const EXTRA_EMPTY = { charge_type: 'Implementation', description: '', period: new Date().toISOString().slice(0, 7), invoice_number: '', amount: '', amount_basis: 'gross' };
 
-function ExtraCharges({ customerId, customerName, canEdit }) {
+function ExtraCharges({ customerId, canEdit }) {
   const [items, setItems] = useState(null);
   const [form, setForm] = useState(EXTRA_EMPTY);
   const [busy, setBusy] = useState(false);
@@ -70,41 +70,44 @@ function ExtraCharges({ customerId, customerName, canEdit }) {
   };
   const total = (items || []).reduce((sum, i) => sum + Number(i.amount || 0), 0);
   return (
-    <Card className="mt-6">
-      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-800 p-5">
-        <div>
-          <h2 className="text-base font-semibold text-slate-100">Extra charges{customerName ? ` · ${customerName}` : ''}</h2>
-          <p className="mt-1 text-sm text-slate-400">One-off charges such as implementation, migration or consulting. They count in this customer's billing, with no distributor cost.</p>
-        </div>
-        {items?.length > 0 && <div className="text-right text-xs"><p className="text-slate-500">Total extra</p><p className="font-semibold tabular-nums text-slate-100">{money(total, 'INR')}</p></div>}
+    <section className="mt-6 space-y-3 border-t border-slate-800 pt-5" aria-labelledby="ex-title">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 id="ex-title" className="text-sm font-semibold text-slate-100">8 · Extra charges <span className="font-normal text-slate-500">(optional)</span></h3>
+        {items?.length > 0 && <span className="text-xs tabular-nums text-slate-400">Total {money(total, 'INR')}</span>}
       </div>
-      {canEdit && <div className="grid gap-3 border-b border-slate-800 p-5 sm:grid-cols-2 lg:grid-cols-[10rem_minmax(0,1fr)_9rem_9rem_10rem_auto] lg:items-end">
-        <div><Label htmlFor="ex-type">Type</Label><NativeSelect id="ex-type" className="mt-1.5" value={form.charge_type} onChange={e => set({ charge_type: e.target.value })}>{EXTRA_TYPES.map(t => <option key={t}>{t}</option>)}</NativeSelect></div>
-        <div><Label htmlFor="ex-desc">Description</Label><Input id="ex-desc" className="mt-1.5" value={form.description} onChange={e => set({ description: e.target.value })} placeholder="e.g. SAP migration setup" /></div>
-        <div><Label htmlFor="ex-month">Month</Label><Input id="ex-month" className="mt-1.5" type="month" value={form.period} onChange={e => set({ period: e.target.value })} /></div>
-        <div><Label htmlFor="ex-invoice">Invoice number</Label><Input id="ex-invoice" className="mt-1.5" value={form.invoice_number} onChange={e => set({ invoice_number: e.target.value })} placeholder="INV-1042" /></div>
-        <div><Label htmlFor="ex-amount">Amount (INR)</Label><Input id="ex-amount" className="mt-1.5" type="number" min="0" step="0.01" inputMode="decimal" value={form.amount} onChange={e => set({ amount: e.target.value })} placeholder="0.00" />
-          <select aria-label="Tax" value={form.amount_basis} onChange={e => set({ amount_basis: e.target.value })} className="mt-1 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-xs text-slate-200"><option value="gross">Tax included</option><option value="net">Before tax</option></select></div>
-        <Button type="button" className="h-10" disabled={busy || !form.amount || !form.period} onClick={add}>{busy ? <Loader2 className="animate-spin" /> : <Plus />}Add charge</Button>
-      </div>}
-      {items == null ? <p className="flex items-center gap-2 p-6 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p> : !items.length ? <p className="p-6 text-center text-sm text-slate-400">No extra charges yet.</p> : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[40rem] text-sm">
-            <thead><tr className="border-b border-slate-800 text-left text-xs text-slate-500">{['Month', 'Type', 'Description', 'Invoice', 'Amount', ''].map(h => <th key={h} className={`px-4 py-2.5 font-medium ${h === 'Amount' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
-            <tbody>{items.map(i => (
-              <tr key={i.id} className="border-b border-slate-800/60 last:border-0">
-                <td className="whitespace-nowrap px-4 py-2.5 text-slate-200">{monthName(i.period)}</td>
-                <td className="px-4 py-2.5"><span className="rounded-full bg-[#ffedd5] px-2 py-0.5 text-xs font-medium text-[#9a3412]">{i.charge_type}</span></td>
-                <td className="max-w-[16rem] truncate px-4 py-2.5 text-slate-300" title={i.description}>{i.description || '—'}</td>
-                <td className="px-4 py-2.5 text-slate-400">{i.invoice_number || '—'}</td>
-                <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(i.amount, i.currency)}<span className="ml-1 text-[10px] text-slate-500">{i.amount_basis === 'net' ? 'before tax' : 'incl. tax'}</span></td>
-                <td className="px-4 py-2.5 text-right">{canEdit && <button type="button" aria-label="Delete extra charge" onClick={() => remove(i)} className="rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>}</td>
-              </tr>
-            ))}</tbody>
-          </table>
+      <p className="text-xs text-slate-500">One-off charges like implementation, migration or bandwidth. Added to this customer's billing, with no distributor cost.</p>
+      {canEdit && <>
+        <div className="grid grid-cols-2 gap-3">
+          <div><Label htmlFor="ex-type">Type</Label><NativeSelect id="ex-type" className="mt-1.5" value={form.charge_type} onChange={e => set({ charge_type: e.target.value })}>{EXTRA_TYPES.map(t => <option key={t}>{t}</option>)}</NativeSelect></div>
+          <div><Label htmlFor="ex-month">Month</Label><Input id="ex-month" className="mt-1.5" type="month" value={form.period} onChange={e => set({ period: e.target.value })} /></div>
         </div>
+        <div><Label htmlFor="ex-desc">Description</Label><Input id="ex-desc" className="mt-1.5" value={form.description} onChange={e => set({ description: e.target.value })} placeholder="e.g. Bandwidth charge" /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><Label htmlFor="ex-invoice">Invoice number</Label><Input id="ex-invoice" className="mt-1.5" value={form.invoice_number} onChange={e => set({ invoice_number: e.target.value })} placeholder="INV-1042" /></div>
+          <div><Label htmlFor="ex-amount">Amount (INR)</Label><Input id="ex-amount" className="mt-1.5" type="number" min="0" step="0.01" inputMode="decimal" value={form.amount} onChange={e => set({ amount: e.target.value })} placeholder="0.00" /></div>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <label className="text-xs text-slate-400">Amount is <select value={form.amount_basis} onChange={e => set({ amount_basis: e.target.value })} className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-xs text-slate-200"><option value="gross">tax included</option><option value="net">before tax</option></select></label>
+          <Button type="button" variant="outline" size="sm" disabled={busy || !form.amount || !form.period} onClick={add}>{busy ? <Loader2 className="animate-spin" /> : <Plus />}Add charge</Button>
+        </div>
+      </>}
+      {items == null ? <p className="flex items-center gap-2 text-xs text-slate-400"><Loader2 className="h-3 w-3 animate-spin" />Loading…</p> : !items.length ? <p className="text-xs text-slate-500">No extra charges yet.</p> : (
+        <ul className="divide-y divide-slate-800 rounded-lg border border-slate-800">
+          {items.map(i => (
+            <li key={i.id} className="flex items-start justify-between gap-3 px-3 py-2 text-sm">
+              <div className="min-w-0">
+                <p className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-[#ffedd5] px-2 py-0.5 text-[11px] font-medium text-[#9a3412]">{i.charge_type}</span><span className="text-xs text-slate-400">{monthName(i.period)}{i.invoice_number ? ` · ${i.invoice_number}` : ''}</span></p>
+                {i.description && <p className="mt-1 truncate text-xs text-slate-300" title={i.description}>{i.description}</p>}
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <span className="tabular-nums text-slate-100">{money(i.amount, i.currency)}</span>
+                {canEdit && <button type="button" aria-label="Delete extra charge" onClick={() => remove(i)} className="rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>}
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
-    </Card>
+    </section>
   );
 }
 
@@ -358,6 +361,7 @@ export default function BillingEntries() {
               </Button>
               {!canEdit && <p className="text-center text-xs text-slate-500">Workspace admins only</p>}
             </form>
+            {customerId && <ExtraCharges customerId={customerId} canEdit={canEdit} />}
           </CardContent>
         </Card>
 
@@ -398,7 +402,6 @@ export default function BillingEntries() {
           )}
         </Card>
       </div>
-      {customerId && <ExtraCharges customerId={customerId} customerName={(customers || []).find(c => c.id === customerId)?.name || ''} canEdit={canEdit} />}
     </BillingPage>
   );
 }
