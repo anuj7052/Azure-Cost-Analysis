@@ -43,7 +43,51 @@ function Bubble({ role, content }) {
   );
 }
 
+const POS_KEY = 'assistant-bubble-pos';
+const clampPos = ({ right, bottom }, w, h) => ({
+  right: Math.min(Math.max(8, right), Math.max(8, window.innerWidth - w - 8)),
+  bottom: Math.min(Math.max(8, bottom), Math.max(8, window.innerHeight - h - 8)),
+});
+
+/** Position (distance from bottom-right) the user dragged the bubble to; remembered across visits. */
+function useDraggable() {
+  const [pos, setPos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem(POS_KEY)); if (Number.isFinite(v?.right) && Number.isFinite(v?.bottom)) return v; } catch { /* default */ }
+    return { right: 20, bottom: 20 };
+  });
+  const drag = useRef(null);
+  const moved = useRef(false);
+  useEffect(() => {
+    const fit = () => setPos(p => clampPos(p, 52, 52));
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
+  const onPointerDown = e => {
+    if (e.button !== 0 || e.target.closest('button:not([data-drag-handle]),a,input,textarea')) return;
+    const el = e.currentTarget.getBoundingClientRect();
+    drag.current = { x: e.clientX, y: e.clientY, start: pos, w: el.width, h: el.height };
+    moved.current = false;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = e => {
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    if (!moved.current && Math.hypot(dx, dy) < 5) return;
+    moved.current = true;
+    setPos(clampPos({ right: d.start.right - dx, bottom: d.start.bottom - dy }, d.w, d.h));
+  };
+  const onPointerUp = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    setPos(p => { localStorage.setItem(POS_KEY, JSON.stringify(p)); return p; });
+  };
+  return { pos, moved, handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp } };
+}
+
 export default function AssistantWidget() {
+  const { pos, moved, handlers } = useDraggable();
+  const wide = typeof window !== 'undefined' && window.innerWidth >= 640;
   const me = useAppStore(s => s.me);
   const selectedTenantId = useAppStore(s => s.selectedTenantId);
 
@@ -117,10 +161,13 @@ export default function AssistantWidget() {
     return (
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        aria-label="Ask about your Azure"
-        title="Ask about your Azure"
-        className="fixed bottom-5 right-5 z-40 h-[52px] w-[52px] rounded-full bg-[#ea580c] text-white shadow-lg shadow-orange-900/30 flex items-center justify-center hover:bg-[#c2410c] focus:outline-none focus:ring-2 focus:ring-[#fdba74]"
+        data-drag-handle
+        {...handlers}
+        onClick={() => { if (!moved.current) setOpen(true); }}
+        style={{ right: pos.right, bottom: pos.bottom, touchAction: 'none' }}
+        aria-label="Ask about your Azure (drag to move)"
+        title="Ask about your Azure. Drag to move."
+        className="fixed z-40 h-[52px] w-[52px] cursor-grab active:cursor-grabbing rounded-full bg-[#ea580c] text-white shadow-lg shadow-orange-900/30 flex items-center justify-center hover:bg-[#c2410c] focus:outline-none focus:ring-2 focus:ring-[#fdba74]"
       >
         <MessageCircle size={22} />
       </button>
@@ -133,9 +180,10 @@ export default function AssistantWidget() {
       aria-label="Ask about your Azure"
       className="fixed z-40 bg-slate-900 border border-slate-800 elevated-xl flex flex-col
                  inset-x-3 bottom-3 rounded-2xl max-h-[80vh]
-                 sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[380px] sm:h-[560px] sm:max-h-[78vh]"
+                 sm:inset-x-auto sm:w-[380px] sm:h-[560px] sm:max-h-[78vh]"
+      style={wide ? clampPos(pos, 380, Math.min(560, window.innerHeight * 0.78)) : undefined}
     >
-      <header className="flex items-start gap-2 px-4 py-3 border-b border-slate-800">
+      <header {...(wide ? handlers : {})} style={{ touchAction: 'none' }} title="Drag to move" className="flex items-start gap-2 px-4 py-3 border-b border-slate-800 sm:cursor-grab sm:active:cursor-grabbing select-none">
         <MessageCircle size={16} className="text-blue-400 mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-white">Ask about your Azure</p>

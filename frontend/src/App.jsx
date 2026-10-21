@@ -330,7 +330,7 @@ function AppShell() {
         </main>
       </div>
       {/* Outside <main> so it stays put while the page behind it scrolls. */}
-      {!location.pathname.startsWith('/azure-billing') && <AssistantWidget />}
+      <AssistantWidget />
       {/* Also outside <main>, and mounted once for the whole app: it reports
           on requests, which do not stop when the route changes. */}
       <GlobalProgress />
