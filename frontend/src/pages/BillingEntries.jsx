@@ -44,15 +44,9 @@ function AddInline({ placeholder, onAdd, busy, onCancel, initial = '', label = '
 const EXTRA_TYPES = ['Implementation', 'Migration', 'Consulting', 'Support', 'Licence', 'Training', 'Other'];
 const EXTRA_EMPTY = { charge_type: 'Implementation', description: '', period: new Date().toISOString().slice(0, 7), invoice_number: '', amount: '', amount_basis: 'gross' };
 
-function ExtraCharges({ customerId, canEdit }) {
-  const [items, setItems] = useState(null);
+function ExtraCharges({ customerId, canEdit, items, setItems }) {
   const [form, setForm] = useState(EXTRA_EMPTY);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let live = true;
-    listBillingExtraCharges(customerId).then(d => { if (live) setItems(d.items || []); }).catch(e => { if (live) { setItems([]); toast.error(errorMessage(e)); } });
-    return () => { live = false; };
-  }, [customerId]);
   const set = patch => setForm(f => ({ ...f, ...patch }));
   const add = async () => {
     if (!(Number(form.amount) > 0)) { toast.error('Enter an amount above zero'); return; }
@@ -170,6 +164,14 @@ export default function BillingEntries() {
   }, [customerId]);
 
   const subscriptions = useMemo(() => (ledger?.workloads || []).filter(w => !w.archived), [ledger]);
+  const [extras, setExtras] = useState(null);
+  useEffect(() => {
+    if (!customerId) return undefined;
+    let live = true;
+    setExtras(null);
+    listBillingExtraCharges(customerId).then(d => { if (live) setExtras(d.items || []); }).catch(e => { if (live) { setExtras([]); toast.error(errorMessage(e)); } });
+    return () => { live = false; };
+  }, [customerId]);
   const entries = useMemo(() => (ledger?.entries || []).filter(e => !e.archived).sort((a, b) => b.period.localeCompare(a.period)), [ledger]);
   const existing = entries.find(e => e.workload_id === workloadId && e.period === form.period);
   const profit = form.customer_amount !== '' && form.distributor_amount !== '' ? Number(form.customer_amount) - Number(form.distributor_amount) : null;
@@ -278,7 +280,9 @@ export default function BillingEntries() {
   };
 
   const subName = id => subscriptions.find(w => w.id === id)?.name || (ledger?.workloads || []).find(w => w.id === id)?.name || '—';
-  const totals = entries.reduce((t, e) => ({ billed: t.billed + (Number(e.customer_amount) || 0), cost: t.cost + (Number(e.distributor_amount) || 0) }), { billed: 0, cost: 0 });
+  const extraRows = (extras || []).map(x => ({ ...x, _extra: true }));
+  const rows = [...entries, ...extraRows].sort((a, b) => b.period.localeCompare(a.period) || Number(Boolean(a._extra)) - Number(Boolean(b._extra)));
+  const totals = rows.reduce((t, e) => ({ billed: t.billed + (Number(e._extra ? e.amount : e.customer_amount) || 0), cost: t.cost + (Number(e.distributor_amount) || 0) }), { billed: 0, cost: 0 });
   const currency = entries[0]?.currency || form.currency;
 
   return (
@@ -361,7 +365,7 @@ export default function BillingEntries() {
               </Button>
               {!canEdit && <p className="text-center text-xs text-slate-500">Workspace admins only</p>}
             </form>
-            {customerId && <ExtraCharges customerId={customerId} canEdit={canEdit} />}
+            {customerId && <ExtraCharges customerId={customerId} canEdit={canEdit} items={extras} setItems={setExtras} />}
           </CardContent>
         </Card>
 
@@ -369,18 +373,29 @@ export default function BillingEntries() {
           <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-800 p-5">
             <div>
               <h2 className="text-base font-semibold text-slate-100">{customerId ? (customers || []).find(c => c.id === customerId)?.name || 'Entries' : 'Entries'}</h2>
-              <p className="mt-1 text-sm text-slate-400">{customerId ? `${entries.length} month${entries.length === 1 ? '' : 's'} recorded · click a row to edit` : 'Choose a customer to see their months.'}</p>
+              <p className="mt-1 text-sm text-slate-400">{customerId ? `${entries.length} month${entries.length === 1 ? '' : 's'} recorded${extraRows.length ? ` + ${extraRows.length} extra charge${extraRows.length === 1 ? '' : 's'}` : ''} · click a row to edit` : 'Choose a customer to see their months.'}</p>
             </div>
-            {entries.length > 0 && <div className="flex gap-5 text-right text-xs"><div><p className="text-slate-500">Billed</p><p className="font-semibold tabular-nums text-slate-100">{money(totals.billed, currency)}</p></div><div><p className="text-slate-500">Distributor</p><p className="font-semibold tabular-nums text-slate-100">{money(totals.cost, currency)}</p></div><div><p className="text-slate-500">Profit</p><p className={`font-semibold tabular-nums ${totals.billed - totals.cost >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{money(totals.billed - totals.cost, currency)}</p></div></div>}
+            {rows.length > 0 && <div className="flex gap-5 text-right text-xs"><div><p className="text-slate-500">Billed</p><p className="font-semibold tabular-nums text-slate-100">{money(totals.billed, currency)}</p></div><div><p className="text-slate-500">Distributor</p><p className="font-semibold tabular-nums text-slate-100">{money(totals.cost, currency)}</p></div><div><p className="text-slate-500">Profit</p><p className={`font-semibold tabular-nums ${totals.billed - totals.cost >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{money(totals.billed - totals.cost, currency)}</p></div></div>}
           </div>
-          {!customerId ? null : !ledger ? <p className="flex items-center gap-2 p-8 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p> : !entries.length ? <p className="p-8 text-center text-sm text-slate-400">No months recorded yet. Use the form to add the first one.</p> : (
+          {!customerId ? null : !ledger ? <p className="flex items-center gap-2 p-8 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p> : !rows.length ? <p className="p-8 text-center text-sm text-slate-400">No months recorded yet. Use the form to add the first one.</p> : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[44rem] text-sm">
                 <thead><tr className="border-b border-slate-800 text-left text-xs text-slate-500">
                   {['Month', 'Subscription', 'Invoice', 'Our billing', 'Distributor', 'Distributor amount', 'Profit', ''].map(h => <th key={h} className={`px-4 py-2.5 font-medium ${['Our billing', 'Distributor amount', 'Profit'].includes(h) ? 'text-right' : ''}`}>{h}</th>)}
                 </tr></thead>
                 <tbody>
-                  {entries.map(e => {
+                  {rows.map(e => e._extra ? (
+                    <tr key={`x-${e.id}`} className="border-b border-slate-800/60 bg-emerald-500/5">
+                      <td className="whitespace-nowrap px-4 py-2.5 text-slate-200">{monthName(e.period)}</td>
+                      <td className="max-w-[12rem] truncate px-4 py-2.5 text-slate-300" title={e.description}><span className="mr-1.5 rounded-full bg-[#ffedd5] px-2 py-0.5 text-[11px] font-medium text-[#9a3412]">Extra · {e.charge_type}</span>{e.description}</td>
+                      <td className="px-4 py-2.5 text-slate-400">{e.invoice_number || '—'}</td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(e.amount, e.currency)}</td>
+                      <td className="px-4 py-2.5 text-slate-500">—</td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-500">—</td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums text-emerald-400">{money(e.amount, e.currency)}</td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-right">{canEdit && <button type="button" aria-label="Delete extra charge" title="Delete extra charge" onClick={async () => { if (!window.confirm(`Delete the ${e.charge_type} charge for ${monthName(e.period)}?`)) return; try { await deleteBillingExtraCharge(e.id); setExtras(list => list.filter(i => i.id !== e.id)); toast.success('Extra charge deleted'); } catch (err) { toast.error(errorMessage(err)); } }} className="ml-2 rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="inline h-3.5 w-3.5" /></button>}</td>
+                    </tr>
+                  ) : (() => {
                     const p = e.customer_amount != null && e.distributor_amount != null ? Number(e.customer_amount) - Number(e.distributor_amount) : null;
                     const active = e.workload_id === workloadId && e.period === form.period;
                     return (
@@ -395,7 +410,7 @@ export default function BillingEntries() {
                         <td className="whitespace-nowrap px-4 py-2.5 text-right"><Pencil className="inline h-3.5 w-3.5 text-slate-500" aria-label="Edit" />{canEdit && <button type="button" aria-label="Delete entry" title="Delete entry" onClick={ev => { ev.stopPropagation(); removeEntry(e); }} className="ml-2 rounded p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="inline h-3.5 w-3.5" /></button>}</td>
                       </tr>
                     );
-                  })}
+                  })())}
                 </tbody>
               </table>
             </div>
