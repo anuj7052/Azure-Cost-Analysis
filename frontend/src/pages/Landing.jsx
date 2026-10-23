@@ -558,7 +558,7 @@ export default function Landing() {
               <p className="font-semibold text-slate-300">Open</p>
               <ul className="mt-3 space-y-2">
                 <li>
-                  <a href="https://github.com/anuj7052/Azure-Cost-Analysis" target="_blank" rel="noreferrer noopener" className="hover:text-slate-300">
+                  <a href="https://github.com/anuj7052/cloudledger" target="_blank" rel="noreferrer noopener" className="hover:text-slate-300">
                     Source on GitHub
                   </a>
                 </li>

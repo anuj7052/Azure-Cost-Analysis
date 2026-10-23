@@ -1,5 +1,11 @@
 # Cloudledger
 
+[![Live demo](https://img.shields.io/badge/live-azure.microsoftupdates.co.in-ea580c)](https://azure.microsoftupdates.co.in)
+[![GitHub stars](https://img.shields.io/github/stars/anuj7052/cloudledger?style=social)](https://github.com/anuj7052/cloudledger/stargazers)
+[![Deploy](https://github.com/anuj7052/cloudledger/actions/workflows/deploy-azure.yml/badge.svg)](https://github.com/anuj7052/cloudledger/actions)
+
+> **Cloudledger** is an open-source **Azure cost management and FinOps** app: multi-tenant Azure cost analysis, anomaly detection, BOQ vs actual, and an **Azure billing CRM** for CSP partners (customers, subscriptions, invoices, distributors, profit, POs and proof documents).
+
 **Know what Azure is costing you, and why it moved.**
 
 A full-stack web app for tracking Azure cloud costs across **multiple tenants and subscriptions** — with 6-month trend analysis, per-service breakdown, anomaly detection, a CSV upload fallback, and a BOQ-to-infrastructure-as-code generator.
