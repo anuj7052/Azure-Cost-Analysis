@@ -115,3 +115,15 @@ async def download(owner, customer, path):
     if len(response.content) > MAX_BYTES:
         raise HTTPException(413, "Document exceeds the download size limit.")
     return response.content
+
+
+async def delete(owner, customer, path):
+    prefix = f"workspace-{int(owner)}/customer-{customer}/"
+    if not path.startswith(prefix) or any(part in {".", "..", ""} for part in path.split("/")):
+        raise HTTPException(403, "This billing document belongs to another workspace.")
+    async with httpx.AsyncClient(timeout=60) as client:
+        try:
+            await request(client, "DELETE", path)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise

@@ -69,6 +69,27 @@ SCHEMAS = {
         amount_basis TEXT NOT NULL DEFAULT 'gross', created_by TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
     )""",
+    "billing_services": """CREATE TABLE IF NOT EXISTS billing_services (
+        id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id),
+        customer_id TEXT NOT NULL REFERENCES billing_customers(id),
+        workload_id TEXT NOT NULL REFERENCES billing_workloads(id),
+        name TEXT NOT NULL, po_number TEXT NOT NULL DEFAULT '', po_date TEXT NOT NULL DEFAULT '',
+        boq_ref TEXT NOT NULL DEFAULT '', activated_on TEXT NOT NULL DEFAULT '', stopped_on TEXT NOT NULL DEFAULT '',
+        monthly_cost TEXT, currency TEXT NOT NULL DEFAULT 'INR', status TEXT NOT NULL DEFAULT 'active',
+        description TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP), updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    )""",
+    "billing_service_files": """CREATE TABLE IF NOT EXISTS billing_service_files (
+        id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id),
+        customer_id TEXT NOT NULL, service_id TEXT NOT NULL REFERENCES billing_services(id),
+        kind TEXT NOT NULL, filename TEXT NOT NULL, item_id TEXT NOT NULL, size INTEGER NOT NULL,
+        uploaded_by TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    )""",
+    "billing_service_notes": """CREATE TABLE IF NOT EXISTS billing_service_notes (
+        id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id),
+        service_id TEXT NOT NULL REFERENCES billing_services(id), body TEXT NOT NULL,
+        author TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    )""",
     "billing_changes": """CREATE TABLE IF NOT EXISTS billing_changes (
         id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id), entity_type TEXT NOT NULL,
         entity_id TEXT NOT NULL, action TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL,
@@ -77,6 +98,9 @@ SCHEMAS = {
 }
 
 INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_billing_services_owner ON billing_services(owner_id,customer_id,workload_id)",
+    "CREATE INDEX IF NOT EXISTS idx_billing_service_files ON billing_service_files(owner_id,service_id)",
+    "CREATE INDEX IF NOT EXISTS idx_billing_service_notes ON billing_service_notes(owner_id,service_id)",
     "CREATE INDEX IF NOT EXISTS idx_billing_extra_owner ON billing_extra_charges(owner_id,customer_id,period)",
     "CREATE INDEX IF NOT EXISTS idx_billing_workloads_owner ON billing_workloads(owner_id,customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_billing_ledger_owner ON billing_ledger(owner_id,customer_id,period)",

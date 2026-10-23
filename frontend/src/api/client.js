@@ -1234,3 +1234,14 @@ export default api;
  */
 export const fetchResizeOptions = (body) =>
   api.post('/compute/resize/options', body).then(r => r.data);
+
+// Services activated inside a billing subscription, with PO/BOQ, proof files and notes.
+export const listBillingServices = customer => api.get(`/billing/customers/${encodeURIComponent(customer)}/services`).then(r => r.data);
+export const createBillingService = (customer, body) => api.post(`/billing/customers/${encodeURIComponent(customer)}/services`, body).then(r => r.data);
+export const updateBillingService = (id, body) => api.put(`/billing/services/${encodeURIComponent(id)}`, body).then(r => r.data);
+export const deleteBillingService = id => api.delete(`/billing/services/${encodeURIComponent(id)}`).then(r => r.data);
+export const uploadBillingServiceFile = (id, kind, file) => { const form = new FormData(); form.append('kind', kind); form.append('file', file); return api.post(`/billing/services/${encodeURIComponent(id)}/files`, form).then(r => r.data); };
+export const downloadBillingServiceFile = id => api.get(`/billing/service-files/${encodeURIComponent(id)}/download`, { responseType: 'blob' }).then(r => r.data);
+export const deleteBillingServiceFile = id => api.delete(`/billing/service-files/${encodeURIComponent(id)}`).then(r => r.data);
+export const addBillingServiceNote = (id, body) => api.post(`/billing/services/${encodeURIComponent(id)}/notes`, { body }).then(r => r.data);
+export const deleteBillingServiceNote = id => api.delete(`/billing/service-notes/${encodeURIComponent(id)}`).then(r => r.data);

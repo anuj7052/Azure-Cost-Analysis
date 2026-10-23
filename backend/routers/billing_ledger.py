@@ -309,6 +309,10 @@ async def delete_permanently(kind: Literal['customer', 'workload', 'entry'], ent
         async with db.execute('SELECT id FROM billing_workloads WHERE owner_id=? AND customer_id=?', (owner, entity_id)) as cursor:
             workload_ids = [row[0] for row in await cursor.fetchall()]
         await db.execute('DELETE FROM billing_extra_charges WHERE owner_id=? AND customer_id=?', (owner, entity_id))
+        if await ledger.one(db, 'SELECT id FROM billing_service_files WHERE owner_id=? AND customer_id=?', (owner, entity_id)):
+            raise HTTPException(409, 'This customer has service documents. Delete them in Services & POs first, or archive the customer.')
+        await db.execute('DELETE FROM billing_service_notes WHERE owner_id=? AND service_id IN (SELECT id FROM billing_services WHERE owner_id=? AND customer_id=?)', (owner, owner, entity_id))
+        await db.execute('DELETE FROM billing_services WHERE owner_id=? AND customer_id=?', (owner, entity_id))
         await db.execute('DELETE FROM billing_ledger WHERE owner_id=? AND customer_id=?', (owner, entity_id))
         await db.execute('DELETE FROM billing_workloads WHERE owner_id=? AND customer_id=?', (owner, entity_id))
         await db.execute('DELETE FROM billing_customers WHERE owner_id=? AND id=?', (owner, entity_id))
@@ -317,6 +321,10 @@ async def delete_permanently(kind: Literal['customer', 'workload', 'entry'], ent
                 await db.execute('DELETE FROM billing_archives WHERE owner_id=? AND entity_type=? AND entity_id=?', (owner, kind_, key))
         removed = {'entries': len(entry_ids), 'subscriptions': len(workload_ids)}
     elif kind == 'workload':
+        if await ledger.one(db, 'SELECT f.id FROM billing_service_files f JOIN billing_services s ON s.id=f.service_id WHERE f.owner_id=? AND s.workload_id=?', (owner, entity_id)):
+            raise HTTPException(409, 'This subscription has service documents. Delete them in Services & POs first.')
+        await db.execute('DELETE FROM billing_service_notes WHERE owner_id=? AND service_id IN (SELECT id FROM billing_services WHERE owner_id=? AND workload_id=?)', (owner, owner, entity_id))
+        await db.execute('DELETE FROM billing_services WHERE owner_id=? AND workload_id=?', (owner, entity_id))
         cursor = await db.execute('DELETE FROM billing_ledger WHERE owner_id=? AND workload_id=?', (owner, entity_id))
         removed = {'entries': cursor.rowcount}
         await db.execute('DELETE FROM billing_workloads WHERE owner_id=? AND id=?', (owner, entity_id))

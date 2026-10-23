@@ -5,6 +5,7 @@ import * as api from '../api/client';
 import { errorMessage } from '../utils/apiError';
 import { billingMoney, billingMonth, documentStatus } from '../utils/billingPresentation';
 import BillingLedger, { LedgerImport } from '../components/Common/BillingLedger';
+import BillingServices from '../components/Common/BillingServices';
 import { BillingPage, BillingNotice, BillingEmpty, billingInput as input, billingButton as primary, billingSecondary as secondary, billingPanel as panel } from '../components/billing-ui/workspace';
 
 const TYPES = { customer: 'Customer invoice', distributor: 'Distributor invoice', azure_usage: 'Azure usage bill' };
@@ -68,7 +69,7 @@ function FileScanIcon() { return <Upload className="mb-4 text-blue-400" size={24
 
 function CustomerProfile({ customer, settings, onCustomerChanged }) {
   const [params, setParams] = useSearchParams();
-  const view = ['monthly', 'bills', 'details'].includes(params.get('view')) ? params.get('view') : 'monthly';
+  const view = ['monthly', 'services', 'bills', 'details'].includes(params.get('view')) ? params.get('view') : 'monthly';
   const setView = next => setParams(previous => { const p = new URLSearchParams(previous); p.set('view', next); p.delete('review'); return p; });
   const [data, setData] = useState(null);
   const [revision, setRevision] = useState(0);
@@ -92,8 +93,9 @@ function CustomerProfile({ customer, settings, onCustomerChanged }) {
   return <BillingPage title={customer.name} description={customer.contact_email || 'Monthly billing, invoices and company details.'} actions={<><Link className={secondary} to="/azure-billing"><ArrowLeft size={15} />All customers</Link><button className={secondary} disabled={busy} onClick={() => run(async () => saveFile(await api.exportBillingWorkbook(customer.id), 'billing-report.xlsx'))}><Download size={15} />Export report</button>{canEdit && <button className={primary} onClick={() => { setView('bills'); setUploading(true); }}><Plus size={16} />Upload bill</button>}</>}>
     {!!customer.archived && <BillingNotice>This customer is archived. Restore it in Company details to make changes.</BillingNotice>}
     {error && <BillingNotice error>{error}</BillingNotice>}{message && <BillingNotice>{message}</BillingNotice>}
-    <nav aria-label="Customer sections" className="flex flex-wrap gap-2">{[['monthly', 'Monthly billing'], ['bills', `Bills & uploads${pending ? ` (${pending} to check)` : ''}`], ['details', 'Company details']].map(([key, label]) => <button key={key} aria-pressed={view === key} onClick={() => setView(key)} className={view === key ? primary : secondary}>{label}</button>)}</nav>
+    <nav aria-label="Customer sections" className="flex flex-wrap gap-2">{[['monthly', 'Monthly billing'], ['services', 'Services & POs'], ['bills', `Bills & uploads${pending ? ` (${pending} to check)` : ''}`], ['details', 'Company details']].map(([key, label]) => <button key={key} aria-pressed={view === key} onClick={() => setView(key)} className={view === key ? primary : secondary}>{label}</button>)}</nav>
     {view === 'monthly' && <BillingLedger customerId={customer.id} canEdit={canEdit} initialReview={params.get('review') === '1'} initialMonth={params.get('month') || ''} />}
+    {view === 'services' && <BillingServices customerId={customer.id} canEdit={canEdit} />}
     {view === 'details' && <section className={panel}><h2 className="mb-5 text-lg font-semibold">Company details</h2>{canEdit ? <CompanyForm key={customer.name} initial={{ name: customer.name, company: customer.company, contact_email: customer.contact_email, notes: customer.notes }} busy={busy} onSave={form => run(async () => { await api.updateBillingCustomer(customer.id, form); await onCustomerChanged(); setMessage('Company details saved.'); })} /> : <dl className="space-y-4 text-sm">{[['Company', customer.company], ['Contact', customer.contact_email], ['Notes', customer.notes]].map(([label, value]) => <div key={label}><dt className="text-slate-400">{label}</dt><dd className="mt-1 whitespace-pre-wrap">{value || 'Not entered'}</dd></div>)}</dl>}{settings.can_edit && <details className="mt-8 border-t border-slate-800 pt-5"><summary className="cursor-pointer text-sm text-slate-400">{customer.archived ? 'Restore customer' : 'Archive customer'}</summary><p className="mt-3 text-sm text-slate-400">Archived customers leave the active list. Their bills and history are kept, and they can be restored.</p><button className={`${secondary} mt-4`} disabled={busy} onClick={() => { if (customer.archived || window.confirm('Archive this customer? You can restore it later.')) run(async () => { await api.archiveBillingItem('customer', customer.id, !!customer.archived); await onCustomerChanged(); }); }}>{customer.archived ? 'Restore customer' : 'Archive customer'}</button></details>}</section>}
     {view === 'bills' && <>
       {!data && !error && <p role="status">Loading bills…</p>}
