@@ -29,18 +29,18 @@ function ServiceForm({ initial, subscriptions, onSave, onCancel, busy }) {
   return (
     <form className="space-y-4 rounded-xl border border-[#fdba74] bg-slate-900 p-5" onSubmit={e => { e.preventDefault(); onSave({ ...form, monthly_cost: form.monthly_cost === '' ? null : form.monthly_cost }); }}>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <label className="block text-xs text-slate-400">Subscription<select required className={field} value={form.workload_id} onChange={e => set({ workload_id: e.target.value })}><option value="">Choose…</option>{subscriptions.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
-        {input('name', 'Service name', { required: true, placeholder: 'e.g. Azure SQL Database, VM D4s v5' })}
-        <label className="block text-xs text-slate-400">Status<select className={field} value={form.status} onChange={e => set({ status: e.target.value })}>{Object.entries(STATUS).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select></label>
         {input('po_number', 'PO number', { placeholder: 'e.g. PO-2026-0142' })}
         {input('po_date', 'PO date', { type: 'date' })}
         {input('boq_ref', 'BOQ reference', { placeholder: 'e.g. BOQ v3 · line 12' })}
+        {input('name', 'Service activated', { required: true, placeholder: 'e.g. Azure SQL Database, VM D4s v5' })}
+        <label className="block text-xs text-slate-400">Status<select className={field} value={form.status} onChange={e => set({ status: e.target.value })}>{Object.entries(STATUS).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select></label>
+        <p className="block text-xs text-slate-400">Subscription<span className="mt-1.5 flex h-10 items-center truncate rounded-lg border border-slate-800 bg-slate-800/40 px-3 text-sm text-slate-300">{subscriptions.find(w => w.id === form.workload_id)?.name || '—'}</span></p>
         {input('activated_on', 'Activated on', { type: 'date' })}
         {form.status === 'stopped' && input('stopped_on', 'Stopped on', { type: 'date' })}
         {input('monthly_cost', 'Expected monthly cost (INR)', { type: 'number', min: 0, step: '0.01', placeholder: '0.00' })}
       </div>
       <label className="block text-xs text-slate-400">Description<textarea rows={2} className={`${field} h-auto py-2`} value={form.description} onChange={e => set({ description: e.target.value })} placeholder="What was activated and why" /></label>
-      <div className="flex justify-end gap-2"><button type="button" className={ghost} onClick={onCancel}>Cancel</button><button className={primary} disabled={busy || !form.name.trim() || !form.workload_id}>{busy && <Loader2 size={15} className="animate-spin" />}Save service</button></div>
+      <div className="flex justify-end gap-2"><button type="button" className={ghost} onClick={onCancel}>Cancel</button><button className={primary} disabled={busy || !form.name.trim() || !form.workload_id}>{busy && <Loader2 size={15} className="animate-spin" />}Save PO</button></div>
     </form>
   );
 }
@@ -113,24 +113,77 @@ export default function BillingServices({ customerId, canEdit }) {
       await load();
     } catch (e) { toast.error(errorMessage(e)); } finally { setBusy(false); }
   };
-  if (!items || !ledger) return <p className="flex items-center gap-2 text-sm text-slate-400"><Loader2 size={15} className="animate-spin" />Loading services…</p>;
+  if (!items || !ledger) return <p className="flex items-center gap-2 text-sm text-slate-400"><Loader2 size={15} className="animate-spin" />Loading subscriptions…</p>;
+  if (!subscriptions.length) return <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">This customer has no subscription yet. Add one on the Add entry page, then record its POs and BOQs here.</p>;
+
+  // Step 1: choose a subscription.
+  if (!sub) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-slate-400">Choose a subscription to see and add its POs, BOQs and services.</p>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {subscriptions.map(w => {
+            const list = items.filter(x => x.workload_id === w.id);
+            const latest = [...list].sort((x, y) => (y.po_date || y.activated_on || '').localeCompare(x.po_date || x.activated_on || ''))[0];
+            const cost = list.filter(x => x.status === 'active').reduce((t, x) => t + (Number(x.monthly_cost) || 0), 0);
+            return (
+              <button key={w.id} type="button" onClick={() => { setSub(w.id); setQuery(''); setEditing(null); }} className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-left transition hover:border-[#ea580c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c]">
+                <p className="text-xs text-slate-500">Subscription</p>
+                <h3 className="mt-1 text-base font-semibold text-slate-100">{w.name}</h3>
+                <dl className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                  <div><dt className="text-xs text-slate-500">POs</dt><dd className="font-semibold text-slate-200">{new Set(list.map(x => x.po_number).filter(Boolean)).size}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Services</dt><dd className="font-semibold text-slate-200">{list.length}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Active / month</dt><dd className="font-semibold tabular-nums text-slate-200">{cost ? money(cost) : '—'}</dd></div>
+                </dl>
+                <p className="mt-3 truncate text-xs text-slate-500">{latest ? `Latest: ${latest.po_number || 'No PO'} · ${day(latest.po_date || latest.activated_on)}` : 'No PO recorded yet'}</p>
+                <p className="mt-3 text-sm font-medium text-[#c2410c]">Open subscription →</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Step 2: inside one subscription — every PO / BOQ with dates and details.
+  const all = items.filter(x => x.workload_id === sub).sort((x, y) => (y.po_date || y.activated_on || '').localeCompare(x.po_date || x.activated_on || ''));
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        {[['Services', shown.length], ['Active', shown.filter(s => s.status === 'active').length], ['Active monthly cost', money(activeCost)]].map(([k, v]) => <div key={k} className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-xs text-slate-500">{k}</p><p className="mt-1 text-xl font-semibold tabular-nums text-slate-100">{v}</p></div>)}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={() => setSub('')} className={!sub ? primary : ghost}>All subscriptions</button>
-        {subscriptions.map(w => <button key={w.id} type="button" onClick={() => setSub(w.id)} className={sub === w.id ? primary : ghost}>{w.name} <span className="text-xs opacity-70">({items.filter(s => s.workload_id === w.id).length})</span></button>)}
-      </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search service, PO, BOQ, note or file…" className="h-10 w-full max-w-sm rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c]" />
-        {canEdit && editing == null && <button type="button" className={primary} disabled={!subscriptions.length} title={subscriptions.length ? '' : 'Add a subscription first'} onClick={() => setEditing('new')}><Plus size={15} />Add service</button>}
+        <div>
+          <button type="button" onClick={() => { setSub(''); setEditing(null); }} className="text-sm text-slate-500 hover:text-[#c2410c]">← All subscriptions</button>
+          <h2 className="mt-1 text-lg font-semibold text-slate-100">{subName(sub)}</h2>
+        </div>
+        {canEdit && editing == null && <button type="button" className={primary} onClick={() => setEditing('new')}><Plus size={15} />Create new PO</button>}
       </div>
-      {editing && <ServiceForm key={editing === 'new' ? 'new' : editing.id} busy={busy} subscriptions={subscriptions} initial={editing === 'new' ? { ...EMPTY, workload_id: sub || subscriptions[0]?.id || '' } : { ...EMPTY, ...Object.fromEntries(Object.entries(editing).map(([k, v]) => [k, v ?? ''])) }} onSave={save} onCancel={() => setEditing(null)} />}
-      {!subscriptions.length && <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">This customer has no subscription yet. Add one on the Add entry page, then track its services here.</p>}
-      {subscriptions.length > 0 && !shown.length && <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400"><CalendarCheck className="mx-auto mb-2 text-[#ea580c]" size={22} />{q ? 'No service matches your search.' : 'No services tracked yet. Add the first service with its PO and BOQ.'}</p>}
-      {shown.map(s => <ServiceCard key={s.id} service={s} subName={subName(s.workload_id)} canEdit={canEdit} onChanged={load} onEdit={() => { setEditing(s); window.scrollTo({ top: 0, behavior: 'smooth' }); }} onDeleted={() => setItems(list => list.filter(x => x.id !== s.id))} />)}
+      <div className="grid gap-3 sm:grid-cols-4">
+        {[['POs', new Set(all.map(x => x.po_number).filter(Boolean)).size], ['Services', all.length], ['Active', all.filter(x => x.status === 'active').length], ['Active monthly cost', money(activeCost)]].map(([k, v]) => <div key={k} className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-xs text-slate-500">{k}</p><p className="mt-1 text-xl font-semibold tabular-nums text-slate-100">{v}</p></div>)}
+      </div>
+      {editing && <ServiceForm key={editing === 'new' ? 'new' : editing.id} busy={busy} subscriptions={subscriptions} initial={editing === 'new' ? { ...EMPTY, workload_id: sub } : { ...EMPTY, ...Object.fromEntries(Object.entries(editing).map(([k, v]) => [k, v ?? ''])) }} onSave={save} onCancel={() => setEditing(null)} />}
+      {all.length > 0 && (
+        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900">
+          <table className="w-full min-w-[56rem] text-sm">
+            <thead><tr className="border-b border-slate-800 text-left text-xs text-slate-500">{['PO number', 'PO date', 'BOQ', 'Service', 'Activated', 'Status', 'Monthly cost', 'Docs', 'Notes'].map(h => <th key={h} className={`px-4 py-2.5 font-medium ${h === 'Monthly cost' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
+            <tbody>{all.map(x => (
+              <tr key={x.id} onClick={() => document.getElementById(`svc-${x.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="cursor-pointer border-b border-slate-800/60 last:border-0 hover:bg-slate-800/40">
+                <td className="px-4 py-2.5 font-medium text-slate-100">{x.po_number || '—'}</td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-slate-300">{day(x.po_date)}</td>
+                <td className="max-w-[12rem] truncate px-4 py-2.5 text-slate-300" title={x.boq_ref}>{x.boq_ref || '—'}</td>
+                <td className="max-w-[14rem] truncate px-4 py-2.5 text-slate-200" title={x.name}>{x.name}</td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-slate-300">{day(x.activated_on)}</td>
+                <td className="px-4 py-2.5"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${(STATUS[x.status] || STATUS.active)[1]}`}>{(STATUS[x.status] || STATUS.active)[0]}</span></td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-100">{money(x.monthly_cost, x.currency)}</td>
+                <td className="px-4 py-2.5 text-slate-300">{x.files.length}</td>
+                <td className="px-4 py-2.5 text-slate-300">{x.notes.length}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+      {all.length > 1 && <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search PO, BOQ, service, note or file…" className="h-10 w-full max-w-sm rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none focus-visible:ring-2 focus-visible:ring-[#ea580c]" />}
+      {!all.length && !editing && <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400"><CalendarCheck className="mx-auto mb-2 text-[#ea580c]" size={22} />No PO recorded for this subscription yet.{canEdit ? ' Click "Create new PO" to add the first one with its BOQ and documents.' : ''}</p>}
+      {all.length > 0 && !shown.length && <p className="text-sm text-slate-400">No PO matches your search.</p>}
+      {shown.map(x => <div key={x.id} id={`svc-${x.id}`} className="scroll-mt-4"><ServiceCard service={x} subName={subName(x.workload_id)} canEdit={canEdit} onChanged={load} onEdit={() => { setEditing(x); window.scrollTo({ top: 0, behavior: 'smooth' }); }} onDeleted={() => setItems(list => list.filter(i => i.id !== x.id))} /></div>)}
     </div>
   );
 }
